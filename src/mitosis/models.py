@@ -1,0 +1,117 @@
+"""Structured data for the ledger and reservation kernel (SPEC.md §3, §4).
+
+Pydantic models per §30.1 coding rule ("Pydantic for structured data").
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, field_validator
+
+
+class Book(StrEnum):
+    USD_REAL = "USD_REAL"
+    USD_SIM = "USD_SIM"
+    RESOURCE = "RESOURCE"
+
+
+class ReservationStatus(StrEnum):
+    """Canonical reservation FSM (SPEC.md §4.4, Amendment A4;
+    docs/STATE_MACHINES.md §2)."""
+
+    REQUESTED = "requested"
+    RESERVED = "reserved"
+    EXECUTION_UNKNOWN = "execution_unknown"
+    PARTIALLY_SETTLED = "partially_settled"
+    SETTLED = "settled"
+    RELEASED = "released"
+    DISPUTED = "disputed"
+
+
+TERMINAL_RESERVATION_STATUSES = frozenset(
+    {ReservationStatus.SETTLED, ReservationStatus.RELEASED}
+)
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class _Frozen(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+
+class EntrySpec(BaseModel):
+    """Caller-supplied entry, before entry_id/transaction_id are assigned."""
+
+    account_id: str
+    amount_minor_units: int
+    cell_id: str | None = None
+    team_id: str | None = None
+    experiment_id: str | None = None
+    artifact_id: str | None = None
+    metadata: dict[str, Any] = {}
+
+
+class Entry(_Frozen):
+    """One leg of a ledger transaction (SPEC.md §3.3, Amendment A3).
+
+    Carries a single signed amount — there is no independent `direction`
+    field (docs/DECISIONS.md ADR-003).
+    """
+
+    entry_id: str
+    transaction_id: str
+    account_id: str
+    amount_minor_units: int
+    cell_id: str | None = None
+    team_id: str | None = None
+    experiment_id: str | None = None
+    artifact_id: str | None = None
+    metadata: dict[str, Any] = {}
+
+
+class Transaction(_Frozen):
+    """SPEC.md §3.2. One balanced, single-book unit of the ledger."""
+
+    transaction_id: str
+    book: Book
+    currency: str
+    created_at_utc: datetime
+    effective_at_utc: datetime
+    idempotency_key: str
+    event_id: str | None = None
+    transaction_type: str
+    description: str = ""
+    previous_transaction_hash: str | None
+    transaction_hash: str
+    metadata: dict[str, Any] = {}
+    entries: tuple[Entry, ...]
+
+    @field_validator("created_at_utc", "effective_at_utc")
+    @classmethod
+    def _require_utc(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            raise ValueError("timestamps must be timezone-aware UTC (Charter C11)")
+        return v.astimezone(timezone.utc)
+
+
+class Reservation(_Frozen):
+    """SPEC.md §4.2, §4.4."""
+
+    reservation_id: str
+    cell_id: str
+    experiment_id: str | None = None
+    book: Book
+    currency: str
+    maximum_amount: int
+    settled_amount: int = 0
+    reserved_at: datetime
+    expires_at: datetime
+    external_operation_type: str | None = None
+    external_operation_id: str | None = None
+    status: ReservationStatus
+    idempotency_key: str
