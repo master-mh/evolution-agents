@@ -86,6 +86,13 @@ def get_reservation(conn: sqlite3.Connection, reservation_id: str) -> Reservatio
     return _row_to_reservation(row) if row else None
 
 
+def count_by_status(conn: sqlite3.Connection) -> dict[str, int]:
+    rows = conn.execute(
+        "SELECT status, COUNT(*) AS n FROM reservations GROUP BY status"
+    ).fetchall()
+    return {r["status"]: r["n"] for r in rows}
+
+
 def get_reservation_by_idempotency_key(
     conn: sqlite3.Connection, idempotency_key: str
 ) -> Reservation | None:

@@ -36,6 +36,27 @@ TERMINAL_RESERVATION_STATUSES = frozenset(
 )
 
 
+class CellType(StrEnum):
+    """The Explorer/Builder/Commercial/Auditor/Immune/Skeptic taxonomy."""
+
+    EXPLORER = "explorer"
+    BUILDER = "builder"
+    COMMERCIAL = "commercial"
+    AUDITOR = "auditor"
+    IMMUNE = "immune"
+    SKEPTIC = "skeptic"
+
+
+class CellStatus(StrEnum):
+    """Cell lifecycle FSM (docs/STATE_MACHINES.md §1)."""
+
+    CREATED = "created"
+    ALIVE = "alive"
+    DORMANT = "dormant"
+    QUARANTINED = "quarantined"
+    DEAD = "dead"
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -115,3 +136,42 @@ class Reservation(_Frozen):
     external_operation_id: str | None = None
     status: ReservationStatus
     idempotency_key: str
+
+
+class CellGenome(_Frozen):
+    """SPEC.md §16.2. Content-addressed: identical canonical_genome_json
+    always yields the same genome_hash and the same row (dedup)."""
+
+    genome_id: str
+    genome_hash: str
+    version: int
+    parent_genome_hashes: tuple[str, ...] = ()
+    created_at: datetime
+    mutation_operator: str | None = None
+    canonical_genome_json: dict[str, Any]
+    prompt_hashes: tuple[str, ...] = ()
+    module_hashes: tuple[str, ...] = ()
+    model_policy_hash: str | None = None
+    risk_label: str = "unclassified"
+    taint_labels: tuple[str, ...] = ()
+
+
+class Cell(_Frozen):
+    """SPEC.md §31; lifecycle per docs/STATE_MACHINES.md §1."""
+
+    cell_id: str
+    cell_type: CellType
+    genome_hash: str
+    book: Book
+    status: CellStatus
+    created_at_utc: datetime
+    idempotency_key: str
+
+
+class AuditEvent(_Frozen):
+    event_id: str
+    event_type: str
+    cell_id: str | None = None
+    description: str = ""
+    created_at_utc: datetime
+    metadata: dict[str, Any] = {}
