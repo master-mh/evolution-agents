@@ -12,14 +12,16 @@ import argparse
 import os
 import sys
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
-from . import db, ledger, lifecycle, money, population, real_spend_breaker, reservations
+from . import clock, db, ledger, lifecycle, money, population, real_spend_breaker, reservations
 from .models import (
     DEFAULT_POPULATION_LIMITS,
     DEFAULT_REAL_SPEND_LIMITS,
     Book,
     CellType,
+    ClockMode,
     EntrySpec,
     PopulationLimits,
     RealSpendLimits,
@@ -121,6 +123,25 @@ def cmd_init(args: argparse.Namespace) -> None:
             f"max_concurrent_reserved={baseline_spend_limits.max_concurrent_reserved_minor_units}"
         )
 
+    requested_mode = ClockMode(args.clock_mode)
+    baseline_clock = clock.initialize_if_absent(
+        conn, mode=requested_mode, simulated_seconds_per_wall_second=args.clock_rate
+    )
+    if already_existed and (
+        baseline_clock.mode != requested_mode
+        or baseline_clock.simulated_seconds_per_wall_second != args.clock_rate
+    ):
+        print(
+            f"Simulated clock already configured (mode={baseline_clock.mode.value}, "
+            f"rate={baseline_clock.simulated_seconds_per_wall_second}) — not changed"
+        )
+    else:
+        print(
+            f"Simulated clock: mode={baseline_clock.mode.value}, "
+            f"rate={baseline_clock.simulated_seconds_per_wall_second} sim-sec/wall-sec, "
+            f"at {baseline_clock.checkpoint_simulated_at_utc.isoformat()}"
+        )
+
     if already_existed:
         print(f"MITOSIS database already existed at {path}")
     else:
@@ -177,6 +198,13 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"    spend last hour:  {snap.spend_last_hour_minor_units}/{snap.limits.per_hour_minor_units}")
     print(f"    spend last day:   {snap.spend_last_day_minor_units}/{snap.limits.per_day_minor_units}")
     print(f"    spend last ~30d:  {snap.spend_last_month_minor_units}/{snap.limits.per_month_minor_units}")
+    print()
+    print("  simulated clock:")
+    clock_state = clock.get_state(conn)
+    print(
+        f"    mode: {clock_state.mode.value}   rate: {clock_state.simulated_seconds_per_wall_second} sim-sec/wall-sec"
+    )
+    print(f"    current simulated time: {clock.now(conn).isoformat()}")
 
     conn.close()
 
@@ -205,6 +233,16 @@ def cmd_create_cell(args: argparse.Namespace) -> None:
     print(f"  book:   {cell.book.value}")
     print(f"  budget: {args.budget} ({budget_minor_units} minor units)")
     print(f"  genome: {cell.genome_hash}")
+
+    conn.close()
+
+
+def cmd_advance_time(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    new_time = clock.advance(conn, timedelta(days=args.days))
+    print(f"Simulated time advanced by {args.days} day(s) to {new_time.isoformat()}")
 
     conn.close()
 
@@ -262,6 +300,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-concurrent-reserved-cents", type=int, default=None,
         help=f"max concurrently reserved USD_REAL cents (default: {DEFAULT_REAL_SPEND_LIMITS.max_concurrent_reserved_minor_units})",
     )
+    init_parser.add_argument(
+        "--clock-mode",
+        default=ClockMode.PAUSED.value,
+        choices=[m.value for m in ClockMode],
+        help="simulated clock starting mode (default: paused). Only applied on first init.",
+    )
+    init_parser.add_argument(
+        "--clock-rate",
+        type=float,
+        default=clock.DEFAULT_ACCELERATED_RATE,
+        help=f"simulated seconds per wall second, used in accelerated mode "
+        f"(default: {clock.DEFAULT_ACCELERATED_RATE})",
+    )
     init_parser.set_defaults(func=cmd_init)
 
     status_parser = subparsers.add_parser("status", help="show colony status")
@@ -283,6 +334,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create_cell_parser.set_defaults(func=cmd_create_cell)
 
+    advance_time_parser = subparsers.add_parser(
+        "advance-time", help="advance the simulated clock forward"
+    )
+    advance_time_parser.add_argument(
+        "--days", type=float, required=True, help="number of simulated days to advance (may be fractional)"
+    )
+    advance_time_parser.set_defaults(func=cmd_advance_time)
+
     return parser
 
 
@@ -300,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         ledger.LedgerError,
         population.PopulationError,
         real_spend_breaker.RealSpendBreakerError,
+        clock.ClockError,
         ValueError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)

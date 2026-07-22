@@ -237,3 +237,26 @@ class RealSpendSnapshot(_Frozen):
     spend_last_hour_minor_units: int
     spend_last_day_minor_units: int
     spend_last_month_minor_units: int
+
+
+class ClockMode(StrEnum):
+    """SPEC.md §6.2."""
+
+    PAUSED = "paused"
+    STEP = "step"
+    ACCELERATED = "accelerated"
+    REALTIME = "realtime"
+
+
+class SimulationClockState(_Frozen):
+    """SPEC.md §6; §27.1 `colony.yaml` `simulation_clock:` block.
+
+    checkpoint_simulated_at_utc / checkpoint_wall_at_utc together anchor a
+    lazy time computation: current simulated time = checkpoint_simulated +
+    (elapsed wall time since checkpoint_wall) * rate(mode). See clock.py.
+    """
+
+    mode: ClockMode
+    simulated_seconds_per_wall_second: float
+    checkpoint_simulated_at_utc: datetime
+    checkpoint_wall_at_utc: datetime

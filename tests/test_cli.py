@@ -193,3 +193,54 @@ def test_status_shows_real_spend_breaker_section(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "real-spend breaker (USD_REAL):" in out
     assert "concurrent reserved: 0/200" in out
+
+
+def test_init_shows_default_paused_clock(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init"])
+    out = capsys.readouterr().out
+    assert "Simulated clock: mode=paused, rate=86400.0 sim-sec/wall-sec" in out
+
+
+def test_advance_time_moves_status_clock_forward(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init"])
+    capsys.readouterr()
+
+    cli.main(["--db", str(db_path), "status"])
+    before_out = capsys.readouterr().out
+    before_line = [l for l in before_out.splitlines() if "current simulated time" in l][0]
+
+    exit_code = cli.main(["--db", str(db_path), "advance-time", "--days", "1"])
+    assert exit_code == 0
+    advance_out = capsys.readouterr().out
+    assert "Simulated time advanced by 1.0 day(s) to" in advance_out
+
+    cli.main(["--db", str(db_path), "status"])
+    after_out = capsys.readouterr().out
+    after_line = [l for l in after_out.splitlines() if "current simulated time" in l][0]
+    assert before_line != after_line
+
+
+def test_advance_time_before_init_errors(tmp_path, capsys):
+    db_path = tmp_path / "nope.db"
+    exit_code = cli.main(["--db", str(db_path), "advance-time", "--days", "1"])
+    assert exit_code == 1
+    assert "run `mitosis init` first" in capsys.readouterr().err
+
+
+def test_reinit_does_not_change_existing_clock_mode(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init", "--clock-mode", "paused"])
+    capsys.readouterr()
+
+    cli.main(["--db", str(db_path), "init", "--clock-mode", "realtime"])
+    out = capsys.readouterr().out
+    assert "Simulated clock already configured (mode=paused" in out
+
+
+def test_init_can_set_clock_mode_and_rate(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init", "--clock-mode", "accelerated", "--clock-rate", "3600"])
+    out = capsys.readouterr().out
+    assert "Simulated clock: mode=accelerated, rate=3600.0 sim-sec/wall-sec" in out
