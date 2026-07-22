@@ -80,3 +80,9 @@ Closes the known gap flagged at the end of the previous slice.
 - Verified end-to-end by hand first (init paused at a fixed instant → advance by 1 day then 0.5 days → status reflects the cumulative advance → re-init with `--clock-mode realtime` correctly leaves the colony paused → switching an existing colony's clock to accelerated and checking status shows time visibly progressing between commands) before writing the test suite.
 - **113 tests passing** (21 new: `test_clock.py` covering all four modes' rate math, advance/set_mode re-anchoring semantics, clock-skew protection, negative-delta rejection, UTC validation, and set-once init behavior; six CLI tests).
 - Next: Phase 1 remainder per `PRIORITIES.md`. event_inbox/outbox is now the largest unbuilt piece; wiring the clock into `max_births_per_epoch` and into USD_SIM timestamps are both natural follow-ups but deliberately weren't bundled into this slice.
+
+## 2026-07-22 — Self-review: closed a CLI test-coverage gap
+
+`/critique` on the simulated-clock summary found no factual errors, misalignment, or overclaims — every number and claim checked out against the actual repo (test counts, file scope, ADR references). One genuine minor gap: `clock.advance()` rejecting a negative delta was unit-tested in `test_clock.py` but never confirmed to surface as a clean CLI error (exit 1, stderr message, not a traceback) through `mitosis advance-time --days -1`. Added `test_advance_time_rejects_negative_days` to `test_cli.py`.
+- **114 tests passing** (1 new).
+- Commit `4b50f48`.
