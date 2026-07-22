@@ -195,6 +195,18 @@ def test_status_shows_real_spend_breaker_section(tmp_path, capsys):
     assert "concurrent reserved: 0/200" in out
 
 
+def test_status_shows_events_section(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init"])
+    capsys.readouterr()
+
+    cli.main(["--db", str(db_path), "status"])
+    out = capsys.readouterr().out
+    assert "events:" in out
+    assert "inbox: none yet" in out
+    assert "outbox unpublished: 0" in out
+
+
 def test_init_shows_default_paused_clock(tmp_path, capsys):
     db_path = tmp_path / "mitosis.db"
     cli.main(["--db", str(db_path), "init"])

@@ -7,6 +7,7 @@ Maps to named Charter test IDs:
   charter_crash_recovery             -> C7 (reservation FSM stateful machine)
   charter_carrying_capacity          -> C9 (birth licence vs configured limits)
   charter_realspend_cap              -> C5 (concurrent-reserved cap vs configured limit)
+  charter_idempotent_handlers        -> C6 (event redelivery applies handler side effects once)
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, precondition, rule
 
-from mitosis import db, ledger, lifecycle, population, real_spend_breaker, reservations
+from mitosis import db, events, ledger, lifecycle, population, real_spend_breaker, reservations
 from mitosis.accounts import cell_cash, cell_committed
 from mitosis.models import Book, CellType, EntrySpec, PopulationLimits, RealSpendLimits, ReservationStatus
 
@@ -291,3 +292,44 @@ def test_charter_realspend_cap(cap, amounts):
         # the invariant must hold after every single attempt, not just at the end
         snap = real_spend_breaker.snapshot(conn)
         assert snap.concurrent_reserved_minor_units <= cap
+
+
+# --- charter_idempotent_handlers (C6) ---------------------------------------
+# For any number of redelivery attempts against the same event_id, a
+# handler's ledger-affecting side effect must be applied exactly once, and
+# the event must end up 'processed' regardless of how many times it's
+# redelivered before or after that point.
+
+
+@given(
+    redelivery_count=st.integers(min_value=1, max_value=15),
+    amount=st.integers(min_value=1, max_value=1000),
+)
+@settings(max_examples=50)
+def test_charter_idempotent_handlers(redelivery_count, amount):
+    conn = db.connect_and_migrate()
+    call_count = 0
+
+    def handler(conn, event):
+        nonlocal call_count
+        call_count += 1
+        ledger._write_transaction(
+            conn,
+            book=Book.USD_SIM,
+            currency="USD",
+            transaction_type="event_side_effect",
+            idempotency_key=f"event_side_effect:{event.event_id}",
+            entries=[
+                EntrySpec(account_id="source", amount_minor_units=-amount),
+                EntrySpec(account_id="dest", amount_minor_units=amount),
+            ],
+        )
+        return []
+
+    event = events.enqueue(conn, event_type="t", source="test", priority=0, dedupe_key="dk-1")
+    for _ in range(redelivery_count):
+        result = events.process_event(conn, event.event_id, handler)
+
+    assert call_count == 1
+    assert result.status.value == "processed"
+    assert ledger.get_balance(conn, "dest", Book.USD_SIM) == amount

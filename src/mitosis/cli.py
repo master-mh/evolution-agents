@@ -15,7 +15,7 @@ import uuid
 from datetime import timedelta
 from pathlib import Path
 
-from . import clock, db, ledger, lifecycle, money, population, real_spend_breaker, reservations
+from . import clock, db, events, ledger, lifecycle, money, population, real_spend_breaker, reservations
 from .models import (
     DEFAULT_POPULATION_LIMITS,
     DEFAULT_REAL_SPEND_LIMITS,
@@ -205,6 +205,11 @@ def cmd_status(args: argparse.Namespace) -> None:
         f"    mode: {clock_state.mode.value}   rate: {clock_state.simulated_seconds_per_wall_second} sim-sec/wall-sec"
     )
     print(f"    current simulated time: {clock.now(conn).isoformat()}")
+    print()
+    print("  events:")
+    e_by_status = events.count_by_status(conn)
+    print(f"    inbox by status: {e_by_status}" if e_by_status else "    inbox: none yet")
+    print(f"    outbox unpublished: {events.outbox_unpublished_count(conn)}")
 
     conn.close()
 
@@ -360,6 +365,7 @@ def main(argv: list[str] | None = None) -> int:
         population.PopulationError,
         real_spend_breaker.RealSpendBreakerError,
         clock.ClockError,
+        events.EventError,
         ValueError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)

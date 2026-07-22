@@ -248,6 +248,74 @@ class ClockMode(StrEnum):
     REALTIME = "realtime"
 
 
+class EventStatus(StrEnum):
+    """Inbox event lifecycle (SPEC.md §17.3): pending -> processed, or
+    pending -> dead_letter after too many failed attempts."""
+
+    PENDING = "pending"
+    PROCESSED = "processed"
+    DEAD_LETTER = "dead_letter"
+
+
+class Event(_Frozen):
+    """One event_inbox row (SPEC.md §17.2, §3.5). Identity is event_id,
+    stable across redelivery attempts — only attempt_number changes.
+    `dedupe_key` is the producer-side idempotency guard (see events.py);
+    `priority` is required per ADR-011 even though the illustrative §17.2
+    schema block omits it."""
+
+    event_id: str
+    dedupe_key: str
+    attempt_number: int = 0
+    event_type: str
+    source: str
+    target: str | None = None
+    priority: int
+    created_at_utc: datetime
+    available_at: datetime
+    simulated_at: datetime | None = None
+    payload: dict[str, Any] = {}
+    status: EventStatus = EventStatus.PENDING
+    last_error: str | None = None
+    causation_id: str | None = None
+    correlation_id: str | None = None
+
+
+class OutboxEventSpec(BaseModel):
+    """Caller-supplied event produced by a handler, staged into
+    event_outbox before event_id is assigned — mirrors EntrySpec's
+    relationship to Entry."""
+
+    event_type: str
+    source: str
+    priority: int
+    dedupe_key: str
+    target: str | None = None
+    payload: dict[str, Any] = {}
+    available_at: datetime | None = None
+    simulated_at: datetime | None = None
+    correlation_id: str | None = None
+
+
+class OutboxEvent(_Frozen):
+    """One event_outbox row. `published_at_utc` is set once the outbox
+    dispatcher has published it (docs/EVENT_SEMANTICS.md §3 step 7)."""
+
+    event_id: str
+    dedupe_key: str
+    event_type: str
+    source: str
+    target: str | None = None
+    priority: int
+    created_at_utc: datetime
+    available_at: datetime
+    simulated_at: datetime | None = None
+    payload: dict[str, Any] = {}
+    causation_id: str | None = None
+    correlation_id: str | None = None
+    published_at_utc: datetime | None = None
+
+
 class SimulationClockState(_Frozen):
     """SPEC.md §6; §27.1 `colony.yaml` `simulation_clock:` block.
 
