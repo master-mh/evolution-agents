@@ -5,6 +5,7 @@ Maps to named Charter test IDs:
   charter_conservation_per_book      -> C2
   charter_balance_matches_ledger     -> C3
   charter_crash_recovery             -> C7 (reservation FSM stateful machine)
+  charter_carrying_capacity          -> C9 (birth licence vs configured limits)
 """
 
 from __future__ import annotations
@@ -15,9 +16,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, precondition, rule
 
-from mitosis import db, ledger, reservations
+from mitosis import db, ledger, lifecycle, population, reservations
 from mitosis.accounts import cell_cash, cell_committed
-from mitosis.models import Book, EntrySpec, ReservationStatus
+from mitosis.models import Book, CellType, EntrySpec, PopulationLimits, ReservationStatus
 
 FUTURE = datetime.now(timezone.utc) + timedelta(days=365)
 
@@ -195,3 +196,45 @@ class ReservationKernelMachine(RuleBasedStateMachine):
 
 
 TestReservationKernelMachine = ReservationKernelMachine.TestCase
+
+
+# --- charter_carrying_capacity (C9) -----------------------------------------
+# For any configured limit and any number of attempted births, the living
+# and active Cell counts must never exceed their configured caps — every
+# birth beyond capacity must be denied, never silently admitted.
+
+
+@given(
+    max_living=st.integers(min_value=1, max_value=10),
+    attempts=st.integers(min_value=0, max_value=20),
+)
+@settings(max_examples=50)
+def test_charter_carrying_capacity(max_living, attempts):
+    conn = db.connect_and_migrate()
+    limits = PopulationLimits(
+        max_living_cells=max_living,
+        max_active_cells=max_living,  # active cap not the binding constraint here
+        max_parallel_experiments=1,
+        max_births_per_epoch=1,
+        max_lineage_population_fraction=1.0,
+    )
+    population.set_limits_if_absent(conn, limits)
+
+    granted = 0
+    for i in range(attempts):
+        try:
+            lifecycle.create_cell(
+                conn,
+                cell_type=CellType.EXPLORER,
+                budget_minor_units=10,
+                book=Book.USD_SIM,
+                idempotency_key=f"attempt:{i}",
+            )
+            granted += 1
+        except population.CarryingCapacityError:
+            pass
+        # the invariant must hold after every single attempt, not just at the end
+        assert population.living_count(conn) <= max_living
+
+    assert granted == min(attempts, max_living)
+    assert population.living_count(conn) == granted

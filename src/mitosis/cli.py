@@ -14,8 +14,8 @@ import sys
 import uuid
 from pathlib import Path
 
-from . import db, ledger, lifecycle, money, reservations
-from .models import Book, CellType, EntrySpec
+from . import db, ledger, lifecycle, money, population, reservations
+from .models import DEFAULT_POPULATION_LIMITS, Book, CellType, EntrySpec, PopulationLimits
 
 DEFAULT_DB_PATH = os.environ.get("MITOSIS_DB", "mitosis.db")
 
@@ -52,6 +52,25 @@ def cmd_init(args: argparse.Namespace) -> None:
         )
         print(f"Seeded {args.seed_capital} {book.value} into {args.seed_account}")
 
+    requested_limits = PopulationLimits(
+        max_living_cells=args.max_living_cells,
+        max_active_cells=args.max_active_cells,
+        max_parallel_experiments=DEFAULT_POPULATION_LIMITS.max_parallel_experiments,
+        max_births_per_epoch=DEFAULT_POPULATION_LIMITS.max_births_per_epoch,
+        max_lineage_population_fraction=DEFAULT_POPULATION_LIMITS.max_lineage_population_fraction,
+    )
+    active_limits = population.set_limits_if_absent(conn, requested_limits)
+    if already_existed and active_limits != requested_limits:
+        print(
+            f"Population limits already configured (living={active_limits.max_living_cells}, "
+            f"active={active_limits.max_active_cells}) — not changed"
+        )
+    else:
+        print(
+            f"Population limits: max_living_cells={active_limits.max_living_cells}, "
+            f"max_active_cells={active_limits.max_active_cells}"
+        )
+
     if already_existed:
         print(f"MITOSIS database already existed at {path}")
     else:
@@ -84,6 +103,9 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"    hash chain valid: {ledger.verify_chain(conn)}")
     print()
     print("  cells:")
+    limits = population.get_limits(conn)
+    living, active = population.living_count(conn), population.active_count(conn)
+    print(f"    living: {living}/{limits.max_living_cells}   active: {active}/{limits.max_active_cells}")
     by_status = lifecycle.count_by_status(conn)
     by_type = lifecycle.count_by_type(conn)
     if by_status:
@@ -144,6 +166,19 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument(
         "--seed-account", default="seed_bank", help="account credited by --seed-capital"
     )
+    init_parser.add_argument(
+        "--max-living-cells",
+        type=int,
+        default=DEFAULT_POPULATION_LIMITS.max_living_cells,
+        help=f"carrying capacity, living Cells (default: {DEFAULT_POPULATION_LIMITS.max_living_cells}). "
+        "Only applied on first init; re-running init never changes an existing colony's limits.",
+    )
+    init_parser.add_argument(
+        "--max-active-cells",
+        type=int,
+        default=DEFAULT_POPULATION_LIMITS.max_active_cells,
+        help=f"carrying capacity, active Cells (default: {DEFAULT_POPULATION_LIMITS.max_active_cells})",
+    )
     init_parser.set_defaults(func=cmd_init)
 
     status_parser = subparsers.add_parser("status", help="show colony status")
@@ -176,7 +211,13 @@ def main(argv: list[str] | None = None) -> int:
     except CliError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    except (lifecycle.LifecycleError, reservations.ReservationError, ledger.LedgerError, ValueError) as exc:
+    except (
+        lifecycle.LifecycleError,
+        reservations.ReservationError,
+        ledger.LedgerError,
+        population.PopulationError,
+        ValueError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0

@@ -175,3 +175,30 @@ class AuditEvent(_Frozen):
     description: str = ""
     created_at_utc: datetime
     metadata: dict[str, Any] = {}
+
+
+class PopulationLimits(_Frozen):
+    """SPEC.md §9.2, §27.1 `colony.yaml` `population:` block.
+
+    Only max_living_cells and max_active_cells are enforced in this kernel
+    (see population.py). The rest are stored so the config shape matches
+    colony.yaml exactly, but are not yet checked: max_parallel_experiments
+    needs experiment tracking, max_births_per_epoch needs the simulated
+    clock, and max_lineage_population_fraction needs reproduction/lineage
+    tracking — none of which exist in the kernel yet.
+    """
+
+    max_living_cells: int
+    max_active_cells: int
+    max_parallel_experiments: int
+    max_births_per_epoch: int
+    max_lineage_population_fraction: float
+
+
+DEFAULT_POPULATION_LIMITS = PopulationLimits(
+    max_living_cells=1000,
+    max_active_cells=100,
+    max_parallel_experiments=20,
+    max_births_per_epoch=25,
+    max_lineage_population_fraction=0.20,
+)

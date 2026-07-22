@@ -1,8 +1,8 @@
 import pytest
 
-from mitosis import ledger, lifecycle
+from mitosis import ledger, lifecycle, population
 from mitosis.accounts import cell_cash
-from mitosis.models import Book, CellStatus, CellType
+from mitosis.models import Book, CellStatus, CellType, PopulationLimits
 
 
 def test_create_cell_funds_cash_and_is_alive(conn):
@@ -80,6 +80,45 @@ def test_count_by_status_and_type(conn):
     )
     assert lifecycle.count_by_status(conn) == {"alive": 2}
     assert lifecycle.count_by_type(conn) == {"explorer": 1, "builder": 1}
+
+
+def test_create_cell_denied_at_carrying_capacity(conn):
+    population.set_limits_if_absent(
+        conn,
+        PopulationLimits(
+            max_living_cells=1, max_active_cells=99, max_parallel_experiments=1,
+            max_births_per_epoch=1, max_lineage_population_fraction=1.0,
+        ),
+    )
+    lifecycle.create_cell(
+        conn, cell_type=CellType.EXPLORER, budget_minor_units=100,
+        book=Book.USD_SIM, idempotency_key="c1",
+    )
+    with pytest.raises(population.CarryingCapacityError):
+        lifecycle.create_cell(
+            conn, cell_type=CellType.BUILDER, budget_minor_units=100,
+            book=Book.USD_SIM, idempotency_key="c2",
+        )
+    # the denied birth must not have partially applied anything
+    assert lifecycle.count_by_status(conn) == {"alive": 1}
+    assert ledger.get_balance(conn, "seed_bank", Book.USD_SIM) == -100
+    assert ledger.verify_conservation(conn, Book.USD_SIM) is True
+
+
+def test_denied_birth_does_not_consume_idempotency_key(conn):
+    population.set_limits_if_absent(
+        conn,
+        PopulationLimits(
+            max_living_cells=0, max_active_cells=99, max_parallel_experiments=1,
+            max_births_per_epoch=1, max_lineage_population_fraction=1.0,
+        ),
+    )
+    with pytest.raises(population.CarryingCapacityError):
+        lifecycle.create_cell(
+            conn, cell_type=CellType.EXPLORER, budget_minor_units=100,
+            book=Book.USD_SIM, idempotency_key="c1",
+        )
+    assert lifecycle.get_cell_by_idempotency_key(conn, "c1") is None
 
 
 def test_conservation_holds_after_births(conn):

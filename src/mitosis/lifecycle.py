@@ -6,11 +6,9 @@ its own (nothing observable happens in it alone) — a successful birth
 inserts the cell directly as `alive`, atomically with funding it and
 recording the genome, in one SQLite write transaction.
 
-Known gap (tracked in PRIORITIES.md): Charter C9 ("birth requires
-carrying-capacity permission") is NOT enforced here — population limits
-(SPEC.md §9) are still on the Phase 1 remainder list. Every birth currently
-succeeds as long as funding and genome bookkeeping succeed. Do not treat
-create_cell as a carrying-capacity-safe birth licence yet.
+Charter C9 ("birth requires carrying-capacity permission") is enforced via
+population.check_birth_licence — see that module for what is and isn't
+covered (only max_living_cells/max_active_cells; no displacement path yet).
 """
 
 from __future__ import annotations
@@ -20,7 +18,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
-from . import audit, genome, ledger
+from . import audit, genome, ledger, population
 from .accounts import cell_cash
 from .models import Book, Cell, CellGenome, CellStatus, CellType, EntrySpec
 
@@ -120,6 +118,11 @@ def create_cell(
 
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Checked inside the write-locked transaction, not before it: two
+        # concurrent births must not both pass this check before either
+        # commits (Charter C9 under concurrency).
+        population.check_birth_licence(conn)
+
         genome_hash = _get_or_create_genome(conn, cell_type)
 
         ledger._write_transaction(

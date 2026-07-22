@@ -12,6 +12,8 @@ def test_init_creates_db(tmp_path, capsys):
     assert "Initialized MITOSIS database" in out
     assert "0001_init.sql" in out
     assert "0002_cells.sql" in out
+    assert "0003_population.sql" in out
+    assert "Population limits: max_living_cells=1000, max_active_cells=100" in out
 
 
 def test_init_is_idempotent(tmp_path, capsys):
@@ -114,3 +116,45 @@ def test_create_cell_is_idempotent_across_cli_invocations(tmp_path, capsys):
 
     assert "type:   explorer" in first_out
     assert "type:   explorer" in second_out  # replay returned the original cell
+
+
+def test_init_configures_custom_population_limits(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    exit_code = cli.main(
+        ["--db", str(db_path), "init", "--max-living-cells", "2", "--max-active-cells", "2"]
+    )
+    assert exit_code == 0
+    assert "Population limits: max_living_cells=2, max_active_cells=2" in capsys.readouterr().out
+
+    capsys.readouterr()
+    cli.main(["--db", str(db_path), "status"])
+    assert "living: 0/2   active: 0/2" in capsys.readouterr().out
+
+
+def test_reinit_does_not_change_existing_population_limits(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init", "--max-living-cells", "2", "--max-active-cells", "2"])
+    capsys.readouterr()
+
+    cli.main(["--db", str(db_path), "init", "--max-living-cells", "500", "--max-active-cells", "500"])
+    out = capsys.readouterr().out
+    assert "already configured (living=2, active=2) — not changed" in out
+
+
+def test_create_cell_denied_at_capacity_via_cli(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init", "--max-living-cells", "1", "--max-active-cells", "1"])
+    capsys.readouterr()
+
+    exit_code = cli.main(
+        ["--db", str(db_path), "create-cell", "--type", "explorer", "--budget", "5.00"]
+    )
+    assert exit_code == 0
+
+    exit_code = cli.main(
+        ["--db", str(db_path), "create-cell", "--type", "builder", "--budget", "5.00"]
+    )
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "birth denied" in err
+    assert "capacity" in err
