@@ -244,3 +244,15 @@ def test_init_can_set_clock_mode_and_rate(tmp_path, capsys):
     cli.main(["--db", str(db_path), "init", "--clock-mode", "accelerated", "--clock-rate", "3600"])
     out = capsys.readouterr().out
     assert "Simulated clock: mode=accelerated, rate=3600.0 sim-sec/wall-sec" in out
+
+
+def test_advance_time_rejects_negative_days(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init"])
+    capsys.readouterr()
+
+    exit_code = cli.main(["--db", str(db_path), "advance-time", "--days", "-1"])
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "error:" in err
+    assert "backwards" in err
