@@ -202,3 +202,38 @@ DEFAULT_POPULATION_LIMITS = PopulationLimits(
     max_births_per_epoch=25,
     max_lineage_population_fraction=0.20,
 )
+
+
+class RealSpendLimits(_Frozen):
+    """SPEC.md §5.1, §27.1 `colony.yaml` `real_spend_limits:` block. USD_REAL
+    only. provider_limits is stored so the config shape matches colony.yaml
+    but is not enforced (see real_spend_breaker.py — no model gateway or
+    provider identification exists in this kernel yet)."""
+
+    per_request_minor_units: int
+    per_hour_minor_units: int
+    per_day_minor_units: int
+    per_month_minor_units: int
+    max_concurrent_reserved_minor_units: int
+    provider_limits: dict[str, int] = {}
+
+
+DEFAULT_REAL_SPEND_LIMITS = RealSpendLimits(
+    per_request_minor_units=25,
+    per_hour_minor_units=100,
+    per_day_minor_units=500,
+    per_month_minor_units=5000,
+    max_concurrent_reserved_minor_units=200,
+    provider_limits={},
+)
+
+
+class RealSpendSnapshot(_Frozen):
+    """Current USD_REAL exposure at a point in time, for breaker checks and
+    `mitosis status` display."""
+
+    limits: RealSpendLimits
+    concurrent_reserved_minor_units: int
+    spend_last_hour_minor_units: int
+    spend_last_day_minor_units: int
+    spend_last_month_minor_units: int

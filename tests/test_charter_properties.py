@@ -6,6 +6,7 @@ Maps to named Charter test IDs:
   charter_balance_matches_ledger     -> C3
   charter_crash_recovery             -> C7 (reservation FSM stateful machine)
   charter_carrying_capacity          -> C9 (birth licence vs configured limits)
+  charter_realspend_cap              -> C5 (concurrent-reserved cap vs configured limit)
 """
 
 from __future__ import annotations
@@ -16,9 +17,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, precondition, rule
 
-from mitosis import db, ledger, lifecycle, population, reservations
+from mitosis import db, ledger, lifecycle, population, real_spend_breaker, reservations
 from mitosis.accounts import cell_cash, cell_committed
-from mitosis.models import Book, CellType, EntrySpec, PopulationLimits, ReservationStatus
+from mitosis.models import Book, CellType, EntrySpec, PopulationLimits, RealSpendLimits, ReservationStatus
 
 FUTURE = datetime.now(timezone.utc) + timedelta(days=365)
 
@@ -238,3 +239,55 @@ def test_charter_carrying_capacity(max_living, attempts):
 
     assert granted == min(attempts, max_living)
     assert population.living_count(conn) == granted
+
+
+# --- charter_realspend_cap (C5) ---------------------------------------------
+# For any configured max_concurrent_reserved cap and any sequence of USD_REAL
+# reservation requests, concurrently reserved spend must never exceed the
+# cap after any single request — granted or denied.
+
+
+@given(
+    cap=st.integers(min_value=10, max_value=200),
+    amounts=st.lists(st.integers(min_value=1, max_value=100), min_size=0, max_size=15),
+)
+@settings(max_examples=50)
+def test_charter_realspend_cap(cap, amounts):
+    conn = db.connect_and_migrate()
+    ledger.post_transaction(
+        conn,
+        book=Book.USD_REAL,
+        currency="USD",
+        transaction_type="seed_fund",
+        idempotency_key="seed",
+        entries=[
+            EntrySpec(account_id="seed_bank", amount_minor_units=-1_000_000),
+            EntrySpec(account_id=cell_cash("cell-1"), amount_minor_units=1_000_000),
+        ],
+    )
+    limits = RealSpendLimits(
+        per_request_minor_units=1_000_000,  # not the constraint under test
+        per_hour_minor_units=1_000_000,
+        per_day_minor_units=1_000_000,
+        per_month_minor_units=1_000_000,
+        max_concurrent_reserved_minor_units=cap,
+        provider_limits={},
+    )
+    real_spend_breaker.set_limits(conn, limits)
+
+    for i, amount in enumerate(amounts):
+        try:
+            reservations.request(
+                conn,
+                cell_id="cell-1",
+                book=Book.USD_REAL,
+                currency="USD",
+                maximum_amount=amount,
+                expires_at=FUTURE,
+                idempotency_key=f"r:{i}",
+            )
+        except real_spend_breaker.RealSpendCapExceededError:
+            pass
+        # the invariant must hold after every single attempt, not just at the end
+        snap = real_spend_breaker.snapshot(conn)
+        assert snap.concurrent_reserved_minor_units <= cap

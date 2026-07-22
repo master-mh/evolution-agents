@@ -158,3 +158,38 @@ def test_create_cell_denied_at_capacity_via_cli(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "birth denied" in err
     assert "capacity" in err
+
+
+def test_init_shows_default_real_spend_limits(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init"])
+    out = capsys.readouterr().out
+    assert "Real-spend limits (USD_REAL cents): per_request=25, per_hour=100, per_day=500, per_month=5000, max_concurrent_reserved=200" in out
+
+
+def test_init_can_set_real_spend_limits(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init", "--per-request-cents", "1000"])
+    out = capsys.readouterr().out
+    assert "Real-spend limits (USD_REAL cents) updated: per_request=1000" in out
+
+
+def test_reinit_without_spend_flags_does_not_change_spend_limits(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init", "--per-request-cents", "1000"])
+    capsys.readouterr()
+
+    cli.main(["--db", str(db_path), "init"])
+    out = capsys.readouterr().out
+    assert "Real-spend limits (USD_REAL cents): per_request=1000" in out
+
+
+def test_status_shows_real_spend_breaker_section(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init"])
+    capsys.readouterr()
+
+    cli.main(["--db", str(db_path), "status"])
+    out = capsys.readouterr().out
+    assert "real-spend breaker (USD_REAL):" in out
+    assert "concurrent reserved: 0/200" in out

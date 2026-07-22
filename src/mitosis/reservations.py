@@ -17,7 +17,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
-from . import ledger
+from . import ledger, real_spend_breaker
 from .accounts import cell_cash, cell_committed
 from .models import Book, EntrySpec, Reservation, ReservationStatus
 
@@ -132,6 +132,13 @@ def request(
 
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Checked inside the write-locked transaction, not before it: two
+        # concurrent USD_REAL requests must not both pass this check before
+        # either commits (Charter C5 under concurrency). USD_SIM/RESOURCE
+        # reservations are untouched — the breaker is real-spend only.
+        if book == Book.USD_REAL:
+            real_spend_breaker.check(conn, requested_amount=maximum_amount, now=now)
+
         ledger._write_transaction(
             conn,
             book=book,
