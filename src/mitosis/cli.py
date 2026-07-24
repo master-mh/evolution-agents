@@ -182,6 +182,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     if by_status:
         print(f"    by status: {by_status}")
         print(f"    by type:   {by_type}")
+        print(f"    coroner reports filed: {lifecycle.count_coroner_reports(conn)}")
     else:
         print("    none yet")
     print()

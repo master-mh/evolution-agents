@@ -22,6 +22,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
+from .accounts import cell_cash, cell_committed
 from .models import Book, Entry, EntrySpec, Transaction
 
 
@@ -307,6 +308,33 @@ def get_balance(conn: sqlite3.Connection, account_id: str, book: Book) -> int:
         (account_id, book.value),
     ).fetchone()
     return row["balance"]
+
+
+def spend_by_book(conn: sqlite3.Connection, cell_id: str) -> dict[str, int]:
+    """Total minor units a Cell has genuinely spent (settled to an account
+    outside its own cell:{id}:cash/committed pair), grouped by book.
+
+    Internal cash<->committed moves (reserve/release) and inbound birth
+    funding are entries tagged with this cell_id too, but they land on the
+    cell's own accounts or are negative — excluding both leaves only the
+    positive entries that represent money leaving the cell's control for
+    good, e.g. a reservation's settlement destination entry. Used for
+    coroner reports (SPEC.md §10.5) via lifecycle.kill.
+    """
+    own_accounts = (cell_cash(cell_id), cell_committed(cell_id))
+    rows = conn.execute(
+        """
+        SELECT t.book AS book, COALESCE(SUM(e.amount_minor_units), 0) AS spent
+        FROM ledger_entries e
+        JOIN ledger_transactions t ON t.transaction_id = e.transaction_id
+        WHERE e.cell_id = ?
+          AND e.amount_minor_units > 0
+          AND e.account_id NOT IN (?, ?)
+        GROUP BY t.book
+        """,
+        (cell_id, *own_accounts),
+    ).fetchall()
+    return {r["book"]: r["spent"] for r in rows}
 
 
 def verify_conservation(conn: sqlite3.Connection, book: Book) -> bool:

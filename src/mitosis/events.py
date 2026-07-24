@@ -17,16 +17,17 @@ idempotency_key convention:
 
 Deliberately out of scope for this slice (see PRIORITIES.md): nothing in the
 kernel yet produces real events through this path — Phase 2's flight
-simulator and later Phase 1 work (lifecycle transitions, reproduction) are
-the first real callers. Poison-event handling dead-letters the event and
-audits it per §17.3, but does not quarantine the implicated Cell: the
-alive/dormant -> quarantined lifecycle transition doesn't exist in this
-kernel yet (tracked separately in PRIORITIES.md's "remaining lifecycle
-transitions"). `next_ready`'s ordering compares `simulated_at`/`available_at`
-timestamp strings directly (same approach as real_spend_breaker's window
-queries) — reconciling simulated vs. real effective_time against a *live*
-simulated clock (clock.py, not yet wired into any producer) is deferred to
-whichever slice first wires clock.py into a real event producer.
+simulator and later Phase 1 work (reproduction, resource metering) are the
+first real callers. Poison-event dead-lettering *does* quarantine the
+implicated Cell when the caller identifies one (`process_event`/
+`record_failure`'s optional `cell_id`) — see `record_failure`'s docstring;
+callers that can't attribute an event to a single Cell simply omit it, and
+dead-lettering proceeds without a quarantine side effect. `next_ready`'s
+ordering compares `simulated_at`/`available_at` timestamp strings directly
+(same approach as real_spend_breaker's window queries) — reconciling
+simulated vs. real effective_time against a *live* simulated clock (clock.py,
+not yet wired into any producer) is deferred to whichever slice first wires
+clock.py into a real event producer.
 """
 
 from __future__ import annotations
@@ -37,8 +38,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Callable
 
-from . import audit
-from .models import Event, EventStatus, OutboxEvent, OutboxEventSpec
+from . import audit, lifecycle
+from .models import CellStatus, Event, EventStatus, OutboxEvent, OutboxEventSpec
 
 DEFAULT_MAX_ATTEMPTS = 5
 
@@ -247,6 +248,7 @@ def process_event(
     handler: Callable[[sqlite3.Connection, Event], list[OutboxEventSpec]],
     *,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    cell_id: str | None = None,
 ) -> Event:
     """Atomically process one inbox event (docs/EVENT_SEMANTICS.md §3):
 
@@ -262,6 +264,11 @@ def process_event(
     retry from step 1. `handler` must not itself commit/rollback, the same
     shared-transaction convention as ledger._write_transaction/audit.record.
     On handler failure, records the failure (§17.3) and re-raises.
+
+    `cell_id`, if given, identifies the Cell this event is attributed to —
+    passed through to record_failure so dead-lettering after max_attempts
+    can quarantine it (§17.3). Omit when an event isn't attributable to a
+    single Cell.
     """
     event = get_event(conn, event_id)
     if event is None:
@@ -288,7 +295,7 @@ def process_event(
         conn.execute("COMMIT")
     except Exception as exc:
         conn.execute("ROLLBACK")
-        record_failure(conn, event_id, error=str(exc), max_attempts=max_attempts)
+        record_failure(conn, event_id, error=str(exc), max_attempts=max_attempts, cell_id=cell_id)
         raise
 
     result = get_event(conn, event_id)
@@ -302,12 +309,18 @@ def record_failure(
     *,
     error: str,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    cell_id: str | None = None,
 ) -> Event:
     """After a failed processing attempt: increment attempt_number, record
     last_error, and — once max_attempts is reached — move the event to
-    dead_letter and emit an audit event (§17.3). Does NOT quarantine the
-    implicated Cell (see module docstring: that lifecycle transition
-    doesn't exist yet)."""
+    dead_letter and emit an audit event (§17.3).
+
+    If `cell_id` is given and the event reaches dead_letter, the implicated
+    Cell is quarantined in the same transaction (docs/STATE_MACHINES.md §1.2
+    `*  -> quarantined`) — but only if it's currently alive/dormant; a Cell
+    that's already quarantined or dead from some other cause is left alone
+    rather than raising (a second poison event shouldn't crash dead-lettering
+    of the first)."""
     conn.execute("BEGIN IMMEDIATE")
     try:
         event = get_event(conn, event_id)
@@ -339,6 +352,16 @@ def record_failure(
                     "last_error": error,
                 },
             )
+            if cell_id is not None:
+                cell = lifecycle.get_cell(conn, cell_id)
+                if cell is not None and cell.status in (CellStatus.ALIVE, CellStatus.DORMANT):
+                    lifecycle._transition_core(
+                        conn,
+                        cell,
+                        CellStatus.QUARANTINED,
+                        reason=f"poison event {event_id} ({event.event_type}) dead-lettered",
+                        metadata={"linked_finding": {"event_id": event_id, "event_type": event.event_type}},
+                    )
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")

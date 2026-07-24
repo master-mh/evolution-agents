@@ -8,6 +8,8 @@ Maps to named Charter test IDs:
   charter_carrying_capacity          -> C9 (birth licence vs configured limits)
   charter_realspend_cap              -> C5 (concurrent-reserved cap vs configured limit)
   charter_idempotent_handlers        -> C6 (event redelivery applies handler side effects once)
+  charter_dead_cell_inert            -> C8 (dead Cells reject every further transition)
+  charter_audit_complete             -> C10 (every lifecycle transition emits an audit event)
 """
 
 from __future__ import annotations
@@ -20,7 +22,15 @@ from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, precon
 
 from mitosis import db, events, ledger, lifecycle, population, real_spend_breaker, reservations
 from mitosis.accounts import cell_cash, cell_committed
-from mitosis.models import Book, CellType, EntrySpec, PopulationLimits, RealSpendLimits, ReservationStatus
+from mitosis.models import (
+    Book,
+    CellStatus,
+    CellType,
+    EntrySpec,
+    PopulationLimits,
+    RealSpendLimits,
+    ReservationStatus,
+)
 
 FUTURE = datetime.now(timezone.utc) + timedelta(days=365)
 
@@ -333,3 +343,95 @@ def test_charter_idempotent_handlers(redelivery_count, amount):
     assert call_count == 1
     assert result.status.value == "processed"
     assert ledger.get_balance(conn, "dest", Book.USD_SIM) == amount
+
+
+# --- charter_dead_cell_inert (C8) & charter_audit_complete (C10) ------------
+# For any interleaving of birth/sleep/wake/quarantine/clear_quarantine/kill:
+# a dead Cell must reject every further transition attempt (C8), and every
+# transition that *does* succeed — birth included — emits exactly one more
+# cell_lifecycle_transition audit event for that Cell (C10).
+
+
+@settings(max_examples=30, stateful_step_count=25)
+class CellLifecycleMachine(RuleBasedStateMachine):
+    cell_ids = Bundle("cell_ids")
+
+    def __init__(self):
+        super().__init__()
+        self.conn = db.connect_and_migrate()
+        self.status: dict[str, CellStatus] = {}
+        self.transition_count: dict[str, int] = {}
+        self._next_id = 0
+
+    def _fresh_key(self, prefix: str) -> str:
+        self._next_id += 1
+        return f"{prefix}:{self._next_id}"
+
+    def _note(self, cell_id, status):
+        self.status[cell_id] = status
+        self.transition_count[cell_id] = self.transition_count.get(cell_id, 0) + 1
+
+    def _attempt(self, cell_id, fn, **kwargs):
+        """Call a bare transition regardless of the modeled current status.
+        A transition that raises is always safe to ignore (nothing changed,
+        C8's terminal-dead guarantee holds); a transition that succeeds must
+        never have started from a modeled-dead Cell."""
+        was_dead = self.status[cell_id] == CellStatus.DEAD
+        try:
+            result = fn(self.conn, cell_id, **kwargs)
+        except (lifecycle.InvalidTransitionError, lifecycle.LifecycleError):
+            return
+        assert not was_dead, "a transition succeeded against a dead Cell (C8)"
+        self._note(cell_id, result.status)
+
+    @rule(target=cell_ids)
+    def birth(self):
+        cell = lifecycle.create_cell(
+            self.conn, cell_type=CellType.EXPLORER, budget_minor_units=10,
+            book=Book.USD_SIM, idempotency_key=self._fresh_key("birth"),
+        )
+        self._note(cell.cell_id, cell.status)
+        return cell.cell_id
+
+    @rule(cell_id=cell_ids)
+    def sleep(self, cell_id):
+        self._attempt(cell_id, lifecycle.sleep)
+
+    @rule(cell_id=cell_ids)
+    def wake(self, cell_id):
+        self._attempt(cell_id, lifecycle.wake)
+
+    @rule(cell_id=cell_ids)
+    def quarantine(self, cell_id):
+        self._attempt(cell_id, lifecycle.quarantine, reason="test")
+
+    @rule(cell_id=cell_ids, target_alive=st.booleans())
+    def clear_quarantine(self, cell_id, target_alive):
+        to_status = CellStatus.ALIVE if target_alive else CellStatus.DORMANT
+        self._attempt(cell_id, lifecycle.clear_quarantine, to_status=to_status)
+
+    @rule(cell_id=cell_ids)
+    def kill(self, cell_id):
+        self._attempt(cell_id, lifecycle.kill, cause_of_death="test")
+
+    @invariant()
+    def dead_cells_are_terminal(self):
+        for cell_id, status in self.status.items():
+            if status == CellStatus.DEAD:
+                assert lifecycle.get_cell(self.conn, cell_id).status == CellStatus.DEAD
+
+    @invariant()
+    def audit_trail_matches_transition_count(self):
+        for cell_id, expected in self.transition_count.items():
+            actual = self.conn.execute(
+                "SELECT COUNT(*) AS n FROM audit_events "
+                "WHERE cell_id = ? AND event_type = 'cell_lifecycle_transition'",
+                (cell_id,),
+            ).fetchone()["n"]
+            assert actual == expected
+
+    def teardown(self):
+        self.conn.close()
+
+
+TestCellLifecycleMachine = CellLifecycleMachine.TestCase

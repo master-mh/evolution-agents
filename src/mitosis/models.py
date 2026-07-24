@@ -177,6 +177,27 @@ class AuditEvent(_Frozen):
     metadata: dict[str, Any] = {}
 
 
+class CoronerReport(_Frozen):
+    """The artifact filed on every Cell death (SPEC.md §10.5, Amendment A15;
+    docs/STATE_MACHINES.md §1.4).
+
+    `stage_reached` and `experiment_ids` are stored for shape parity with
+    §10.5's field list but always None/empty in this kernel: stage
+    progression and experiment tracking don't exist yet (same deferred-field
+    pattern as PopulationLimits/RealSpendLimits).
+    """
+
+    report_id: str
+    cell_id: str
+    genome_hash: str
+    spend_by_book: dict[str, int]
+    stage_reached: str | None = None
+    cause_of_death: str
+    final_hypotheses: tuple[str, ...] = ()
+    experiment_ids: tuple[str, ...] = ()
+    created_at_utc: datetime
+
+
 class PopulationLimits(_Frozen):
     """SPEC.md §9.2, §27.1 `colony.yaml` `population:` block.
 

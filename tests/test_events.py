@@ -2,8 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from mitosis import events, ledger
-from mitosis.models import Book, EntrySpec, EventStatus, OutboxEventSpec
+from mitosis import events, ledger, lifecycle
+from mitosis.models import Book, CellStatus, CellType, EntrySpec, EventStatus, OutboxEventSpec
 
 FUTURE = datetime.now(timezone.utc) + timedelta(days=365)
 
@@ -251,6 +251,71 @@ def test_redelivering_a_dead_lettered_event_is_a_no_op(conn):
     result = events.process_event(conn, event.event_id, _failing_handler, max_attempts=2)
     assert result.status == EventStatus.DEAD_LETTER
     assert result.attempt_number == 2
+
+
+# --- poison-event Cell quarantine (§17.3; docs/STATE_MACHINES.md §1.2) ------
+
+
+def _born(conn, idempotency_key="cell-1"):
+    return lifecycle.create_cell(
+        conn, cell_type=CellType.EXPLORER, budget_minor_units=100,
+        book=Book.USD_SIM, idempotency_key=idempotency_key,
+    )
+
+
+def test_dead_lettering_quarantines_the_implicated_cell(conn):
+    cell = _born(conn)
+    event = events.enqueue(conn, event_type="poison", source="s", priority=0, dedupe_key="dk-1")
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            events.process_event(conn, event.event_id, _failing_handler, max_attempts=2, cell_id=cell.cell_id)
+
+    assert lifecycle.get_cell(conn, cell.cell_id).status == CellStatus.QUARANTINED
+    row = conn.execute(
+        "SELECT * FROM audit_events WHERE cell_id = ? AND description LIKE '%quarantined%'",
+        (cell.cell_id,),
+    ).fetchone()
+    assert row is not None
+    assert event.event_id in row["metadata_json"]
+
+
+def test_dead_lettering_without_cell_id_does_not_touch_any_cell(conn):
+    cell = _born(conn)
+    event = events.enqueue(conn, event_type="poison", source="s", priority=0, dedupe_key="dk-1")
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            events.process_event(conn, event.event_id, _failing_handler, max_attempts=2)
+
+    assert lifecycle.get_cell(conn, cell.cell_id).status == CellStatus.ALIVE
+
+
+def test_second_poison_event_does_not_crash_on_already_quarantined_cell(conn):
+    cell = _born(conn)
+    first = events.enqueue(conn, event_type="poison", source="s", priority=0, dedupe_key="dk-1")
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            events.process_event(conn, first.event_id, _failing_handler, max_attempts=2, cell_id=cell.cell_id)
+    assert lifecycle.get_cell(conn, cell.cell_id).status == CellStatus.QUARANTINED
+
+    second = events.enqueue(conn, event_type="poison", source="s", priority=0, dedupe_key="dk-2")
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            events.process_event(conn, second.event_id, _failing_handler, max_attempts=2, cell_id=cell.cell_id)
+
+    assert events.get_event(conn, second.event_id).status == EventStatus.DEAD_LETTER
+    assert lifecycle.get_cell(conn, cell.cell_id).status == CellStatus.QUARANTINED
+
+
+def test_dead_lettering_does_not_quarantine_a_dead_cell(conn):
+    cell = _born(conn)
+    lifecycle.kill(conn, cell.cell_id, cause_of_death="unrelated")
+
+    event = events.enqueue(conn, event_type="poison", source="s", priority=0, dedupe_key="dk-1")
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            events.process_event(conn, event.event_id, _failing_handler, max_attempts=2, cell_id=cell.cell_id)
+
+    assert lifecycle.get_cell(conn, cell.cell_id).status == CellStatus.DEAD
 
 
 # --- replay_dead_letter -------------------------------------------------------

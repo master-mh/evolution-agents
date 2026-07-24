@@ -9,6 +9,29 @@ recording the genome, in one SQLite write transaction.
 Charter C9 ("birth requires carrying-capacity permission") is enforced via
 population.check_birth_licence — see that module for what is and isn't
 covered (only max_living_cells/max_active_cells; no displacement path yet).
+
+The remaining transitions (`wake`/`sleep`/`quarantine`/`clear_quarantine`/
+`kill`) implement the rest of docs/STATE_MACHINES.md §1.2's adjacency table
+via `_ALLOWED_TRANSITIONS`, the same guard-table-as-idempotency-guard shape
+`reservations.py` uses: once a Cell leaves a state, retrying the same bare
+transition against its new status raises `InvalidTransitionError` rather
+than silently reapplying (there's no idempotency_key for these — unlike
+`create_cell`/`reservations.request`, they have no ledger effect to
+dedupe... except `kill`, whose coroner report is protected the same way:
+`coroner_reports.cell_id` is UNIQUE, and DEAD has no outbound transitions in
+`_ALLOWED_TRANSITIONS`, so a second `kill()` call always raises before it
+could double-insert).
+
+Charter C10 ("every lifecycle transition emits an audit event") applies to
+every transition below, not just birth.
+
+Deliberately out of scope for this slice: `kill()` does not sweep the dead
+Cell's open reservations or return its committed/cash balances anywhere —
+that's a reconciliation concern (arguably the sweeper's, or a future
+"colony treasury reclaims a dead Cell's residual balance" step), not part of
+the lifecycle transition itself. `quarantine()`/`clear_quarantine()` take a
+free-text reason/linked-finding payload rather than a structured taint-label
+schema — §18's provenance labels aren't modeled in this kernel yet.
 """
 
 from __future__ import annotations
@@ -20,11 +43,33 @@ from datetime import datetime, timezone
 
 from . import audit, genome, ledger, population
 from .accounts import cell_cash
-from .models import Book, Cell, CellGenome, CellStatus, CellType, EntrySpec
+from .models import Book, Cell, CellGenome, CellStatus, CellType, CoronerReport, EntrySpec
 
 
 class LifecycleError(Exception):
     pass
+
+
+class InvalidTransitionError(LifecycleError):
+    pass
+
+
+_ALLOWED_TRANSITIONS: dict[CellStatus, frozenset[CellStatus]] = {
+    CellStatus.ALIVE: frozenset({CellStatus.DORMANT, CellStatus.QUARANTINED, CellStatus.DEAD}),
+    CellStatus.DORMANT: frozenset({CellStatus.ALIVE, CellStatus.QUARANTINED, CellStatus.DEAD}),
+    CellStatus.QUARANTINED: frozenset({CellStatus.ALIVE, CellStatus.DORMANT, CellStatus.DEAD}),
+    # CREATED is transient (handled solely by create_cell) and DEAD is
+    # terminal (Charter C8) — neither is a key, so both default to the empty
+    # frozenset() below and reject every target.
+}
+
+
+def _check_transition(current: CellStatus, target: CellStatus) -> None:
+    allowed = _ALLOWED_TRANSITIONS.get(current, frozenset())
+    if target not in allowed:
+        raise InvalidTransitionError(
+            f"cannot transition cell from {current.value!r} to {target.value!r}"
+        )
 
 
 def _row_to_cell(row: sqlite3.Row) -> Cell:
@@ -179,3 +224,211 @@ def create_cell(
     result = get_cell(conn, cell_id)
     assert result is not None
     return result
+
+
+def _transition_core(
+    conn: sqlite3.Connection,
+    cell: Cell,
+    target: CellStatus,
+    *,
+    reason: str,
+    metadata: dict | None = None,
+) -> None:
+    """Apply an already-validated status change + its audit event. Caller
+    must already hold a write transaction (BEGIN IMMEDIATE) and must have
+    called _check_transition first — the non-transactional-core shape
+    ledger._write_transaction established, so other modules (events.py's
+    poison-event quarantine) can fold a transition into their own atomic
+    operation without nesting BEGIN."""
+    conn.execute(
+        "UPDATE cells SET status = ? WHERE cell_id = ?",
+        (target.value, cell.cell_id),
+    )
+    audit.record(
+        conn,
+        event_type="cell_lifecycle_transition",
+        cell_id=cell.cell_id,
+        description=f"{cell.status.value} -> {target.value} ({reason})",
+        metadata={"from": cell.status.value, "to": target.value, **(metadata or {})},
+    )
+
+
+def _transition(
+    conn: sqlite3.Connection,
+    cell_id: str,
+    target: CellStatus,
+    *,
+    reason: str,
+    valid_sources: frozenset[CellStatus],
+    metadata: dict | None = None,
+) -> Cell:
+    """`valid_sources` narrows _ALLOWED_TRANSITIONS's per-status adjacency
+    down to the specific source(s) a given *semantic* operation may start
+    from. This matters because two different operations can share a target:
+    both `wake` (dormant -> alive) and `clear_quarantine` (quarantined ->
+    alive) end at `alive`, but `wake` must not be usable to spring a
+    quarantined Cell loose — only clear_quarantine's explicit review
+    decision may do that, even though quarantined -> alive is itself a valid
+    FSM edge."""
+    cell = get_cell(conn, cell_id)
+    if cell is None:
+        raise LifecycleError(f"no such cell: {cell_id}")
+    if cell.status not in valid_sources:
+        raise InvalidTransitionError(
+            f"cannot {reason}: cell {cell_id} is {cell.status.value!r}, "
+            f"expected one of {sorted(s.value for s in valid_sources)}"
+        )
+    _check_transition(cell.status, target)
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        _transition_core(conn, cell, target, reason=reason, metadata=metadata)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+    result = get_cell(conn, cell_id)
+    assert result is not None
+    return result
+
+
+def sleep(conn: sqlite3.Connection, cell_id: str) -> Cell:
+    """alive -> dormant: wake-event processing complete, Cell has no
+    pending work (§17.2)."""
+    return _transition(
+        conn, cell_id, CellStatus.DORMANT,
+        reason="wake-event processing complete", valid_sources=frozenset({CellStatus.ALIVE}),
+    )
+
+
+def wake(conn: sqlite3.Connection, cell_id: str) -> Cell:
+    """dormant -> alive: a wake event was delivered — scheduled research
+    cycle, synthetic customer reply, payment settlement, test completion,
+    sibling discovery, capital allocation, market change, audit request, or
+    human decision (§17.2). Only from dormant — waking a quarantined Cell
+    requires clear_quarantine's explicit review decision instead."""
+    return _transition(
+        conn, cell_id, CellStatus.ALIVE,
+        reason="wake event delivered", valid_sources=frozenset({CellStatus.DORMANT}),
+    )
+
+
+def quarantine(
+    conn: sqlite3.Connection,
+    cell_id: str,
+    *,
+    reason: str,
+    linked_finding: dict | None = None,
+) -> Cell:
+    """alive|dormant -> quarantined: policy violation, poison-event threshold
+    exceeded (§17.3), or adversarial-lineage taint detected (§18.2). The
+    triggering finding is linked in the audit event so the quarantine is
+    auditable, not just a status flip (§1.4)."""
+    return _transition(
+        conn,
+        cell_id,
+        CellStatus.QUARANTINED,
+        reason=reason,
+        valid_sources=frozenset({CellStatus.ALIVE, CellStatus.DORMANT}),
+        metadata={"linked_finding": linked_finding or {}},
+    )
+
+
+def clear_quarantine(conn: sqlite3.Connection, cell_id: str, *, to_status: CellStatus) -> Cell:
+    """quarantined -> alive|dormant: human/Auditor review clears the Cell
+    (mirrors the reservation FSM's disputed -> resolved pattern, §4.4).
+    Review may only confirm or clear a Cell, never invent a death criterion
+    (§1.3) — call kill() separately if review instead confirms death. Only
+    from quarantined — this is the sole path back to alive/dormant from
+    quarantine; wake()/sleep() are reserved for the dormant<->alive cycle."""
+    if to_status not in (CellStatus.ALIVE, CellStatus.DORMANT):
+        raise LifecycleError("clear_quarantine target must be alive or dormant")
+    return _transition(
+        conn, cell_id, to_status,
+        reason="quarantine review cleared", valid_sources=frozenset({CellStatus.QUARANTINED}),
+    )
+
+
+def kill(
+    conn: sqlite3.Connection,
+    cell_id: str,
+    *,
+    cause_of_death: str,
+    final_hypotheses: list[str] | None = None,
+    experiment_ids: list[str] | None = None,
+    stage_reached: str | None = None,
+) -> Cell:
+    """alive|dormant|quarantined -> dead (terminal, Charter C8). Files a
+    coroner report artifact in the same transaction as the status change
+    (SPEC.md §10.5, Amendment A15): genome hash, spend by book (derived from
+    the ledger — see ledger.spend_by_book), cause of death, final
+    hypotheses, and links to experiments. `stage_reached`/`experiment_ids`
+    are always None/empty in this kernel — see module docstring."""
+    cell = get_cell(conn, cell_id)
+    if cell is None:
+        raise LifecycleError(f"no such cell: {cell_id}")
+    _check_transition(cell.status, CellStatus.DEAD)
+
+    spend = ledger.spend_by_book(conn, cell_id)
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        _transition_core(
+            conn, cell, CellStatus.DEAD,
+            reason=cause_of_death,
+            metadata={"cause_of_death": cause_of_death},
+        )
+        conn.execute(
+            """
+            INSERT INTO coroner_reports (
+                report_id, cell_id, genome_hash, spend_by_book_json,
+                stage_reached, cause_of_death, final_hypotheses_json,
+                experiment_ids_json, created_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                cell_id,
+                cell.genome_hash,
+                json.dumps(spend, sort_keys=True, separators=(",", ":")),
+                stage_reached,
+                cause_of_death,
+                json.dumps(list(final_hypotheses or []), separators=(",", ":")),
+                json.dumps(list(experiment_ids or []), separators=(",", ":")),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+    result = get_cell(conn, cell_id)
+    assert result is not None
+    return result
+
+
+def _row_to_coroner_report(row: sqlite3.Row) -> CoronerReport:
+    return CoronerReport(
+        report_id=row["report_id"],
+        cell_id=row["cell_id"],
+        genome_hash=row["genome_hash"],
+        spend_by_book=json.loads(row["spend_by_book_json"]),
+        stage_reached=row["stage_reached"],
+        cause_of_death=row["cause_of_death"],
+        final_hypotheses=tuple(json.loads(row["final_hypotheses_json"])),
+        experiment_ids=tuple(json.loads(row["experiment_ids_json"])),
+        created_at_utc=datetime.fromisoformat(row["created_at_utc"]),
+    )
+
+
+def get_coroner_report(conn: sqlite3.Connection, cell_id: str) -> CoronerReport | None:
+    row = conn.execute(
+        "SELECT * FROM coroner_reports WHERE cell_id = ?", (cell_id,)
+    ).fetchone()
+    return _row_to_coroner_report(row) if row else None
+
+
+def count_coroner_reports(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COUNT(*) AS n FROM coroner_reports").fetchone()["n"]
