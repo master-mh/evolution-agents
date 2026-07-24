@@ -10,6 +10,7 @@ Maps to named Charter test IDs:
   charter_idempotent_handlers        -> C6 (event redelivery applies handler side effects once)
   charter_dead_cell_inert            -> C8 (dead Cells reject every further transition)
   charter_audit_complete             -> C10 (every lifecycle transition emits an audit event)
+  charter_no_overspend                -> C4 (RESOURCE-book usage never exceeds its reservation cap)
 """
 
 from __future__ import annotations
@@ -20,13 +21,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, precondition, rule
 
-from mitosis import db, events, ledger, lifecycle, population, real_spend_breaker, reservations
+from mitosis import db, events, ledger, lifecycle, population, real_spend_breaker, reservations, resource_metering
 from mitosis.accounts import cell_cash, cell_committed
 from mitosis.models import (
     Book,
     CellStatus,
     CellType,
     EntrySpec,
+    ResourceType,
     PopulationLimits,
     RealSpendLimits,
     ReservationStatus,
@@ -435,3 +437,38 @@ class CellLifecycleMachine(RuleBasedStateMachine):
 
 
 TestCellLifecycleMachine = CellLifecycleMachine.TestCase
+
+
+# --- charter_no_overspend (C4) -----------------------------------------------
+# For any reservation cap and any sequence of attempted resource-usage
+# recordings against it, cumulative recorded minor_units must never exceed
+# the cap after any single attempt — granted or denied.
+
+
+@given(
+    cap=st.integers(min_value=10, max_value=500),
+    amounts=st.lists(st.integers(min_value=1, max_value=200), min_size=0, max_size=15),
+)
+@settings(max_examples=50)
+def test_charter_no_overspend(cap, amounts):
+    conn = db.connect_and_migrate()
+    cell = lifecycle.create_cell(
+        conn, cell_type=CellType.EXPLORER, budget_minor_units=1_000_000,
+        book=Book.RESOURCE, idempotency_key="cell",
+    )
+    r = reservations.request(
+        conn, cell_id=cell.cell_id, book=Book.RESOURCE, currency="RESOURCE",
+        maximum_amount=cap, expires_at=FUTURE, idempotency_key="r",
+    )
+
+    for i, amount in enumerate(amounts):
+        try:
+            resource_metering.record_usage(
+                conn, cell_id=cell.cell_id, reservation_id=r.reservation_id,
+                resource_type=ResourceType.INPUT_TOKENS, quantity=1, minor_units=amount,
+                idempotency_key=f"u:{i}",
+            )
+        except resource_metering.ResourceOverspendError:
+            pass
+        # the invariant must hold after every single attempt, not just at the end
+        assert resource_metering.total_minor_units(conn, r.reservation_id) <= cap

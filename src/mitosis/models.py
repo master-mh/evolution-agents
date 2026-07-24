@@ -198,6 +198,40 @@ class CoronerReport(_Frozen):
     created_at_utc: datetime
 
 
+class ResourceType(StrEnum):
+    """RESOURCE-book consumption categories (SPEC.md §2.2)."""
+
+    INPUT_TOKENS = "input_tokens"
+    OUTPUT_TOKENS = "output_tokens"
+    MODEL_CALLS = "model_calls"
+    CPU_SECONDS = "cpu_seconds"
+    MEMORY_SECONDS = "memory_seconds"
+    BROWSER_MINUTES = "browser_minutes"
+    NETWORK_REQUESTS = "network_requests"
+    STORAGE_BYTE_DAYS = "storage_byte_days"
+    HUMAN_MINUTES = "human_minutes"
+    APPROVAL_ACTIONS = "approval_actions"
+
+
+class ResourceUsage(_Frozen):
+    """One metered RESOURCE-book consumption event (SPEC.md §2.2/§2.3,
+    Amendment A6). `quantity` is the physical unit count (e.g. 500 tokens);
+    `minor_units` is what that consumption costs against the linked
+    reservation's RESOURCE-book budget — resource_metering.py enforces the
+    two never diverge from Charter C4 (a Cell cannot overspend its
+    authorised budget)."""
+
+    usage_id: str
+    cell_id: str
+    reservation_id: str
+    resource_type: ResourceType
+    quantity: int
+    minor_units: int
+    recorded_at_utc: datetime
+    idempotency_key: str
+    metadata: dict[str, Any] = {}
+
+
 class PopulationLimits(_Frozen):
     """SPEC.md §9.2, §27.1 `colony.yaml` `population:` block.
 

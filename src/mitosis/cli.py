@@ -15,7 +15,18 @@ import uuid
 from datetime import timedelta
 from pathlib import Path
 
-from . import clock, db, events, ledger, lifecycle, money, population, real_spend_breaker, reservations
+from . import (
+    clock,
+    db,
+    events,
+    ledger,
+    lifecycle,
+    money,
+    population,
+    real_spend_breaker,
+    reservations,
+    resource_metering,
+)
 from .models import (
     DEFAULT_POPULATION_LIMITS,
     DEFAULT_REAL_SPEND_LIMITS,
@@ -189,6 +200,14 @@ def cmd_status(args: argparse.Namespace) -> None:
     print("  reservations:")
     r_by_status = reservations.count_by_status(conn)
     print(f"    by status: {r_by_status}" if r_by_status else "    none yet")
+    print()
+    print("  resource usage (RESOURCE book, Amendment A6):")
+    usage_totals = resource_metering.total_quantity_by_type(conn)
+    if usage_totals:
+        print(f"    by type: {usage_totals}")
+        print(f"    linkage complete: {resource_metering.verify_linkage(conn)}")
+    else:
+        print("    none yet")
     print()
     print("  real-spend breaker (USD_REAL):")
     snap = real_spend_breaker.snapshot(conn)
@@ -367,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
         real_spend_breaker.RealSpendBreakerError,
         clock.ClockError,
         events.EventError,
+        resource_metering.ResourceMeteringError,
         ValueError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
