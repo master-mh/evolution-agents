@@ -19,9 +19,9 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-import uuid
 from datetime import datetime, timezone
 
+from . import ids
 from .accounts import cell_cash, cell_committed
 from .models import Book, Entry, EntrySpec, Transaction
 
@@ -103,14 +103,14 @@ def _write_transaction(
     if effective.tzinfo is None:
         raise LedgerError("effective_at_utc must be timezone-aware UTC (Charter C11)")
 
-    transaction_id = str(uuid.uuid4())
+    transaction_id = ids.new_id()
     created_at_iso = now.isoformat()
     effective_at_iso = effective.astimezone(timezone.utc).isoformat()
 
     entry_rows = []
     canonical_entries = []
     for spec in entries:
-        entry_id = str(uuid.uuid4())
+        entry_id = ids.new_id()
         entry_rows.append(
             (
                 entry_id,

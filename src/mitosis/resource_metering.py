@@ -39,10 +39,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import uuid
 from datetime import datetime, timezone
 
-from . import reservations
+from . import ids, reservations
 from .models import Book, ReservationStatus, ResourceType, ResourceUsage
 
 
@@ -144,7 +143,7 @@ def record_usage(
     if minor_units <= 0:
         raise ResourceMeteringError("minor_units must be positive")
 
-    usage_id = str(uuid.uuid4())
+    usage_id = ids.new_id()
     now = datetime.now(timezone.utc)
 
     conn.execute("BEGIN IMMEDIATE")

@@ -38,10 +38,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import uuid
 from datetime import datetime, timezone
 
-from . import accounts, audit, genome, ledger, population
+from . import accounts, audit, genome, ids, ledger, population
 from .accounts import cell_cash
 from .models import Book, Cell, CellGenome, CellStatus, CellType, CoronerReport, EntrySpec
 
@@ -133,7 +132,7 @@ def _get_or_create_genome(conn: sqlite3.Connection, cell_type: CellType) -> str:
         ) VALUES (?, ?, 1, '[]', ?, NULL, ?, '[]', '[]', NULL, 'unclassified', '[]')
         """,
         (
-            str(uuid.uuid4()),
+            ids.new_id(),
             genome_hash,
             datetime.now(timezone.utc).isoformat(),
             json.dumps(canonical, sort_keys=True, separators=(",", ":")),
@@ -163,7 +162,7 @@ def create_cell(
             "(not a fixed account or cell:{id}:cash|committed)"
         )
 
-    cell_id = str(uuid.uuid4())
+    cell_id = ids.new_id()
     now = datetime.now(timezone.utc)
 
     conn.execute("BEGIN IMMEDIATE")
@@ -399,7 +398,7 @@ def kill(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                str(uuid.uuid4()),
+                ids.new_id(),
                 cell_id,
                 cell.genome_hash,
                 json.dumps(spend, sort_keys=True, separators=(",", ":")),

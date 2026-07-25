@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import uuid
 from datetime import timedelta
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from . import (
     db,
     events,
     golden,
+    ids,
     ledger,
     lifecycle,
     money,
@@ -242,7 +242,7 @@ def cmd_create_cell(args: argparse.Namespace) -> None:
     book = Book(args.book)
     budget_minor_units = money.parse_minor_units(args.budget, book.value)
     cell_type = CellType(args.type)
-    idempotency_key = args.idempotency_key or f"cli_create_cell:{uuid.uuid4()}"
+    idempotency_key = args.idempotency_key or f"cli_create_cell:{ids.new_id()}"
 
     cell = lifecycle.create_cell(
         conn,

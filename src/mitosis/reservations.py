@@ -24,10 +24,9 @@ requests against the same cell must not both pass before either commits.
 from __future__ import annotations
 
 import sqlite3
-import uuid
 from datetime import datetime, timezone
 
-from . import accounts, ledger, real_spend_breaker
+from . import accounts, ids, ledger, real_spend_breaker
 from .accounts import cell_cash, cell_committed
 from .models import Book, EntrySpec, Reservation, ReservationStatus
 
@@ -141,7 +140,7 @@ def request(
     if expires_at.tzinfo is None:
         raise ReservationError("expires_at must be timezone-aware UTC (Charter C11)")
 
-    reservation_id = str(uuid.uuid4())
+    reservation_id = ids.new_id()
     now = datetime.now(timezone.utc)
 
     conn.execute("BEGIN IMMEDIATE")

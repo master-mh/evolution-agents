@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import uuid
 from datetime import datetime, timezone
+
+from . import ids
 
 
 def record(
@@ -23,7 +24,7 @@ def record(
     description: str = "",
     metadata: dict | None = None,
 ) -> str:
-    event_id = str(uuid.uuid4())
+    event_id = ids.new_id()
     conn.execute(
         """
         INSERT INTO audit_events (event_id, event_type, cell_id, description,

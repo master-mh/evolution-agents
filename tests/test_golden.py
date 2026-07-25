@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from mitosis import db, golden, ledger, lifecycle
+from mitosis import db, golden, ids, ledger, lifecycle
 from mitosis.models import Book, CellStatus
 
 
@@ -105,6 +105,45 @@ def test_semantic_hash_is_reproducible_across_runs():
         finally:
             conn.close()
     assert len(hashes) == 1
+
+
+def _raw_ids(conn):
+    return (
+        [r["cell_id"] for r in conn.execute("SELECT cell_id FROM cells ORDER BY rowid")],
+        [
+            r["transaction_id"]
+            for r in conn.execute("SELECT transaction_id FROM ledger_transactions ORDER BY rowid")
+        ],
+        [r["event_id"] for r in conn.execute("SELECT event_id FROM event_inbox ORDER BY rowid")],
+    )
+
+
+def test_raw_ids_are_reproducible_across_runs():
+    """The determinism gap ids.py closes (see golden.py's module docstring):
+    not just the semantic snapshot, but the actual uuids the scenario
+    generates, are identical run to run given GOLDEN_RUN_ID_SEED."""
+    conn1 = _fresh_run()
+    try:
+        first = _raw_ids(conn1)
+    finally:
+        conn1.close()
+
+    conn2 = _fresh_run()
+    try:
+        second = _raw_ids(conn2)
+    finally:
+        conn2.close()
+
+    assert first == second
+    assert all(first)  # sanity: none of the three id lists is empty
+
+
+def test_run_scenario_does_not_leak_seeded_ids_afterward():
+    """`run_scenario` scopes its determinism to its own duration (`ids.seeded`,
+    not a bare `ids.seed`) — id generation elsewhere must stay random."""
+    conn = _fresh_run()
+    conn.close()
+    assert ids.new_id() != ids.new_id()
 
 
 def test_snapshot_contains_no_volatile_identifiers():

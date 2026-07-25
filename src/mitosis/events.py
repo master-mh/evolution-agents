@@ -34,11 +34,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import uuid
 from datetime import datetime, timezone
 from typing import Callable
 
-from . import audit, lifecycle
+from . import audit, ids, lifecycle
 from .models import CellStatus, Event, EventStatus, OutboxEvent, OutboxEventSpec
 
 DEFAULT_MAX_ATTEMPTS = 5
@@ -148,7 +147,7 @@ def enqueue(
     if simulated_at is not None and simulated_at.tzinfo is None:
         raise EventError("simulated_at must be timezone-aware UTC (Charter C11)")
 
-    event_id = str(uuid.uuid4())
+    event_id = ids.new_id()
 
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -226,7 +225,7 @@ def _stage_outbox(
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         """,
         (
-            str(uuid.uuid4()),
+            ids.new_id(),
             spec.dedupe_key,
             spec.event_type,
             spec.source,

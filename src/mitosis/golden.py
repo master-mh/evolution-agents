@@ -16,22 +16,30 @@ fired and how often. Cell ids are replaced by birth-order aliases
 (`cell#0`, `cell#1`, ...) so the snapshot survives the kernel generating
 different uuids on every run.
 
-That normalization isn't a shortcut around determinism — it's the only
-comparison that *can* work today, and the honest reason is worth stating:
-the kernel has no seeded id generation and its timestamps are still real
-wall-clock (see clock.py's docstring), so a byte-identical rerun is
-currently impossible by construction. Both are tracked in PRIORITIES.md.
+That normalization is kept even now that ids.py exists (ADR-017's real
+rationale is schema-evolution robustness — a byte-for-byte comparison would
+break on any legitimate added field — not id determinism), but the raw run
+itself no longer has to be non-reproducible underneath it: `run_scenario`
+seeds `ids.py` (`GOLDEN_RUN_ID_SEED`, below) for its whole duration, so two
+runs now produce not just the same semantic snapshot but the same raw
+uuids in the same order — `test_semantic_hash_is_reproducible_across_runs`
+in `tests/test_golden.py` checks the former, `test_raw_ids_are_reproducible_
+across_runs` the latter. Kernel timestamps are still real wall-clock outside
+this scenario's own fixed `SCENARIO_EPOCH` (see clock.py's docstring), so a
+true byte-identical rerun of a *real* colony remains out of reach — but
+that gap no longer exists for a scenario that, like this one, never reads
+the wall clock for anything reaching the snapshot.
 
-**Known determinism gap this surfaces (worth fixing before Phase 2).**
-Amendment A5's ordering key `(effective_time, priority, event_id)` is a
-*total* order, but not a *reproducible* one: when two events share an
-effective_time and a priority, the tie-break falls to `event_id`, which is
-a uuid4 today. Two runs of the same scenario would then order those two
-events differently. `_SCENARIO` sidesteps this by giving every event a
-distinct priority, so the golden run itself is stable — but a future
-scenario that doesn't, or a real Phase 2 producer, would be flaky. The fix
-is seeded/monotonic event ids, which is the same work as seeded ids
-generally.
+**Determinism gap this closes.** Amendment A5's ordering key
+`(effective_time, priority, event_id)` is a *total* order, but was not
+previously a *reproducible* one: when two events share an effective_time
+and a priority, the tie-break falls to `event_id`, which was a fresh uuid4
+every run. `_SCENARIO` sidesteps needing that tie-break at all by giving
+every event a distinct priority — still true, and left that way since it's
+also the clearest scenario to read — but with `ids.py` seeded, a future
+scenario (or a real Phase 2 producer under a seeded run) that *does* rely
+on the event_id tie-break now gets the same order every time, because it
+gets the same event_ids every time.
 
 Expectations are **versioned** (§26.2/A12): `golden_expectations.json` ships
 `expectation_version` alongside the hash and invariants, and updating it is
@@ -53,6 +61,7 @@ from . import (
     clock,
     db,
     events,
+    ids,
     ledger,
     lifecycle,
     population,
@@ -81,6 +90,10 @@ EXPECTATION_VERSION = 1
 SCENARIO_EPOCH = datetime(2026, 1, 1, tzinfo=timezone.utc)
 SCENARIO_RESERVATION_EXPIRY = datetime(2030, 1, 1, tzinfo=timezone.utc)
 
+# Fixed seed for ids.py (see module docstring) — every raw uuid the scenario
+# generates, not just its semantic snapshot, is reproducible run to run.
+GOLDEN_RUN_ID_SEED = 20260101
+
 
 class GoldenRunError(Exception):
     pass
@@ -98,8 +111,15 @@ def run_scenario(conn: sqlite3.Connection) -> None:
     event, and the simulated clock.
 
     Ordered and fully specified: no randomness, no wall-clock reads, no
-    input from outside this function.
+    input from outside this function — every id the kernel generates while
+    this runs is seeded (`GOLDEN_RUN_ID_SEED`) too, so the whole run,
+    not just its semantic snapshot, is reproducible run to run.
     """
+    with ids.seeded(GOLDEN_RUN_ID_SEED):
+        _run_scenario_body(conn)
+
+
+def _run_scenario_body(conn: sqlite3.Connection) -> None:
     # 1. Configuration — set explicitly rather than relying on defaults, so
     #    a later change to DEFAULT_* constants doesn't silently alter the
     #    golden run's meaning.
