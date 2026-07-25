@@ -19,6 +19,7 @@ from . import (
     clock,
     db,
     events,
+    golden,
     ledger,
     lifecycle,
     money,
@@ -272,6 +273,55 @@ def cmd_advance_time(args: argparse.Namespace) -> None:
     conn.close()
 
 
+def cmd_verify_golden_run(args: argparse.Namespace) -> None:
+    """SPEC.md §26. Runs against its own fresh in-memory colony — never the
+    --db path, since a golden run must not depend on (or disturb) whatever
+    state a real colony happens to be in."""
+    if args.update_expectations:
+        expectations = golden.build_expectations()
+        path = golden.write_expectations(expectations)
+        print("Golden-run expectations REGENERATED (Amendment A12 migration path).")
+        print(f"  file:    {path}")
+        print(f"  version: {expectations['expectation_version']}")
+        print(f"  hash:    {expectations['semantic_hash']}")
+        print()
+        print("Review the diff before committing: an expectation change that wasn't")
+        print("a deliberate, reviewed schema migration means kernel behaviour drifted.")
+        return
+
+    result = golden.verify()
+    print(f"Golden-run replay (expectation version {result.expectation_version})")
+    print()
+    print("  semantic invariants:")
+    for name, value in result.invariants.items():
+        print(f"    {name}: {value}")
+    print()
+    print(f"  expected hash: {result.expected_hash}")
+    print(f"  actual hash:   {result.actual_hash}")
+    print()
+
+    if result.matched:
+        print("PASS — the kernel reproduces the golden run exactly.")
+        return
+
+    if result.invariant_failures:
+        print("FAIL — semantic invariants diverged:")
+        for failure in result.invariant_failures:
+            print(f"    {failure}")
+    if not result.hash_matched:
+        print("FAIL — semantic hash mismatch. Sections that differ:")
+        expectations = golden.load_expectations()
+        for difference in golden.diff_snapshots(
+            expectations.get("snapshot", {}), result.snapshot
+        ):
+            print(f"    {difference}")
+    print()
+    raise CliError(
+        "golden run did not match its expectations — kernel economic behaviour changed. "
+        "If the change was intended, re-run with --update-expectations and review the diff."
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mitosis", description="MITOSIS colony kernel CLI")
     parser.add_argument(
@@ -367,6 +417,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     advance_time_parser.set_defaults(func=cmd_advance_time)
 
+    golden_parser = subparsers.add_parser(
+        "verify-golden-run",
+        help="replay the golden scenario and compare it against stored expectations",
+    )
+    golden_parser.add_argument(
+        "--update-expectations",
+        action="store_true",
+        help="regenerate the stored expectations instead of checking against them "
+        "(Amendment A12's deliberate migration path — review the resulting diff)",
+    )
+    golden_parser.set_defaults(func=cmd_verify_golden_run)
+
     return parser
 
 
@@ -387,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         clock.ClockError,
         events.EventError,
         resource_metering.ResourceMeteringError,
+        golden.GoldenRunError,
         ValueError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)

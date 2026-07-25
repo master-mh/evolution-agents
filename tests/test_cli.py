@@ -268,3 +268,50 @@ def test_advance_time_rejects_negative_days(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "error:" in err
     assert "backwards" in err
+
+
+def test_verify_golden_run_passes(capsys):
+    """Runs against its own in-memory colony — no --db needed."""
+    exit_code = cli.main(["verify-golden-run"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "PASS — the kernel reproduces the golden run exactly." in out
+    assert "conservation_usd_sim: True" in out
+
+
+def test_verify_golden_run_reports_drift_and_exits_nonzero(capsys, monkeypatch):
+    from mitosis import golden
+
+    real_verify = golden.verify
+
+    def drifted():
+        result = real_verify()
+        return golden.GoldenRunResult(
+            matched=False,
+            expectation_version=result.expectation_version,
+            expected_hash="deadbeef" * 8,
+            actual_hash=result.actual_hash,
+            invariant_failures=["living_cells: expected 3, got 2"],
+            snapshot={**result.snapshot, "cells": []},
+            invariants=result.invariants,
+        )
+
+    monkeypatch.setattr(cli.golden, "verify", drifted)
+    exit_code = cli.main(["verify-golden-run"])
+    assert exit_code == 1
+
+    captured = capsys.readouterr()
+    assert "FAIL — semantic invariants diverged:" in captured.out
+    assert "living_cells: expected 3, got 2" in captured.out
+    assert "cells: differs" in captured.out
+    assert "--update-expectations" in captured.err
+
+
+def test_verify_golden_run_does_not_touch_the_colony_db(tmp_path):
+    """A golden run must not depend on, or disturb, real colony state."""
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init"])
+    before = db_path.read_bytes()
+
+    assert cli.main(["--db", str(db_path), "verify-golden-run"]) == 0
+    assert db_path.read_bytes() == before

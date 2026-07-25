@@ -24,7 +24,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-mitosis = ["migrations/*.sql"]
+mitosis = ["migrations/*.sql", "golden_expectations.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
