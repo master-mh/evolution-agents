@@ -43,6 +43,15 @@ def test_create_cell_rejects_non_positive_budget(conn):
         )
 
 
+def test_create_cell_rejects_unrecognized_funding_account(conn):
+    with pytest.raises(lifecycle.LifecycleError):
+        lifecycle.create_cell(
+            conn, cell_type=CellType.EXPLORER, budget_minor_units=100,
+            book=Book.USD_SIM, idempotency_key="create:badfund",
+            funding_account_id="seedbank_typo",
+        )
+
+
 def test_identical_cell_type_genomes_are_deduped(conn):
     a = lifecycle.create_cell(
         conn, cell_type=CellType.EXPLORER, budget_minor_units=100,

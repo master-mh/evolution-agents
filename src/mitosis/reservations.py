@@ -9,6 +9,16 @@ transitions *and* doubles as the idempotency guard for these operations —
 once a reservation leaves `reserved`/`execution_unknown`/`disputed`, the
 same operation retried against the new (terminal-ish) status is rejected
 rather than replayed.
+
+`request()` enforces Charter C4 ("Cells cannot overspend their authorised
+budget") at the point of reservation, across all three books: a Cell may
+never reserve more than currently sits in its own cell:{id}:cash. This is
+the AUTHORISE step SPEC.md §4.1's protocol names (REQUEST -> AUTHORISE ->
+RESERVE -> EXECUTE -> SETTLE) — §4.4 licenses collapsing requested->reserved
+into one atomic step, but that collapse must not also mean skipping the
+budget check AUTHORISE stands for. Checked inside the same BEGIN IMMEDIATE
+as the real-spend-breaker check, for the same reason: two concurrent
+requests against the same cell must not both pass before either commits.
 """
 
 from __future__ import annotations
@@ -17,7 +27,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
-from . import ledger, real_spend_breaker
+from . import accounts, ledger, real_spend_breaker
 from .accounts import cell_cash, cell_committed
 from .models import Book, EntrySpec, Reservation, ReservationStatus
 
@@ -50,6 +60,10 @@ class ReservationError(Exception):
 
 
 class InvalidTransitionError(ReservationError):
+    pass
+
+
+class InsufficientBalanceError(ReservationError):
     pass
 
 
@@ -139,6 +153,16 @@ def request(
         if book == Book.USD_REAL:
             real_spend_breaker.check(conn, requested_amount=maximum_amount, now=now)
 
+        # Charter C4, all books: a Cell cannot reserve more than it
+        # currently holds in cash. Checked under the same write lock as the
+        # C5 breaker above, for the same concurrency reason.
+        available = ledger.get_balance(conn, cell_cash(cell_id), book)
+        if maximum_amount > available:
+            raise InsufficientBalanceError(
+                f"cell {cell_id} has {available} available in {book.value}, "
+                f"cannot reserve {maximum_amount} (Charter C4)"
+            )
+
         ledger._write_transaction(
             conn,
             book=book,
@@ -213,20 +237,29 @@ def settle(
     maximum_amount) or partially_settled (settled_amount < maximum_amount).
     committed -> destination_account_id.
     """
-    reservation = get_reservation(conn, reservation_id)
-    if reservation is None:
-        raise ReservationError(f"no such reservation: {reservation_id}")
-    if settled_amount < 0 or settled_amount > reservation.maximum_amount:
+    if not accounts.is_known_account(destination_account_id):
         raise ReservationError(
-            f"settled_amount {settled_amount} out of range "
-            f"[0, {reservation.maximum_amount}]"
+            f"unrecognized destination_account_id: {destination_account_id!r} "
+            "(not a fixed account or cell:{id}:cash|committed)"
         )
-    is_full = settled_amount == reservation.maximum_amount
-    target = ReservationStatus.SETTLED if is_full else ReservationStatus.PARTIALLY_SETTLED
-    _check_transition(reservation.status, target)
 
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Fetched and re-validated inside the write lock (not before it): two
+        # concurrent settle() calls against the same reservation must not
+        # both decide against the pre-lock status.
+        reservation = get_reservation(conn, reservation_id)
+        if reservation is None:
+            raise ReservationError(f"no such reservation: {reservation_id}")
+        if settled_amount < 0 or settled_amount > reservation.maximum_amount:
+            raise ReservationError(
+                f"settled_amount {settled_amount} out of range "
+                f"[0, {reservation.maximum_amount}]"
+            )
+        is_full = settled_amount == reservation.maximum_amount
+        target = ReservationStatus.SETTLED if is_full else ReservationStatus.PARTIALLY_SETTLED
+        _check_transition(reservation.status, target)
+
         if settled_amount > 0:
             ledger._write_transaction(
                 conn,
@@ -269,15 +302,17 @@ def release(conn: sqlite3.Connection, reservation_id: str) -> Reservation:
     Remaining committed funds (maximum_amount - settled_amount) return to
     cell:{id}:cash.
     """
-    reservation = get_reservation(conn, reservation_id)
-    if reservation is None:
-        raise ReservationError(f"no such reservation: {reservation_id}")
-    _check_transition(reservation.status, ReservationStatus.RELEASED)
-
-    remaining = reservation.maximum_amount - reservation.settled_amount
-
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Fetched and re-validated inside the write lock — same reasoning
+        # as settle() above.
+        reservation = get_reservation(conn, reservation_id)
+        if reservation is None:
+            raise ReservationError(f"no such reservation: {reservation_id}")
+        _check_transition(reservation.status, ReservationStatus.RELEASED)
+
+        remaining = reservation.maximum_amount - reservation.settled_amount
+
         if remaining > 0:
             ledger._write_transaction(
                 conn,
@@ -330,13 +365,15 @@ def mark_disputed(conn: sqlite3.Connection, reservation_id: str) -> Reservation:
 def _bare_status_transition(
     conn: sqlite3.Connection, reservation_id: str, target: ReservationStatus
 ) -> Reservation:
-    reservation = get_reservation(conn, reservation_id)
-    if reservation is None:
-        raise ReservationError(f"no such reservation: {reservation_id}")
-    _check_transition(reservation.status, target)
-
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Fetched and re-validated inside the write lock — same reasoning
+        # as settle()/release() above.
+        reservation = get_reservation(conn, reservation_id)
+        if reservation is None:
+            raise ReservationError(f"no such reservation: {reservation_id}")
+        _check_transition(reservation.status, target)
+
         conn.execute(
             "UPDATE reservations SET status = ? WHERE reservation_id = ?",
             (target.value, reservation_id),

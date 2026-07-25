@@ -144,35 +144,40 @@ def record_usage(
     if minor_units <= 0:
         raise ResourceMeteringError("minor_units must be positive")
 
-    reservation = reservations.get_reservation(conn, reservation_id)
-    if reservation is None:
-        raise ResourceMeteringError(f"no such reservation: {reservation_id}")
-    if reservation.cell_id != cell_id:
-        raise ResourceMeteringError(
-            f"reservation {reservation_id} belongs to cell {reservation.cell_id!r}, not {cell_id!r}"
-        )
-    if reservation.book != Book.RESOURCE:
-        raise ResourceMeteringError(
-            f"reservation {reservation_id} is book {reservation.book.value!r}, not RESOURCE (Amendment A6)"
-        )
-    if reservation.status != ReservationStatus.RESERVED:
-        # Not just the two terminal statuses (settled/released): once a
-        # reservation leaves `reserved` for *any* reason — including
-        # partially_settled, whose FSM only permits -> released next
-        # (reservations._ALLOWED_TRANSITIONS) — there is no remaining path
-        # to settle any further recorded usage, so it would be permanently
-        # unlinked from a settlement (Amendment A6). `reserved` is the only
-        # state usage may accumulate against.
-        raise ResourceMeteringError(
-            f"reservation {reservation_id} is {reservation.status.value!r}, not 'reserved' — "
-            "cannot record usage against it"
-        )
-
     usage_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Reservation fetched and validated inside the write lock, not
+        # before it: two concurrent recordings against the same reservation
+        # must not both pass the status/book/ownership checks before either
+        # commits (same "check inside BEGIN IMMEDIATE" shape as the
+        # overspend check below, and as the C4/C5/C9 caps elsewhere).
+        reservation = reservations.get_reservation(conn, reservation_id)
+        if reservation is None:
+            raise ResourceMeteringError(f"no such reservation: {reservation_id}")
+        if reservation.cell_id != cell_id:
+            raise ResourceMeteringError(
+                f"reservation {reservation_id} belongs to cell {reservation.cell_id!r}, not {cell_id!r}"
+            )
+        if reservation.book != Book.RESOURCE:
+            raise ResourceMeteringError(
+                f"reservation {reservation_id} is book {reservation.book.value!r}, not RESOURCE (Amendment A6)"
+            )
+        if reservation.status != ReservationStatus.RESERVED:
+            # Not just the two terminal statuses (settled/released): once a
+            # reservation leaves `reserved` for *any* reason — including
+            # partially_settled, whose FSM only permits -> released next
+            # (reservations._ALLOWED_TRANSITIONS) — there is no remaining path
+            # to settle any further recorded usage, so it would be permanently
+            # unlinked from a settlement (Amendment A6). `reserved` is the only
+            # state usage may accumulate against.
+            raise ResourceMeteringError(
+                f"reservation {reservation_id} is {reservation.status.value!r}, not 'reserved' — "
+                "cannot record usage against it"
+            )
+
         already_recorded = total_minor_units(conn, reservation_id)
         if already_recorded + minor_units > reservation.maximum_amount:
             raise ResourceOverspendError(

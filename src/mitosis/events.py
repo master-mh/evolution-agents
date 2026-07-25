@@ -295,7 +295,14 @@ def process_event(
         conn.execute("COMMIT")
     except Exception as exc:
         conn.execute("ROLLBACK")
-        record_failure(conn, event_id, error=str(exc), max_attempts=max_attempts, cell_id=cell_id)
+        try:
+            record_failure(conn, event_id, error=str(exc), max_attempts=max_attempts, cell_id=cell_id)
+        except Exception as bookkeeping_exc:
+            # The handler's own failure is the one the caller needs to see —
+            # a failure while recording *that* failure must not mask it, so
+            # the original is always what propagates, with the bookkeeping
+            # failure chained on for visibility rather than swallowed.
+            raise exc from bookkeeping_exc
         raise
 
     result = get_event(conn, event_id)

@@ -43,3 +43,23 @@ def test_format_round_trips():
 def test_negative_amounts_round_trip():
     assert parse_minor_units("-5.00", "USD_SIM") == -500
     assert format_minor_units(-500, "USD_SIM") == "-5.00"
+
+
+@pytest.mark.parametrize("bad", ["Infinity", "-Infinity", "NaN", "-NaN"])
+def test_parse_rejects_non_finite_values(bad):
+    with pytest.raises(ValueError):
+        parse_minor_units(bad, "USD_SIM")
+
+
+def test_parse_rejects_amount_too_large_for_storage():
+    with pytest.raises(ValueError):
+        parse_minor_units("1e400", "USD_SIM")
+
+
+@pytest.mark.parametrize("bad", ["5_0", "1_000.00", "5.0_0"])
+def test_parse_rejects_underscore_digit_separators(bad):
+    """Decimal() accepts Python-literal-style underscores (5_0 == 50), which
+    would silently change a dollar amount by 10x on a typo — reject outright
+    rather than misparse."""
+    with pytest.raises(ValueError):
+        parse_minor_units(bad, "USD_SIM")

@@ -63,6 +63,61 @@ def test_request_rejects_non_positive_amount(conn):
         )
 
 
+def test_request_rejects_amount_exceeding_cell_cash(conn):
+    """Charter C4: a Cell cannot reserve more than it currently holds."""
+    fund(conn, amount=1000)
+    with pytest.raises(reservations.InsufficientBalanceError):
+        reservations.request(
+            conn, cell_id="cell-1", book=Book.USD_SIM, currency="USD",
+            maximum_amount=1001, expires_at=FUTURE, idempotency_key="req:overdraft",
+        )
+    # denied request touches nothing: no ledger movement, no reservation row
+    assert ledger.get_balance(conn, cell_cash("cell-1"), Book.USD_SIM) == 1000
+    assert ledger.get_balance(conn, cell_committed("cell-1"), Book.USD_SIM) == 0
+    assert reservations.get_reservation_by_idempotency_key(conn, "req:overdraft") is None
+
+
+def test_request_rejects_second_reservation_that_would_overdraw_remaining_cash(conn):
+    """The cash balance already reflects any earlier open reservation, so a
+    second request is checked against what's actually left, not the
+    original funding amount."""
+    fund(conn, amount=1000)
+    reservations.request(
+        conn, cell_id="cell-1", book=Book.USD_SIM, currency="USD",
+        maximum_amount=700, expires_at=FUTURE, idempotency_key="req:1",
+    )
+    with pytest.raises(reservations.InsufficientBalanceError):
+        reservations.request(
+            conn, cell_id="cell-1", book=Book.USD_SIM, currency="USD",
+            maximum_amount=400, expires_at=FUTURE, idempotency_key="req:2",
+        )
+
+
+def test_request_allows_exactly_available_cash(conn):
+    fund(conn, amount=1000)
+    r = reservations.request(
+        conn, cell_id="cell-1", book=Book.USD_SIM, currency="USD",
+        maximum_amount=1000, expires_at=FUTURE, idempotency_key="req:all",
+    )
+    assert r.status == ReservationStatus.RESERVED
+    assert ledger.get_balance(conn, cell_cash("cell-1"), Book.USD_SIM) == 0
+
+
+def test_settle_rejects_unrecognized_destination_account(conn):
+    fund(conn)
+    r = reservations.request(
+        conn, cell_id="cell-1", book=Book.USD_SIM, currency="USD",
+        maximum_amount=300, expires_at=FUTURE, idempotency_key="req:1",
+    )
+    with pytest.raises(reservations.ReservationError):
+        reservations.settle(
+            conn, r.reservation_id, settled_amount=300,
+            destination_account_id="externl_expense",
+        )
+    # reservation untouched by the rejected settle attempt
+    assert reservations.get_reservation(conn, r.reservation_id).status == ReservationStatus.RESERVED
+
+
 def test_full_settle_is_terminal(conn):
     fund(conn)
     r = reservations.request(

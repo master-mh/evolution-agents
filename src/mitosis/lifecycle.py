@@ -41,7 +41,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
-from . import audit, genome, ledger, population
+from . import accounts, audit, genome, ledger, population
 from .accounts import cell_cash
 from .models import Book, Cell, CellGenome, CellStatus, CellType, CoronerReport, EntrySpec
 
@@ -157,6 +157,11 @@ def create_cell(
 
     if budget_minor_units <= 0:
         raise LifecycleError("budget_minor_units must be positive")
+    if not accounts.is_known_account(funding_account_id):
+        raise LifecycleError(
+            f"unrecognized funding_account_id: {funding_account_id!r} "
+            "(not a fixed account or cell:{id}:cash|committed)"
+        )
 
     cell_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
@@ -270,18 +275,21 @@ def _transition(
     quarantined Cell loose — only clear_quarantine's explicit review
     decision may do that, even though quarantined -> alive is itself a valid
     FSM edge."""
-    cell = get_cell(conn, cell_id)
-    if cell is None:
-        raise LifecycleError(f"no such cell: {cell_id}")
-    if cell.status not in valid_sources:
-        raise InvalidTransitionError(
-            f"cannot {reason}: cell {cell_id} is {cell.status.value!r}, "
-            f"expected one of {sorted(s.value for s in valid_sources)}"
-        )
-    _check_transition(cell.status, target)
-
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Fetched and re-validated inside the write lock, not before it: two
+        # concurrent transitions against the same Cell must not both decide
+        # against a pre-lock status (same reasoning as reservations.py).
+        cell = get_cell(conn, cell_id)
+        if cell is None:
+            raise LifecycleError(f"no such cell: {cell_id}")
+        if cell.status not in valid_sources:
+            raise InvalidTransitionError(
+                f"cannot {reason}: cell {cell_id} is {cell.status.value!r}, "
+                f"expected one of {sorted(s.value for s in valid_sources)}"
+            )
+        _check_transition(cell.status, target)
+
         _transition_core(conn, cell, target, reason=reason, metadata=metadata)
         conn.execute("COMMIT")
     except Exception:
@@ -365,15 +373,18 @@ def kill(
     the ledger — see ledger.spend_by_book), cause of death, final
     hypotheses, and links to experiments. `stage_reached`/`experiment_ids`
     are always None/empty in this kernel — see module docstring."""
-    cell = get_cell(conn, cell_id)
-    if cell is None:
-        raise LifecycleError(f"no such cell: {cell_id}")
-    _check_transition(cell.status, CellStatus.DEAD)
-
-    spend = ledger.spend_by_book(conn, cell_id)
-
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Fetched and re-validated inside the write lock — same reasoning as
+        # _transition() above. spend_by_book is also computed under the lock
+        # so the coroner report reflects a consistent snapshot.
+        cell = get_cell(conn, cell_id)
+        if cell is None:
+            raise LifecycleError(f"no such cell: {cell_id}")
+        _check_transition(cell.status, CellStatus.DEAD)
+
+        spend = ledger.spend_by_book(conn, cell_id)
+
         _transition_core(
             conn, cell, CellStatus.DEAD,
             reason=cause_of_death,

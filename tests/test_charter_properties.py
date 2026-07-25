@@ -1,27 +1,39 @@
 """Charter property tests (docs/DECISIONS.md ADR-013; SPEC.md §0.1).
 
-Maps to named Charter test IDs:
+Maps to named Charter test IDs (function/TestCase names below are chosen so
+each ID is a literal substring of its node id, i.e. `pytest -k <id>` finds
+it — see SPEC.md §0.1: "every clause maps to one or more named property-test
+IDs that run in CI"):
   charter_ledger_balanced            -> C1
   charter_conservation_per_book      -> C2
   charter_balance_matches_ledger     -> C3
-  charter_crash_recovery             -> C7 (reservation FSM stateful machine)
-  charter_carrying_capacity          -> C9 (birth licence vs configured limits)
+  charter_no_overspend                -> C4 (RESOURCE-book usage never exceeds its reservation
+                                              cap; a reservation can never exceed a Cell's cash)
   charter_realspend_cap              -> C5 (concurrent-reserved cap vs configured limit)
   charter_idempotent_handlers        -> C6 (event redelivery applies handler side effects once)
+  charter_crash_recovery             -> C7 (reservation FSM stateful machine)
   charter_dead_cell_inert            -> C8 (dead Cells reject every further transition)
+  charter_carrying_capacity          -> C9 (birth licence vs configured limits)
   charter_audit_complete             -> C10 (every lifecycle transition emits an audit event)
-  charter_no_overspend                -> C4 (RESOURCE-book usage never exceeds its reservation cap)
+  charter_canonical_forms            -> C11 (money/genome/timestamps: canonical by construction)
+  charter_kernel_immutable           -> C15 (P1 slice: genome content is inert data, never code —
+                                              full sandbox isolation is Phase 5, see C12)
 """
 
 from __future__ import annotations
 
+import importlib
+import inspect
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, precondition, rule
 
-from mitosis import db, events, ledger, lifecycle, population, real_spend_breaker, reservations, resource_metering
+import mitosis
+from mitosis import db, events, genome, ledger, lifecycle, money, population, real_spend_breaker, reservations, resource_metering
 from mitosis.accounts import cell_cash, cell_committed
 from mitosis.models import (
     Book,
@@ -87,7 +99,7 @@ def test_charter_ledger_rejects_unbalanced(a, b):
 
 @given(amounts=st.lists(st.integers(min_value=1, max_value=1000), min_size=1, max_size=20))
 @settings(max_examples=50)
-def test_charter_conservation_and_balance_match(amounts):
+def test_charter_conservation_per_book_and_charter_balance_matches_ledger(amounts):
     conn = db.connect_and_migrate()
     for i, amount in enumerate(amounts):
         ledger.post_transaction(
@@ -205,11 +217,17 @@ class ReservationKernelMachine(RuleBasedStateMachine):
         actual = ledger.get_balance(self.conn, cell_committed("cell-1"), Book.USD_SIM)
         assert actual == open_committed
 
+    @invariant()
+    def cell_cash_never_negative(self):
+        """Charter C4: request() never lets committed reservations exceed
+        what was ever in the cell's cash account."""
+        assert ledger.get_balance(self.conn, cell_cash("cell-1"), Book.USD_SIM) >= 0
+
     def teardown(self):
         self.conn.close()
 
 
-TestReservationKernelMachine = ReservationKernelMachine.TestCase
+Test_charter_crash_recovery = ReservationKernelMachine.TestCase
 
 
 # --- charter_carrying_capacity (C9) -----------------------------------------
@@ -436,7 +454,7 @@ class CellLifecycleMachine(RuleBasedStateMachine):
         self.conn.close()
 
 
-TestCellLifecycleMachine = CellLifecycleMachine.TestCase
+Test_charter_dead_cell_inert_charter_audit_complete = CellLifecycleMachine.TestCase
 
 
 # --- charter_no_overspend (C4) -----------------------------------------------
@@ -472,3 +490,127 @@ def test_charter_no_overspend(cap, amounts):
             pass
         # the invariant must hold after every single attempt, not just at the end
         assert resource_metering.total_minor_units(conn, r.reservation_id) <= cap
+
+
+# --- charter_no_overspend (C4), reservation vs. cell cash --------------------
+# The RESOURCE-metering test above covers usage vs. a reservation's own cap;
+# this covers the earlier gate — a reservation itself can never exceed what
+# the Cell holds in cash, across all books.
+
+
+@given(
+    budget=st.integers(min_value=1, max_value=100_000),
+    requested=st.integers(min_value=1, max_value=200_000),
+)
+@settings(max_examples=75)
+def test_charter_no_overspend_reservation_cannot_exceed_cell_cash(budget, requested):
+    conn = db.connect_and_migrate()
+    ledger.post_transaction(
+        conn,
+        book=Book.USD_SIM,
+        currency="USD",
+        transaction_type="seed_fund",
+        idempotency_key="seed",
+        entries=[
+            EntrySpec(account_id="seed_bank", amount_minor_units=-budget),
+            EntrySpec(account_id=cell_cash("cell-x"), amount_minor_units=budget),
+        ],
+    )
+    if requested > budget:
+        with pytest.raises(reservations.InsufficientBalanceError):
+            reservations.request(
+                conn, cell_id="cell-x", book=Book.USD_SIM, currency="USD",
+                maximum_amount=requested, expires_at=FUTURE, idempotency_key="req",
+            )
+        assert ledger.get_balance(conn, cell_cash("cell-x"), Book.USD_SIM) == budget
+    else:
+        r = reservations.request(
+            conn, cell_id="cell-x", book=Book.USD_SIM, currency="USD",
+            maximum_amount=requested, expires_at=FUTURE, idempotency_key="req",
+        )
+        assert r.status == ReservationStatus.RESERVED
+        assert ledger.get_balance(conn, cell_cash("cell-x"), Book.USD_SIM) == budget - requested
+
+
+# --- charter_canonical_forms (C11) -------------------------------------------
+# Money is integer minor units (never binary float), genomes have a
+# canonical deterministic hash, and every kernel timestamp is rejected
+# unless timezone-aware UTC. Each half is already enforced structurally at
+# write time (money.py's Decimal parsing, genome.py's canonical JSON,
+# ledger/reservations/events' explicit tzinfo checks) — this pins all three
+# under the one Charter ID rather than leaving C11 untested.
+
+
+@given(
+    dollars=st.integers(min_value=-1_000_000, max_value=1_000_000),
+    cents=st.integers(min_value=0, max_value=99),
+)
+@settings(max_examples=50)
+def test_charter_canonical_forms_money_round_trips_through_integer_minor_units(dollars, cents):
+    sign = "-" if dollars < 0 else ""
+    amount_str = f"{sign}{abs(dollars)}.{cents:02d}"
+    minor_units = money.parse_minor_units(amount_str, "USD_SIM")
+    assert isinstance(minor_units, int)
+    assert money.format_minor_units(minor_units, "USD_SIM") == amount_str
+    # round-tripping the formatted string must reproduce the same integer exactly
+    assert money.parse_minor_units(money.format_minor_units(minor_units, "USD_SIM"), "USD_SIM") == minor_units
+
+
+def test_charter_canonical_forms_genome_hash_is_deterministic_and_content_addressed():
+    a = genome.canonical_genome_json(CellType.EXPLORER)
+    b = genome.canonical_genome_json(CellType.EXPLORER)
+    c = genome.canonical_genome_json(CellType.BUILDER)
+    assert genome.compute_genome_hash(a) == genome.compute_genome_hash(b)
+    assert genome.compute_genome_hash(a) != genome.compute_genome_hash(c)
+    assert len(genome.compute_genome_hash(a)) == 64  # sha256 hex digest
+
+
+def test_charter_canonical_forms_naive_timestamps_are_rejected_everywhere():
+    conn = db.connect_and_migrate()
+    naive = datetime(2026, 1, 1)  # no tzinfo — Charter C11 violation by construction
+    with pytest.raises(ledger.LedgerError):
+        ledger._write_transaction(
+            conn, book=Book.USD_SIM, currency="USD", transaction_type="t",
+            idempotency_key="naive-txn", entries=[
+                EntrySpec(account_id="source", amount_minor_units=-1),
+                EntrySpec(account_id="dest", amount_minor_units=1),
+            ],
+            effective_at_utc=naive,
+        )
+    with pytest.raises(reservations.ReservationError):
+        reservations.request(
+            conn, cell_id="cell-1", book=Book.USD_SIM, currency="USD",
+            maximum_amount=1, expires_at=naive, idempotency_key="naive-res",
+        )
+    with pytest.raises(events.EventError):
+        events.enqueue(
+            conn, event_type="t", source="test", priority=0,
+            dedupe_key="naive-event", available_at=naive,
+        )
+
+
+# --- charter_kernel_immutable (C15), Phase-1 slice ---------------------------
+# Full sandbox isolation (Cell-authored code cannot reach host files/secrets/
+# the kernel — Charter C12) is Phase 5 scope: no Cell in this kernel executes
+# any code at all. What's checkable now is the Phase-1-relevant half of C15:
+# a Cell's genome is inert JSON data, never evaluated or executed by the
+# kernel, and no kernel module writes into its own source tree at runtime.
+
+
+def test_charter_kernel_immutable_genome_is_inert_data_not_code():
+    genome_src = inspect.getsource(genome)
+    assert "eval(" not in genome_src
+    assert "exec(" not in genome_src
+    assert "importlib" not in genome_src
+    assert "__import__" not in genome_src
+
+
+def test_charter_kernel_immutable_no_module_writes_its_own_source_tree():
+    kernel_dir = str(Path(mitosis.__file__).parent)
+    for name in (
+        "ledger", "lifecycle", "reservations", "events", "cli",
+        "genome", "resource_metering", "population", "real_spend_breaker",
+    ):
+        mod_src = inspect.getsource(importlib.import_module(f"mitosis.{name}"))
+        assert kernel_dir not in mod_src
+        assert "open(" not in mod_src  # the kernel only ever writes via sqlite3, not raw file I/O
