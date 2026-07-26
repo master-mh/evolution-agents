@@ -1,19 +1,19 @@
 {
   "expectation_version": 1,
   "invariants": {
-    "active_cells": 2,
+    "active_cells": 3,
     "conservation_resource": true,
     "conservation_usd_real": true,
     "conservation_usd_sim": true,
     "coroner_reports": 1,
     "hash_chain_valid": true,
-    "living_cells": 3,
+    "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "840b77531912a804d811c5737ab753965571549f7afc3572bfd03aa52152bee4",
+  "semantic_hash": "badf5c6298dadd9829ecaa71dcce89ad799075c072339ad5559beb0dbcdd805b",
   "snapshot": {
     "audit_event_types": {
-      "cell_lifecycle_transition": 11,
+      "cell_lifecycle_transition": 12,
       "event_dead_lettered": 1,
       "real_spend_limit_configured": 1
     },
@@ -30,8 +30,9 @@
       "USD_REAL::seed_bank": 9000,
       "USD_SIM::cell:cell#0:cash": 3450,
       "USD_SIM::cell:cell#0:committed": 0,
-      "USD_SIM::cell:cell#3:cash": 1750,
+      "USD_SIM::cell:cell#3:cash": 1250,
       "USD_SIM::cell:cell#3:committed": 250,
+      "USD_SIM::cell:cell#4:cash": 500,
       "USD_SIM::colony_treasury": 300,
       "USD_SIM::external_capital": -100000,
       "USD_SIM::external_expense": 1550,
@@ -42,29 +43,51 @@
         "alias": "cell#0",
         "book": "USD_SIM",
         "cell_type": "commercial",
+        "founder": "cell#0",
+        "generation": 0,
         "genome_hash": "a7ae5695fd3d066073402e76a74dff9b7ea8fa5091572ffcf5252efe2cfa5d1b",
+        "parent": null,
         "status": "dead"
       },
       {
         "alias": "cell#1",
         "book": "USD_REAL",
         "cell_type": "explorer",
+        "founder": "cell#1",
+        "generation": 0,
         "genome_hash": "99656c35dcaaa3d7e3386f833815046da0c359fc2b42ed82ddb1456db09040c8",
+        "parent": null,
         "status": "alive"
       },
       {
         "alias": "cell#2",
         "book": "RESOURCE",
         "cell_type": "builder",
+        "founder": "cell#2",
+        "generation": 0,
         "genome_hash": "f301a13a8779b643ddac30b03c9b3d878469ab53614918a39f0d970e632bce4c",
+        "parent": null,
         "status": "alive"
       },
       {
         "alias": "cell#3",
         "book": "USD_SIM",
         "cell_type": "auditor",
+        "founder": "cell#3",
+        "generation": 0,
         "genome_hash": "4cc488a3949426ce292f033cfde9b4b95656130d4b16f40d88be326fb4730dd1",
+        "parent": null,
         "status": "quarantined"
+      },
+      {
+        "alias": "cell#4",
+        "book": "USD_SIM",
+        "cell_type": "auditor",
+        "founder": "cell#3",
+        "generation": 1,
+        "genome_hash": "e80e198917cdb2c3b94adeb44a8c7ebaeae23c99a2681b373c45b37e17d6096d",
+        "parent": "cell#3",
+        "status": "alive"
       }
     ],
     "clock": {
@@ -219,6 +242,7 @@
       "USD_REAL::reservation_reserve": 2,
       "USD_REAL::reservation_settle": 1,
       "USD_SIM::cell_birth_funding": 2,
+      "USD_SIM::cell_reproduction_funding": 1,
       "USD_SIM::colony_seed_capital": 1,
       "USD_SIM::event_side_effect": 3,
       "USD_SIM::reservation_release": 2,

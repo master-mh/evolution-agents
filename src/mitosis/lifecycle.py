@@ -80,6 +80,9 @@ def _row_to_cell(row: sqlite3.Row) -> Cell:
         status=CellStatus(row["status"]),
         created_at_utc=datetime.fromisoformat(row["created_at_utc"]),
         idempotency_key=row["idempotency_key"],
+        parent_cell_id=row["parent_cell_id"],
+        founder_cell_id=row["founder_cell_id"],
+        generation=row["generation"],
     )
 
 
@@ -114,8 +117,27 @@ def count_by_type(conn: sqlite3.Connection) -> dict[str, int]:
     return {r["cell_type"]: r["n"] for r in rows}
 
 
-def _get_or_create_genome(conn: sqlite3.Connection, cell_type: CellType) -> str:
-    canonical = genome.canonical_genome_json(cell_type)
+def _get_or_create_genome(
+    conn: sqlite3.Connection,
+    cell_type: CellType,
+    *,
+    mutation: dict | None = None,
+    parent_genome_hashes: tuple[str, ...] = (),
+    mutation_operator: str | None = None,
+    version: int = 1,
+) -> str:
+    """Content-addressed upsert (ADR-018): identical canonical content is
+    always the same row, so an unmutated child simply reuses its parent's
+    genome rather than duplicating it.
+
+    `parent_genome_hashes`/`mutation_operator`/`version` are recorded only
+    when this call actually creates the row. A genome that already exists is
+    returned untouched — its provenance describes how it *first* came to
+    exist, and a later independent rediscovery of the same content must not
+    rewrite that history (nor could it meaningfully, since the same content
+    can be reached from many parents).
+    """
+    canonical = genome.canonical_genome_json(cell_type, mutation)
     genome_hash = genome.compute_genome_hash(canonical)
     existing = conn.execute(
         "SELECT genome_hash FROM cell_genomes WHERE genome_hash = ?", (genome_hash,)
@@ -123,18 +145,26 @@ def _get_or_create_genome(conn: sqlite3.Connection, cell_type: CellType) -> str:
     if existing is not None:
         return genome_hash
 
+    # A self-referential parentage edge is meaningless and would corrupt
+    # lineage walks; content addressing makes it reachable only if a caller
+    # passes a mutation that doesn't actually change anything.
+    parents = tuple(h for h in parent_genome_hashes if h != genome_hash)
+
     conn.execute(
         """
         INSERT INTO cell_genomes (
             genome_id, genome_hash, version, parent_genome_hashes, created_at,
             mutation_operator, canonical_genome_json, prompt_hashes,
             module_hashes, model_policy_hash, risk_label, taint_labels
-        ) VALUES (?, ?, 1, '[]', ?, NULL, ?, '[]', '[]', NULL, 'unclassified', '[]')
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, '[]', '[]', NULL, 'unclassified', '[]')
         """,
         (
             ids.new_id(),
             genome_hash,
+            version,
+            json.dumps(list(parents), separators=(",", ":")),
             datetime.now(timezone.utc).isoformat(),
+            mutation_operator,
             json.dumps(canonical, sort_keys=True, separators=(",", ":")),
         ),
     )
@@ -187,12 +217,14 @@ def create_cell(
             ],
         )
 
+        # A seeded Cell has no parent and founds its own lineage (ADR-019).
         conn.execute(
             """
             INSERT INTO cells (
                 cell_id, cell_type, genome_hash, book, status,
-                created_at_utc, idempotency_key
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                created_at_utc, idempotency_key,
+                parent_cell_id, founder_cell_id, generation
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 0)
             """,
             (
                 cell_id,
@@ -202,6 +234,7 @@ def create_cell(
                 CellStatus.ALIVE.value,
                 now.isoformat(),
                 idempotency_key,
+                cell_id,
             ),
         )
 

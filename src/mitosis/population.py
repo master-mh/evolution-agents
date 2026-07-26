@@ -1,12 +1,15 @@
 """Population control and carrying capacity (SPEC.md §9; Charter C9: birth
 requires carrying-capacity permission).
 
-Only the two population-size limits are enforced: `max_living_cells` and
-`max_active_cells`. §9.2's other limits — max_parallel_experiments,
-max_births_per_epoch, max_lineage_population_fraction — are stored (so
+This module enforces the two population-size limits, `max_living_cells` and
+`max_active_cells`, which apply to every birth by either path.
+`max_lineage_population_fraction` is enforced too, but it lives in
+lineage.py (`check_lineage_licence`) since it only has meaning for a birth
+with a parent — see that module on how lineage is defined. §9.2's remaining
+limits — max_parallel_experiments and max_births_per_epoch — are stored (so
 colony_config matches colony.yaml's shape) but not yet checked, because
-their prerequisites don't exist in this kernel yet: experiment tracking,
-the simulated clock, and reproduction/lineage tracking respectively.
+their prerequisites don't exist in this kernel yet: experiment tracking and
+a clock wired into a real epoch counter respectively.
 
 Amendment A2 (displacement is objective-only, docs/DECISIONS.md ADR-009) is
 also not implemented here: displacing an already-failing Cell to make room

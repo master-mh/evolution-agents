@@ -64,6 +64,7 @@ from . import (
     ids,
     ledger,
     lifecycle,
+    lineage,
     population,
     real_spend_breaker,
     reservations,
@@ -130,7 +131,11 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
             max_active_cells=10,
             max_parallel_experiments=20,
             max_births_per_epoch=25,
-            max_lineage_population_fraction=0.20,
+            # Deliberately above the colony.yaml default of 0.20: this
+            # scenario runs a 4-Cell colony, where any second-generation
+            # Cell is already 40% of the living population. See lineage.py
+            # on why a small colony can't reproduce under a tight cap.
+            max_lineage_population_fraction=0.50,
         ),
     )
     real_spend_breaker.set_limits(
@@ -183,6 +188,17 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     auditor = lifecycle.create_cell(
         conn, cell_type=CellType.AUDITOR, budget_minor_units=2_000,
         book=Book.USD_SIM, idempotency_key="golden:birth:auditor",
+    )
+
+    # The other birth path: a child of the auditor, funded from the auditor's
+    # own cash rather than a colony account, carrying a mutated genome so the
+    # run pins a real genome-parentage edge as well as a cell-parentage one
+    # (SPEC.md §26 names the "expected lineage tree" as golden-run content).
+    lineage.reproduce(
+        conn, parent_cell_id=auditor.cell_id, budget_minor_units=500,
+        idempotency_key="golden:birth:auditor-child",
+        mutation={"strategy": "golden-child-v2"},
+        mutation_operator="golden_run_mutation",
     )
 
     # 4. Reservation FSM — every settlement shape the kernel supports.
@@ -407,6 +423,9 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         ).fetchall()
     }
 
+    # Parent/founder are carried as aliases, not raw ids, so the lineage tree
+    # §26 names ("expected lineage tree") is part of the comparison without
+    # reintroducing volatile uuids into the snapshot.
     cells = [
         {
             "alias": aliases[row["cell_id"]],
@@ -414,6 +433,9 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
             "book": row["book"],
             "status": row["status"],
             "genome_hash": row["genome_hash"],
+            "parent": aliases.get(row["parent_cell_id"]) if row["parent_cell_id"] else None,
+            "founder": aliases.get(row["founder_cell_id"], "cell#?"),
+            "generation": row["generation"],
         }
         for row in conn.execute("SELECT * FROM cells ORDER BY rowid").fetchall()
     ]

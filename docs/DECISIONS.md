@@ -289,6 +289,36 @@ Template: **Status** · **Spec ref** · **Context** · **Decision** · **Consequ
   structural diffing. Any future serialization change to genome fields must preserve or explicitly
   version the canonical form, or existing hashes silently stop being comparable.
 
+## ADR-019: Lineage is tracked on the Cell, not the genome, while genomes are placeholders
+
+- **Status:** Accepted
+- **Spec ref:** §9.2, §9.4 (Amendment A10), §16.1 (with ADR-018)
+- **Context:** §9.4 defines lineage "strictly by genome parentage", in explicit contrast to
+  *module* ancestry (horizontal transfer), which must not count toward lineage caps. Taken
+  literally against the Phase 1 kernel, that definition is unimplementable: genomes are content
+  addressed (ADR-018), and Phase 1 genome content is a placeholder carrying only `cell_type`, so
+  every Cell of a given type hashes to one genome row. Deriving lineage from genome parentage today
+  would place every commercial Cell in the colony into a single lineage and fire
+  `max_lineage_population_fraction` on Cells with no ancestral relationship at all — the opposite
+  of the founder-effect control §9.4 asks for. There is also a structural problem independent of
+  Phase 1: under content addressing, an unmutated child *is* its parent's genome, so a genome
+  parentage edge for it would be a self-loop.
+- **Decision:** Vertical descent is recorded on the Cell (`cells.parent_cell_id`, plus immutable
+  denormalized `founder_cell_id`/`generation`), and that tree is what `max_lineage_population_fraction`
+  is enforced against. Genome parentage (`cell_genomes.parent_genome_hashes`) is recorded as well,
+  but only where a mutation actually produced different content. Amendment A10's substance — that
+  lineage means vertical descent and never horizontal module sharing — is preserved: a shared
+  module, and equally a shared genome, never creates a lineage edge.
+- **Consequences:** Lineage caps work correctly today rather than waiting on Phase 5 genome
+  content, and both trees are available: the Cell tree is complete, the genome tree is the richer
+  record once genomes carry real content, and the two converge without a migration. The
+  denormalized `founder_cell_id`/`generation` are re-derivable and checked by
+  `lineage.verify_lineage_integrity()`, so the optimization cannot silently drift. Separately, the
+  cap is enforced strictly and per §9.3 a birth that cannot be licensed is refused rather than
+  queued — which means a small colony genuinely cannot reproduce (any second-generation Cell in a
+  4-Cell colony is already 40% of it). Seeded founders are exempt, since a founder has no ancestor;
+  growing past the seed therefore requires enough founders or a deliberately raised cap.
+
 ---
 
 ## Amendments folded directly into the spec without a standalone ADR

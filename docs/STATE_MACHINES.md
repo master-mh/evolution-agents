@@ -27,7 +27,13 @@ emit an `audit_events` row (Charter C10) unless noted otherwise.
 ```text
 created
   -> alive          (birth licence granted: capital + valid genome + population slot
-                      or objective-only displacement, §9.3)
+                      or objective-only displacement, §9.3. Two paths reach this
+                      transition: a *seeded* birth funded from a colony account
+                      (lifecycle.create_cell), and *reproduction* from a living parent
+                      and funded out of that parent's own cash (lineage.reproduce),
+                      which additionally requires the §9.4 lineage-share licence.
+                      Only an `alive` Cell may be a parent — a dormant Cell is idle,
+                      a quarantined Cell restricted, a dead Cell inert (C8).)
   -> dead            (birth licence denied and no capital reserved — no audit-visible
                       Cell ever existed; not a lifecycle transition, see note below)
 

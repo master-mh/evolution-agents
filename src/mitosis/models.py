@@ -157,7 +157,14 @@ class CellGenome(_Frozen):
 
 
 class Cell(_Frozen):
-    """SPEC.md §31; lifecycle per docs/STATE_MACHINES.md §1."""
+    """SPEC.md §31; lifecycle per docs/STATE_MACHINES.md §1.
+
+    Lineage (SPEC.md §9.4, Amendment A10; ADR-019): `parent_cell_id` is NULL
+    for a seeded founder and set for a Cell born via `lineage.reproduce`.
+    `founder_cell_id` is the root of that parent chain (a founder is its own
+    founder) and `generation` its depth — both immutable after birth and
+    re-derivable via `lineage.verify_lineage_integrity`.
+    """
 
     cell_id: str
     cell_type: CellType
@@ -166,6 +173,9 @@ class Cell(_Frozen):
     status: CellStatus
     created_at_utc: datetime
     idempotency_key: str
+    parent_cell_id: str | None = None
+    founder_cell_id: str
+    generation: int = 0
 
 
 class AuditEvent(_Frozen):
@@ -235,12 +245,13 @@ class ResourceUsage(_Frozen):
 class PopulationLimits(_Frozen):
     """SPEC.md §9.2, §27.1 `colony.yaml` `population:` block.
 
-    Only max_living_cells and max_active_cells are enforced in this kernel
-    (see population.py). The rest are stored so the config shape matches
-    colony.yaml exactly, but are not yet checked: max_parallel_experiments
-    needs experiment tracking, max_births_per_epoch needs the simulated
-    clock, and max_lineage_population_fraction needs reproduction/lineage
-    tracking — none of which exist in the kernel yet.
+    max_living_cells and max_active_cells are enforced on every birth
+    (population.py); max_lineage_population_fraction is enforced on every
+    reproduction (lineage.py). The remaining two are stored so the config
+    shape matches colony.yaml exactly, but are not yet checked:
+    max_parallel_experiments needs experiment tracking and
+    max_births_per_epoch needs the clock wired into a real epoch counter —
+    neither exists in the kernel yet.
     """
 
     max_living_cells: int

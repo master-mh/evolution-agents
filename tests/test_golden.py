@@ -171,11 +171,37 @@ def test_cell_aliases_follow_birth_order():
     finally:
         conn.close()
     aliases = [cell["alias"] for cell in snapshot["cells"]]
-    assert aliases == ["cell#0", "cell#1", "cell#2", "cell#3"]
-    # birth order is the scenario's declared order
+    assert aliases == ["cell#0", "cell#1", "cell#2", "cell#3", "cell#4"]
+    # birth order is the scenario's declared order; cell#4 is the auditor's
+    # child and inherits its parent's type
     assert [c["cell_type"] for c in snapshot["cells"]] == [
-        "commercial", "explorer", "builder", "auditor",
+        "commercial", "explorer", "builder", "auditor", "auditor",
     ]
+
+
+def test_snapshot_pins_the_lineage_tree():
+    """SPEC.md §26 names the expected lineage tree as golden-run content, so
+    reproduction drift has to be visible in the snapshot."""
+    conn = _fresh_run()
+    try:
+        snapshot = golden.semantic_snapshot(conn)
+    finally:
+        conn.close()
+
+    by_alias = {c["alias"]: c for c in snapshot["cells"]}
+
+    # The four seeded founders each root their own lineage.
+    for alias in ("cell#0", "cell#1", "cell#2", "cell#3"):
+        assert by_alias[alias]["parent"] is None
+        assert by_alias[alias]["founder"] == alias
+        assert by_alias[alias]["generation"] == 0
+
+    child = by_alias["cell#4"]
+    assert child["parent"] == "cell#3"
+    assert child["founder"] == "cell#3"
+    assert child["generation"] == 1
+    # a mutated child must not share its parent's genome (ADR-018)
+    assert child["genome_hash"] != by_alias["cell#3"]["genome_hash"]
 
 
 # --- verification against the shipped expectations ----------------------------

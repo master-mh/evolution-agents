@@ -315,3 +315,99 @@ def test_verify_golden_run_does_not_touch_the_colony_db(tmp_path):
 
     assert cli.main(["--db", str(db_path), "verify-golden-run"]) == 0
     assert db_path.read_bytes() == before
+
+
+# --- reproduce (SPEC.md §9.4; lineage.py) ------------------------------------
+
+
+def _seeded_colony(db_path, capsys, founders=10):
+    """A colony wide enough that the default 0.20 lineage cap permits a
+    second-generation Cell."""
+    cli.main(["--db", str(db_path), "init", "--seed-capital", "5000.00"])
+    for i in range(founders):
+        cli.main([
+            "--db", str(db_path), "create-cell", "--type", "commercial",
+            "--budget", "100.00", "--idempotency-key", f"f{i}",
+        ])
+    capsys.readouterr()
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    parent = conn.execute("SELECT cell_id FROM cells LIMIT 1").fetchone()[0]
+    conn.close()
+    return parent
+
+
+def test_reproduce_creates_a_child_from_parent_cash(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    parent = _seeded_colony(db_path, capsys)
+
+    exit_code = cli.main([
+        "--db", str(db_path), "reproduce", "--parent", parent, "--budget", "30.00",
+    ])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "reproduced ->" in out
+    assert "generation: 1" in out
+    assert f"founder:    {parent}" in out
+    assert "shares the parent's genome" in out
+
+
+def test_reproduce_with_mutation_reports_a_distinct_genome(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    parent = _seeded_colony(db_path, capsys)
+
+    exit_code = cli.main([
+        "--db", str(db_path), "reproduce", "--parent", parent, "--budget", "30.00",
+        "--mutation", '{"strategy": "v2"}', "--mutation-operator", "cli_test",
+    ])
+    assert exit_code == 0
+    assert "mutated genome" in capsys.readouterr().out
+
+
+def test_reproduce_unknown_parent_errors_cleanly(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    _seeded_colony(db_path, capsys)
+    exit_code = cli.main([
+        "--db", str(db_path), "reproduce", "--parent", "nope", "--budget", "1.00",
+    ])
+    assert exit_code == 1
+    assert "unknown parent cell" in capsys.readouterr().err
+
+
+def test_reproduce_invalid_mutation_json_errors_cleanly(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    parent = _seeded_colony(db_path, capsys)
+    exit_code = cli.main([
+        "--db", str(db_path), "reproduce", "--parent", parent, "--budget", "1.00",
+        "--mutation", "not-json",
+    ])
+    assert exit_code == 1
+    assert "must be valid JSON" in capsys.readouterr().err
+
+
+def test_reproduce_over_parent_balance_errors_cleanly(tmp_path, capsys):
+    """Charter C4 surfaced through the CLI without a traceback."""
+    db_path = tmp_path / "mitosis.db"
+    parent = _seeded_colony(db_path, capsys)
+    exit_code = cli.main([
+        "--db", str(db_path), "reproduce", "--parent", parent, "--budget", "9999.00",
+    ])
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "Traceback" not in err
+
+
+def test_status_reports_lineage(tmp_path, capsys):
+    db_path = tmp_path / "mitosis.db"
+    parent = _seeded_colony(db_path, capsys)
+    cli.main(["--db", str(db_path), "reproduce", "--parent", parent, "--budget", "30.00"])
+    capsys.readouterr()
+
+    cli.main(["--db", str(db_path), "status"])
+    out = capsys.readouterr().out
+    assert "lineage (SPEC.md §9.4" in out
+    assert "lineages: 10" in out
+    assert "integrity: True" in out
+    assert "depth 1" in out

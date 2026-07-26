@@ -13,7 +13,9 @@ IDs that run in CI"):
   charter_idempotent_handlers        -> C6 (event redelivery applies handler side effects once)
   charter_crash_recovery             -> C7 (reservation FSM stateful machine)
   charter_dead_cell_inert            -> C8 (dead Cells reject every further transition)
-  charter_carrying_capacity          -> C9 (birth licence vs configured limits)
+  charter_carrying_capacity          -> C9 (birth licence vs configured limits; and via
+                                              `_lineage_share`, §9.2's max population share
+                                              descended from one ancestor, on the reproduce path)
   charter_audit_complete             -> C10 (every lifecycle transition emits an audit event)
   charter_canonical_forms            -> C11 (money/genome/timestamps: canonical by construction)
   charter_kernel_immutable           -> C15 (P1 slice: genome content is inert data, never code —
@@ -28,12 +30,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, precondition, rule
 
 import mitosis
-from mitosis import db, events, genome, ledger, lifecycle, money, population, real_spend_breaker, reservations, resource_metering
+from mitosis import db, events, genome, ledger, lifecycle, lineage, money, population, real_spend_breaker, reservations, resource_metering
 from mitosis.accounts import cell_cash, cell_committed
 from mitosis.models import (
     Book,
@@ -270,6 +272,79 @@ def test_charter_carrying_capacity(max_living, attempts):
 
     assert granted == min(attempts, max_living)
     assert population.living_count(conn) == granted
+
+
+# C9 again, via the *other* birth path: §9.2 counts "maximum population share
+# descended from one ancestor" among the colony's carrying-capacity limits, so
+# reproduction is subject to a birth licence exactly as seeded birth is. For
+# any cap and any number of attempted reproductions, no lineage may end up
+# holding more than its configured share of the living population.
+
+
+@given(
+    cap=st.sampled_from([0.2, 0.34, 0.5, 0.75, 1.0]),
+    attempts=st.integers(min_value=0, max_value=12),
+    founders=st.integers(min_value=1, max_value=6),
+)
+@settings(max_examples=50, deadline=None)
+def test_charter_carrying_capacity_lineage_share(cap, attempts, founders):
+    # The cap governs *descent*, so it can only bind once the seeded founders
+    # alone are within it: a single founder is trivially 100% of a one-Cell
+    # colony, and no birth licence can undo that (a founder has no ancestor).
+    # test_seeded_founders_are_not_subject_to_the_lineage_cap pins that case.
+    assume(1 / founders <= cap)
+
+    conn = db.connect_and_migrate()
+    population.set_limits_if_absent(
+        conn,
+        PopulationLimits(
+            max_living_cells=100,
+            max_active_cells=100,
+            max_parallel_experiments=1,
+            max_births_per_epoch=1,
+            max_lineage_population_fraction=cap,
+        ),
+    )
+    ledger.post_transaction(
+        conn,
+        book=Book.USD_SIM,
+        currency="USD",
+        transaction_type="seed",
+        idempotency_key="seed",
+        description="seed",
+        entries=[
+            EntrySpec(account_id="external_capital", amount_minor_units=-1_000_000),
+            EntrySpec(account_id="seed_bank", amount_minor_units=1_000_000),
+        ],
+    )
+    seeded = [
+        lifecycle.create_cell(
+            conn,
+            cell_type=CellType.EXPLORER,
+            budget_minor_units=100_000,
+            book=Book.USD_SIM,
+            idempotency_key=f"founder:{i}",
+        )
+        for i in range(founders)
+    ]
+    parent = seeded[0]
+
+    for i in range(attempts):
+        try:
+            lineage.reproduce(
+                conn,
+                parent_cell_id=parent.cell_id,
+                budget_minor_units=10,
+                idempotency_key=f"child:{i}",
+            )
+        except lineage.LineageCapExceededError:
+            pass
+
+        # Must hold after every attempt, granted or denied — and for every
+        # lineage in the colony, not just the one being grown.
+        for entry in lineage.lineage_summary(conn):
+            assert entry["fraction"] <= cap
+        assert lineage.verify_lineage_integrity(conn) is True
 
 
 # --- charter_realspend_cap (C5) ---------------------------------------------

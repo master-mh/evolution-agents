@@ -9,6 +9,7 @@ float (§30 dollar-string rule).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from datetime import timedelta
@@ -18,10 +19,12 @@ from . import (
     clock,
     db,
     events,
+    genome,
     golden,
     ids,
     ledger,
     lifecycle,
+    lineage,
     money,
     population,
     real_spend_breaker,
@@ -198,6 +201,29 @@ def cmd_status(args: argparse.Namespace) -> None:
     else:
         print("    none yet")
     print()
+    print("  lineage (SPEC.md §9.4, founder-effect control):")
+    summary = lineage.lineage_summary(conn)
+    if summary:
+        print(
+            f"    lineages: {len(summary)}   "
+            f"max share: {summary[0]['fraction']:.2f}/{limits.max_lineage_population_fraction}"
+        )
+        for entry in summary[:5]:
+            # A NULL founder is unreachable through the kernel, but a
+            # corrupted or hand-edited DB shouldn't produce a traceback —
+            # the integrity line just below is what flags it.
+            founder = (entry["founder_cell_id"] or "<none>")[:8]
+            print(
+                f"    {founder}: {entry['living']} living "
+                f"({entry['fraction']:.2f}), {entry['total']} total, "
+                f"depth {entry['max_generation']}"
+            )
+        if len(summary) > 5:
+            print(f"    ... and {len(summary) - 5} more")
+        print(f"    integrity: {lineage.verify_lineage_integrity(conn)}")
+    else:
+        print("    none yet")
+    print()
     print("  reservations:")
     r_by_status = reservations.count_by_status(conn)
     print(f"    by status: {r_by_status}" if r_by_status else "    none yet")
@@ -259,6 +285,48 @@ def cmd_create_cell(args: argparse.Namespace) -> None:
     print(f"  book:   {cell.book.value}")
     print(f"  budget: {args.budget} ({budget_minor_units} minor units)")
     print(f"  genome: {cell.genome_hash}")
+
+    conn.close()
+
+
+def cmd_reproduce(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    parent = lifecycle.get_cell(conn, args.parent)
+    if parent is None:
+        raise CliError(f"unknown parent cell: {args.parent}")
+
+    budget_minor_units = money.parse_minor_units(args.budget, parent.book.value)
+    idempotency_key = args.idempotency_key or f"cli_reproduce:{ids.new_id()}"
+    mutation = None
+    if args.mutation:
+        try:
+            mutation = json.loads(args.mutation)
+        except json.JSONDecodeError as exc:
+            raise CliError(f"--mutation must be valid JSON: {exc}") from exc
+
+    child = lineage.reproduce(
+        conn,
+        parent_cell_id=parent.cell_id,
+        budget_minor_units=budget_minor_units,
+        idempotency_key=idempotency_key,
+        cell_type=CellType(args.type) if args.type else None,
+        mutation=mutation,
+        mutation_operator=args.mutation_operator,
+    )
+
+    print(f"Cell {parent.cell_id} reproduced -> {child.cell_id}")
+    print(f"  type:       {child.cell_type.value}")
+    print(f"  generation: {child.generation}")
+    print(f"  founder:    {child.founder_cell_id}")
+    print(f"  book:       {child.book.value}")
+    print(f"  budget:     {args.budget} ({budget_minor_units} minor units, from parent's cash)")
+    print(f"  genome:     {child.genome_hash}")
+    if mutation:
+        print("  (mutated genome — distinct from parent's)")
+    else:
+        print("  (unmutated — shares the parent's genome, per content addressing)")
 
     conn.close()
 
@@ -409,6 +477,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create_cell_parser.set_defaults(func=cmd_create_cell)
 
+    reproduce_parser = subparsers.add_parser(
+        "reproduce", help="birth a child of an existing Cell, funded from its own cash"
+    )
+    reproduce_parser.add_argument("--parent", required=True, help="parent cell_id")
+    reproduce_parser.add_argument(
+        "--budget", required=True, help='child budget, e.g. "10.00" (debited from the parent)'
+    )
+    reproduce_parser.add_argument(
+        "--type", default=None, choices=[t.value for t in CellType],
+        help="child cell type (default: inherit the parent's)",
+    )
+    reproduce_parser.add_argument(
+        "--mutation", default=None,
+        help='JSON object overlaid on the inherited genome, e.g. \'{"strategy":"v2"}\'. '
+        "Omit to inherit the parent's genome exactly.",
+    )
+    reproduce_parser.add_argument(
+        "--mutation-operator", default=None, help="name of the mutation operator, recorded on the genome"
+    )
+    reproduce_parser.add_argument("--idempotency-key", default=None)
+    reproduce_parser.set_defaults(func=cmd_reproduce)
+
     advance_time_parser = subparsers.add_parser(
         "advance-time", help="advance the simulated clock forward"
     )
@@ -442,6 +532,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except (
         lifecycle.LifecycleError,
+        lineage.LineageError,
+        genome.GenomeError,
         reservations.ReservationError,
         ledger.LedgerError,
         population.PopulationError,
