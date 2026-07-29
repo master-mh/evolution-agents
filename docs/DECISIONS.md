@@ -321,6 +321,173 @@ Template: **Status** · **Spec ref** · **Context** · **Decision** · **Consequ
 
 ---
 
+## ADR-020: Model-call cost is computed in micro-USD; the ledger rounds up to the cent
+
+- **Status:** Accepted
+- **Spec ref:** §2.2 (USD_REAL), §24.1 (`cost estimate` / `reconciled cost`), §30.1 (money rule),
+  Charter C5, Charter C11
+- **Context:** USD_REAL's minor unit is the cent (`money.MINOR_UNITS_EXPONENT`), which §2.6's own
+  reporting example assumes when it prints `0.08 USD_REAL`. A single model call routinely costs a
+  fraction of a cent — 1,000 input tokens on `claude-opus-5` is 0.5 cents — so the cent is too
+  coarse to hold a per-call figure. Computing per-call cost directly in cents would round most
+  individual calls to 0 or 1 and make cost attribution meaningless exactly where the colony needs
+  it: per Cell, per experiment, per provider.
+- **Alternatives considered:** (a) Widen USD_REAL's minor unit to micro-dollars. Rejected: it
+  changes the meaning of every existing USD_REAL amount, invalidates the golden run and the
+  real-spend limits, and contradicts §2.6's two-decimal reporting. (b) Round each call to the
+  nearest cent. Rejected: rounding down understates real spend, and Charter C5's caps would then be
+  computed from a figure smaller than the true bill — the breaker would fail *open*. (c) Carry
+  fractional remainders in a colony-level rounding account. Rejected as premature: it adds an
+  account outside `accounts.FIXED_ACCOUNTS` and a reconciliation concern, to solve an error that
+  provider-invoice reconciliation will resolve properly anyway.
+- **Decision:** Cost is computed and stored exactly in **micro-USD** (1e-6 USD) on the
+  `model_calls` row, and converted to USD_REAL minor units by rounding **up** for the ledger
+  posting. Rounding up is the same fail-closed posture Charter C5 takes elsewhere: the colony may
+  believe it spent slightly more real money than it did, never less.
+- **Consequences:** Stated plainly because it is real: the ledger overstates real spend by up to
+  0.999 cents per call, which at Phase 4 volumes of cheap calls is a material relative error. The
+  exact micro-USD figure on every row is what §24.1's `reconciled cost` trues up against once a
+  provider invoice exists — until then `reconciled_micro_usd` is always NULL and the overstatement
+  stands. Sub-cent-per-call workloads should read `cost_actual_micro_usd`, not the ledger, for
+  per-call cost attribution.
+
+---
+
+## ADR-021: A model call that costs more than it reserved is still recorded in full
+
+- **Status:** Accepted
+- **Spec ref:** §4 (two-phase spend), §4.4, §5.2, Charter C4, Charter C5
+- **Context:** The gateway reserves a worst-case estimate before calling a provider, then settles
+  at the provider's reported usage. `reservations.settle` refuses a settlement above the
+  reservation's `maximum_amount` — that refusal *is* Charter C4. But a provider that reports more
+  usage than the estimate predicted has already billed for it: the money is gone before the kernel
+  learns the number. The two obligations pull apart. C4 says a Cell cannot overspend its authorised
+  budget; the ledger's job is to state what actually happened.
+- **Alternatives considered:** (a) Clamp the settlement at the cap and record nothing further.
+  Rejected: the ledger then records *less* real spend than the provider billed, so Charter C5's
+  hour/day/month caps are computed from an understated figure and the circuit breaker drifts
+  progressively further from reality with every overrun — the failure compounds silently and in the
+  dangerous direction. (b) Reserve so conservatively that an overrun is impossible. Rejected: the
+  bound is the full context window times the output price, which would make the concurrent-reserved
+  cap unusable and starve normal calls. (c) Treat the overrun as a liability rather than an
+  expense. Rejected as Phase 9 machinery (`liability_reserve` exists for real obligations); the
+  charge here is settled, not owed.
+- **Decision:** Settle at the cap, then post the shortfall as a separate, directly-posted
+  `model_call_cost_overrun` USD_REAL transaction from the Cell's cash to `external_expense`, with a
+  loud audit event. Charter C4 governs **authorisation** — whether a Cell may commit to a spend —
+  and the reservation enforced it at the only moment enforcement could change the outcome.
+  Recording a charge that has already been incurred is accounting, not authorisation.
+- **Consequences:** This is the only place in the kernel that posts USD_REAL spend outside a
+  reservation, so it needs to stay rare and visible; it is one transaction type, audited every
+  time. It can drive a Cell's cash negative, deliberately — an overdrawn Cell then fails every
+  subsequent `reservations.request` balance check and stops spending immediately rather than
+  quietly continuing. Because overruns are not settlements, every real-spend query had to learn
+  about them, and anything that posts an external USD_REAL charge in future must be registered the
+  same way or the caps will not see it. Note that `real_spend_breaker._REAL_SPEND_TRANSACTION_TYPES`
+  is **not** yet the single source it looks like: the global window query reads the tuple, but
+  `_settled_spend_for_provider_since` hardcodes the same two types in its own SQL. Both are correct
+  today; a third type added to the tuple alone would be counted globally and missed per-provider.
+  Logged in FUTURE_BUILD_HOOKS.
+
+---
+
+## ADR-022: The gateway resolves one paid call in one transaction; a crash rolls back to before it
+
+- **Status:** Accepted
+- **Spec ref:** §4.4, §24, §2.4, Amendment A6, Charter C4, Charter C7
+- **Context:** Charter C7 is implemented one reservation at a time: `reservations.settle`/`release`
+  each post their ledger transaction and update `reservations.status` inside a single write
+  transaction, so a crash cannot be observed between the two. One paid model call is not one
+  reservation. It settles USD_REAL, may post an overrun, meters two token types, settles a RESOURCE
+  reservation, mirrors into USD_SIM and marks a `model_calls` row — six movements describing one
+  external charge. Performed as six transactions (as they first were), a crash between any two left
+  real money spent against a call still recorded as `reserved`, with nothing able to say which
+  steps had run. `sweeper.py` had no knowledge of `model_calls`, so there was no recovery path and
+  no operator verb. Critically, **every existing invariant stayed green in that state** —
+  conservation balances and the hash chain validates when a reservation settles and its call row is
+  never updated — so nothing would have reported it.
+- **Alternatives considered:** (a) **Forward recovery**: record the provider response durably
+  first, add a `settling` status, and have a recovery routine finish the remaining steps from the
+  recorded usage. Strictly more capable — it preserves the usage figures a crash otherwise loses —
+  but it needs a new status, a migration, a resume routine and a second idempotency story for
+  every step, and it can only ever be *better* than rollback on the narrow window between the
+  provider replying and the commit. Deferred, not rejected: it becomes worth building alongside
+  §24.1 invoice reconciliation, which needs the same recorded-usage plumbing. (b) **Leave it and
+  rely on the ledger's invariants.** Rejected: the invariants demonstrably do not see this state.
+  (c) **Widen the transaction to include the provider call** so the reservation and the call commit
+  together. Rejected outright — it would hold a SQLite write lock across a network round-trip, and
+  it would destroy reserve-before-execute, whose entire value is that the authorisation is durable
+  *before* the money can be spent.
+- **Decision:** `_handle_success` and `_handle_failure` each hold one `BEGIN IMMEDIATE` and compose
+  `_*_locked` cores of `reservations`, `resource_metering` and `ledger` — the same
+  core-plus-wrapper split `ledger._write_transaction` and `audit.record` already used. Steps 1–3
+  (reserve USD_REAL, reserve RESOURCE, insert the `model_calls` row) stay outside it deliberately:
+  they must be durably committed *before* the external call, or reserve-before-execute means
+  nothing. Recovery is two parts, in dependency order: `gateway.GatewayOperationChecker` tells the
+  sweeper what an expired model-call reservation meant, then `gateway.resolve_stranded_calls`
+  brings the `model_calls` row into agreement with it. `mitosis sweep` runs both.
+- **Consequences:** No reachable state has a model call's money partly moved. A crash rolls back to
+  the post-reserve, pre-response state, which is **honest but not complete**: the provider may have
+  billed us, and the response — the only record of what for — is gone. That resolves to
+  `execution_unknown` with the funds still committed, exactly as C7 requires of an unresolvable
+  external operation, and it stays there until reconciliation. RESOURCE reservations are released
+  instead, since no provider can bill an internal shadow price. The `_*_locked` cores are a real
+  hazard: they perform no BEGIN and no COMMIT, so calling one outside a transaction silently
+  autocommits each statement and reintroduces exactly the gap this ADR closes. Every one of them
+  says so in its docstring, and they stay underscore-private.
+
+---
+
+## ADR-023: Reconciliation is an accounting axis; adjustments are signed and posted, never edited
+
+- **Status:** Accepted
+- **Spec ref:** §24.1 (reconciled cost), §3.6 (external reconciliation), §4.4, §5, Charter C3, C7
+- **Context:** The kernel's record of what a call cost is an estimate twice over — the ledger holds
+  a cent figure rounded up from micro-USD (ADR-020), and a call that crashed or timed out holds no
+  figure at all, only committed funds and an honest `execution_unknown`. ADR-022 made crash
+  recovery produce more of the latter without giving anyone a way to resolve them: a producer with
+  no consumer. Only a provider invoice settles either case.
+- **Decisions, and the alternatives each displaced:**
+  1. **Reconciling does not change a call's `status`.** A reconciled `execution_unknown` call stays
+     `execution_unknown`; `reconciled_at_utc` is what marks it resolved. Rejected: promoting it to
+     `succeeded`, which would invent a response the kernel never saw — we learned what the call
+     cost, not what it returned. Same authorisation-versus-accounting split as ADR-021, and it
+     avoids a status migration.
+  2. **Two paths, chosen by reservation state.** Funds still committed (`reserved` /
+     `execution_unknown`) are resolved through §4.4's FSM — settle at the invoiced amount, release
+     the remainder, or release outright when the invoice shows no charge. Funds already moved are
+     adjusted by posting a **new** transaction, never by editing history (§3.6 is explicit).
+  3. **A disputed charge resolves by release-plus-adjustment, not by settling.** §4.4 gives
+     `disputed` a narrower exit than `execution_unknown` — `settled | released`, with no
+     `partially_settled` — so a disputed hold agreed at less than its full amount cannot be settled
+     against its own reservation. Rejected: widening the FSM, which contradicts a normative spec
+     section. The hold comes off and the agreed figure is posted separately, which is also how a
+     disputed charge resolves commercially. *(Found by hand-verification, not by design: the first
+     implementation tried to partially settle and hit `InvalidTransitionError`.)*
+  4. **One signed transaction type, and the breaker measures the signed `external_expense` leg.**
+     Rejected: separate charge/credit types, which would have let a credit be omitted from the
+     spend tuple and quietly overstate exposure forever. The sign matters because both breaker
+     queries previously selected the spend leg with `amount_minor_units > 0` — on a credit, the
+     positive leg is the *refund landing in the Cell's cash*, so refunding a Cell would have pushed
+     it toward the circuit breaker instead of away from it. Both queries now sum
+     `external_expense`, and `_REAL_SPEND_TRANSACTION_TYPES` finally is the single source it always
+     claimed to be (the per-provider query used to hardcode its own copy).
+- **Consequences:** `reconcile_model_call` refuses a call that already carries a
+  `reconciled_at_utc` rather than adjusting twice — money makes "idempotent" mean "refuse", not
+  "replay". Releasing an `execution_unknown` reservation is permitted here and only here: Charter
+  C7 forbids *auto*-releasing an unknown operation, and a release that is the outcome of
+  reconciliation is precisely the process C7 defers to.
+- **What this does not fix, contrary to the motivation it was built under:** ADR-020's rounding
+  overstatement survives. A call whose true cost is 3.5 cents was recorded at 4; reconciling it
+  against an invoice of 3.5 cents converts through the same ceiling and yields 4 again, so the
+  adjustment is zero. It cannot be otherwise — the overstatement is sub-minor-unit by construction
+  and the ledger cannot hold half a cent. Rounding error is only correctable **in aggregate**, so
+  closing it needs reconciliation against an invoice *total* spanning many calls. Pinned as a test
+  (`test_sub_cent_rounding_is_not_correctable_per_call`) so the limitation is a stated property
+  rather than a later surprise, and logged in FUTURE_BUILD_HOOKS.
+
+---
+
 ## Amendments folded directly into the spec without a standalone ADR
 
 The remaining amendments from `docs/SPEC.md` §"Amendments introduced in v0.2" are feature

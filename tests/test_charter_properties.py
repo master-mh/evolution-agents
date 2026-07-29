@@ -18,6 +18,7 @@ IDs that run in CI"):
                                               descended from one ancestor, on the reproduce path)
   charter_audit_complete             -> C10 (every lifecycle transition emits an audit event)
   charter_canonical_forms            -> C11 (money/genome/timestamps: canonical by construction)
+  charter_no_secret_in_cell          -> C14 (no API key reaches Cell state or the database)
   charter_kernel_immutable           -> C15 (P1 slice: genome content is inert data, never code —
                                               full sandbox isolation is Phase 5, see C12)
 """
@@ -35,7 +36,7 @@ from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, precondition, rule
 
 import mitosis
-from mitosis import db, events, genome, ledger, lifecycle, lineage, money, population, real_spend_breaker, reservations, resource_metering
+from mitosis import db, events, gateway, genome, ledger, lifecycle, lineage, money, population, providers, real_spend_breaker, reservations, resource_metering
 from mitosis.accounts import cell_cash, cell_committed
 from mitosis.models import (
     Book,
@@ -689,3 +690,99 @@ def test_charter_kernel_immutable_no_module_writes_its_own_source_tree():
         mod_src = inspect.getsource(importlib.import_module(f"mitosis.{name}"))
         assert kernel_dir not in mod_src
         assert "open(" not in mod_src  # the kernel only ever writes via sqlite3, not raw file I/O
+
+
+# --- charter_no_secret_in_cell (C14), Phase-4 slice --------------------------
+# "No API key ever enters Cell state." The gateway is the first code in the
+# kernel that holds a credential at all, so C14 becomes checkable here. Three
+# angles, because one of them alone would be easy to satisfy by accident:
+# the credential is not reachable from the request a Cell builds, it never
+# lands in any database column, and it does not survive into an error message.
+
+
+def test_charter_no_secret_in_cell_request_type_cannot_carry_a_credential(conn):
+    """A Cell constructs a ModelRequest. If a credential could ride on one,
+    C14 would rest on convention rather than on the type."""
+    # An exact field set, not a keyword blocklist: the point is that adding
+    # *any* new field to the Cell-facing request type is a decision someone
+    # has to make deliberately, which is where a credential would slip in.
+    assert set(providers.ModelRequest.model_fields) == {
+        "model",
+        "messages",
+        "max_tokens",
+        "system",
+    }
+
+
+def test_charter_no_secret_in_cell_credential_never_reaches_the_database(conn, monkeypatch):
+    secret = "sk-ant-api03-CHARTERC14CANARYVALUE"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", secret)
+
+    real_spend_breaker.configure_if_absent(conn)
+    cell = lifecycle.create_cell(
+        conn,
+        cell_type=CellType.EXPLORER,
+        budget_minor_units=1_000,
+        book=Book.USD_REAL,
+        idempotency_key="c14-cell",
+    )
+    for book, amount in ((Book.RESOURCE, 1_000_000), (Book.USD_SIM, 1_000)):
+        ledger.post_transaction(
+            conn,
+            book=book,
+            currency=book.value,
+            transaction_type="test_funding",
+            idempotency_key=f"c14-fund:{book.value}",
+            entries=[
+                EntrySpec(account_id="seed_bank", amount_minor_units=-amount),
+                EntrySpec(account_id=f"cell:{cell.cell_id}:cash", amount_minor_units=amount),
+            ],
+        )
+
+    class _KeyLeakingProvider:
+        """Worst realistic case: the provider raises with the credential in
+        the message, the way a misconfigured SDK client would."""
+
+        name = "anthropic"
+
+        def complete(self, request):
+            raise providers.ProviderCallError(
+                f"AuthenticationError: key {secret} rejected", execution_unknown=False
+            )
+
+    gateway.call_model(
+        conn,
+        cell_id=cell.cell_id,
+        provider=_KeyLeakingProvider(),
+        request=providers.ModelRequest(
+            model="claude-opus-5",
+            messages=({"role": "user", "content": "hello"},),
+            max_tokens=64,
+        ),
+        idempotency_key="c14-call",
+    )
+
+    # Sweep every value of every column of every table — a targeted check on
+    # the columns we happen to think of would miss the one we forgot.
+    tables = [
+        r["name"]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    ]
+    for table in tables:
+        for row in conn.execute(f"SELECT * FROM {table}").fetchall():
+            for value in tuple(row):
+                assert secret not in str(value), f"credential leaked into {table}"
+
+
+def test_charter_no_secret_in_cell_no_kernel_module_persists_the_environment():
+    """A module that reads the credential env var and is not providers.py is
+    a C14 regression waiting to happen."""
+    kernel = Path(mitosis.__file__).parent
+    for path in sorted(kernel.glob("*.py")):
+        if path.name == "providers.py":
+            continue
+        source = path.read_text()
+        assert "ANTHROPIC_API_KEY" not in source, path.name
+        assert "api_key" not in source, path.name

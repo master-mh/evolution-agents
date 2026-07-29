@@ -27,3 +27,77 @@ actually queued for building — this file is memory, not a backlog to work thro
 - `max_lineage_population_fraction` is enforced literally, so in a *small* colony reproduction is impossible: at the colony.yaml default of 0.20, any second-generation Cell in a 4-Cell colony is already 40% of the living population. Seeded founders are exempt (a founder has no ancestor), so the bootstrap path is "seed more founders", and the cap is harmless at Phase 2's target scale of hundreds–thousands of Cells — a lineage may hold 200 of 1000. It only bites in small test/bootstrap colonies.
 - Common EA practice is a **minimum-population floor**: the share cap only engages once the living population is large enough for a fraction to be statistically meaningful (e.g. `living >= 1/cap`). Deliberately *not* implemented, because SPEC.md §9 specifies no such threshold and inventing one would be inventing colony policy rather than implementing the spec. Worth revisiting when Phase 2 sets up real seeded populations — if the flight simulator ends up needing a floor to bootstrap, that's evidence the spec should gain one explicitly.
 - Related, and also deferred: §9.4 lists diversity bonuses, diminishing birth priority, independent-replication requirements, and niche-specific carrying capacity as founder-effect measures. Only the hard cap is implemented; the rest are selection-policy concerns that belong with Phase 2's MAP-Elites/allocator work, not the kernel.
+
+## Phase 4 model gateway (2026-07-27)
+
+- **Provider-invoice reconciliation** is now load-bearing in two places, not one: it trues up
+  ADR-020's up-to-0.999-cents-per-call rounding overstatement, *and* it is the only thing that can
+  resolve a reservation left in `execution_unknown` by a timed-out call. Until it exists, an
+  `execution_unknown` model call holds its funds committed indefinitely with no operator path to
+  resolve it. A `mitosis reconcile-model-call --resolve settled|unbilled` verb would be a cheap
+  interim.
+- **Tighter pre-call token estimation.** `providers._estimate_tokens` assumes 2 chars/token (a
+  deliberate over-estimate) because the real `count_tokens` endpoint is a second round trip. The
+  cost is chronic over-reservation, which eats into the C5 concurrent-reserved cap.
+- **A rounding-remainder account** was rejected in ADR-020 as premature. If sub-cent calls become
+  the dominant workload, revisit: a `rounding_remainder` fixed account would let the ledger carry
+  exact micro-USD without widening USD_REAL's minor unit.
+- ~~**`_REAL_SPEND_TRANSACTION_TYPES` is a footgun, and is not yet the single source it looks
+  like.**~~ — CLOSED 2026-07-28 by ADR-023, which added the predicted third type
+  (`model_call_reconciliation_adjustment`) and so had to fix it: both the global and per-provider
+  queries now read the tuple. The remaining half of the original suggestion is still open: **a test
+  asserting that every USD_REAL transaction type reaching `external_expense` is either in the tuple
+  or explicitly exempted.** Today the registration is a convention enforced by a code reviewer
+  noticing, which is exactly how the overrun type was missed the first time.
+- **Aggregate-invoice reconciliation is what actually closes ADR-020's rounding drift.** Per-call
+  reconciliation (ADR-023) provably cannot: 3.5 cents of true cost reconciles back through the same
+  ceiling to the 4 already recorded. Ten such calls are 35 cents of true cost carried as 40, and
+  only a reconciliation against an invoice *total* covering many calls can post the 5-cent
+  correction. Needs an invoice-level record (`invoices` table, calls linked to it) and one
+  adjustment posted against the aggregate — the per-call machinery, sign handling and breaker
+  registration are already in place, so this is additive.
+- **`ledger.spend_by_book` overstates spend for a Cell that received a reconciliation credit.** The
+  refund's positive leg is on the Cell's own cash (correctly excluded) but the negative
+  `external_expense` leg is dropped by the function's `amount_minor_units > 0` filter, so the
+  refund never reduces the figure. Removing the filter is *not* the fix: birth funding's negative
+  leg carries the same cell_id, so a freshly-funded Cell would read as having spent a negative
+  amount. Telling them apart needs an account-level distinction between funding sources and spend
+  destinations that §31's account list does not draw — a real modelling decision, not a patch.
+  Bounded impact: this figure feeds coroner reports only, never an enforcement check.
+- **Reconciliation is per-call and operator-driven.** Nothing fetches an invoice, parses a
+  statement, or reconciles in bulk; `mitosis reconcile` takes one call id and one figure. A CSV or
+  provider-API import needs no new kernel concepts and is the obvious next step once there is a
+  real invoice to work from.
+- **Resolving a `disputed` reservation is only half-built.** `mitosis dispute` moves a reservation
+  into `disputed` (§4.4) and `reconcile` carries it out again, but the human/Auditor process around
+  a dispute is §23 governance, which does not exist. Today a dispute is a label plus a held
+  balance.
+- ~~**Gateway success path is not crash-atomic**~~ — CLOSED 2026-07-28 by ADR-022, taking option
+  (c) plus (b): `_handle_success`/`_handle_failure` are each one transaction composed from new
+  `_*_locked` cores, and `mitosis sweep` pairs `gateway.GatewayOperationChecker` with
+  `gateway.resolve_stranded_calls`. What that choice deliberately leaves on the table is below.
+- **Forward recovery for the gateway: record the provider response before applying the
+  accounting.** ADR-022 alternative (a), deferred rather than rejected. Rollback loses the one
+  thing a crash cannot reconstruct — what the provider actually billed for — so the call resolves
+  to `execution_unknown` and waits for a human. Recording the response durably (a `settling`
+  status, set in its own transaction the moment `complete()` returns) would let a recovery routine
+  finish the settlement automatically from real usage figures. Worth building *with* §24.1 invoice
+  reconciliation, which needs the same plumbing; not worth a new status and migration on its own.
+- **The `_*_locked` cores are a live footgun.** `reservations._settle_locked`/`_release_locked`/
+  `_bare_status_transition_locked`, `resource_metering._record_usage_locked` and
+  `ledger._post_transaction_locked` perform no BEGIN and no COMMIT. Called outside a transaction,
+  SQLite autocommits each statement and the atomicity ADR-022 bought is silently gone — with no
+  test failure, since every invariant still holds. Underscore-private and documented, but a lint
+  rule or a runtime `conn.in_transaction` assertion would make it enforceable rather than
+  conventional.
+- **`sweeper.sweep` is colony-wide and unbatched.** It loads every expired reservation and resolves
+  them one transaction at a time. Fine at Phase 4 volumes; revisit before a colony large enough
+  that a sweep is a long-running job, since nothing currently bounds or resumes it.
+- **Streaming responses** are unsupported; `AnthropicProvider` uses non-streaming `messages.create`.
+  Streaming changes the failure model (a partial response is billed), which interacts directly with
+  the `execution_unknown` classification.
+- **Per-Cell / per-experiment spend caps.** Only global and per-provider caps exist. A Cell's own
+  budget is enforced only as "cash on hand", which is coarser than §5's shape suggests.
+- **Prompt caching** is not used at all. At Phase 4 volumes with a shared system prompt it is the
+  single largest available cost reduction, and it changes the cost model (cache writes cost more,
+  reads cost far less) in a way the pricing table cannot currently express.

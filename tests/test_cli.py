@@ -411,3 +411,332 @@ def test_status_reports_lineage(tmp_path, capsys):
     assert "lineages: 10" in out
     assert "integrity: True" in out
     assert "depth 1" in out
+
+
+# --- fund-cell + call-model (model gateway, SPEC.md §24) ---------------------
+
+
+def _init_and_cell(tmp_path, capsys, book="USD_REAL", budget="10.00"):
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init"])
+    cli.main(
+        [
+            "--db", str(db_path), "create-cell",
+            "--type", "explorer", "--budget", budget, "--book", book,
+        ]
+    )
+    out = capsys.readouterr().out
+    cell_id = out.split("Created cell ")[1].split("\n")[0].strip()
+    return str(db_path), cell_id
+
+
+def _fund_for_calls(db_path, cell_id):
+    cli.main(["--db", db_path, "fund-cell", "--cell", cell_id,
+              "--amount", "1000000", "--book", "RESOURCE"])
+    cli.main(["--db", db_path, "fund-cell", "--cell", cell_id,
+              "--amount", "10.00", "--book", "USD_SIM"])
+
+
+def test_fund_cell_credits_a_second_book(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    exit_code = cli.main(["--db", db_path, "fund-cell", "--cell", cell_id,
+                          "--amount", "2.50", "--book", "USD_SIM"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "Funded cell" in out
+    assert "book:    USD_SIM" in out
+    assert "balance: 2.50" in out
+
+
+def test_fund_cell_rejects_unknown_cell(tmp_path, capsys):
+    db_path, _ = _init_and_cell(tmp_path, capsys)
+    assert cli.main(["--db", db_path, "fund-cell", "--cell", "nope",
+                     "--amount", "1.00", "--book", "USD_SIM"]) == 1
+    assert "unknown cell" in capsys.readouterr().err
+
+
+def test_call_model_with_mock_provider(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    capsys.readouterr()
+    exit_code = cli.main(["--db", db_path, "call-model", "--cell", cell_id,
+                          "--prompt", "hello there"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "Model call" in out
+    assert "status:    succeeded" in out
+    assert "provider:  mock" in out
+    assert "mock reply" in out
+
+
+def test_call_model_refuses_a_paid_provider_without_confirmation(tmp_path, capsys):
+    """The one CLI verb that can spend real money requires saying so."""
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    capsys.readouterr()
+    exit_code = cli.main(["--db", db_path, "call-model", "--cell", cell_id,
+                          "--prompt", "hi", "--provider", "anthropic",
+                          "--model", "claude-opus-5"])
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "--yes-spend-real-money" in err
+    assert "spends real money" in err
+
+
+def test_call_model_rejects_unknown_provider(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    capsys.readouterr()
+    assert cli.main(["--db", db_path, "call-model", "--cell", cell_id,
+                     "--prompt", "hi", "--provider", "openai"]) == 1
+    assert "unknown provider" in capsys.readouterr().err
+
+
+def test_call_model_rejects_unpriced_model_cleanly(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    capsys.readouterr()
+    assert cli.main(["--db", db_path, "call-model", "--cell", cell_id,
+                     "--prompt", "hi", "--model", "no-such-model"]) == 1
+    err = capsys.readouterr().err
+    assert "no price for model" in err
+    assert "Traceback" not in err
+
+
+def test_call_model_rejects_unknown_cell(tmp_path, capsys):
+    db_path, _ = _init_and_cell(tmp_path, capsys)
+    capsys.readouterr()
+    assert cli.main(["--db", db_path, "call-model", "--cell", "nope",
+                     "--prompt", "hi"]) == 1
+    assert "unknown cell" in capsys.readouterr().err
+
+
+def test_status_shows_the_model_gateway_section(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    cli.main(["--db", db_path, "call-model", "--cell", cell_id, "--prompt", "hi"])
+    capsys.readouterr()
+    cli.main(["--db", db_path, "status"])
+    out = capsys.readouterr().out
+    assert "model gateway (pricing table" in out
+    assert "calls by status: {'succeeded': 1}" in out
+    assert "mock: 1 calls" in out
+
+
+def test_status_gateway_section_empty_before_any_call(tmp_path, capsys):
+    db_path, _ = _init_and_cell(tmp_path, capsys)
+    capsys.readouterr()
+    cli.main(["--db", db_path, "status"])
+    assert "no calls yet" in capsys.readouterr().out
+
+
+def test_sweep_before_init_errors(tmp_path, capsys):
+    assert cli.main(["--db", str(tmp_path / "nope.db"), "sweep"]) == 1
+    assert "run `mitosis init` first" in capsys.readouterr().err
+
+
+def test_sweep_is_a_no_op_on_a_healthy_colony(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    cli.main(["--db", db_path, "call-model", "--cell", cell_id, "--prompt", "hi"])
+    capsys.readouterr()
+    assert cli.main(["--db", db_path, "sweep"]) == 0
+    out = capsys.readouterr().out
+    assert "Reservations swept: 0" in out
+    assert "Stranded model calls resolved: 0" in out
+    assert "execution_unknown" not in out
+
+
+def test_sweep_resolves_a_stranded_call_and_says_money_is_still_committed(
+    tmp_path, capsys, monkeypatch
+):
+    """The operator-facing half of crash recovery: after a real crash the
+    sweep must both fix the record and be loud that real money is still
+    committed against an outcome nobody knows (Charter C7).
+
+    The stranded state is produced by actually crashing a call rather than by
+    rewriting rows — a hand-built one would replay ledger postings the real
+    crash never made, and collide on their idempotency keys.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    import pytest
+
+    from mitosis import db as _db
+    from mitosis import gateway, providers
+
+    class _Crash(BaseException):
+        pass
+
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    capsys.readouterr()
+
+    def boom(*args, **kwargs):
+        raise _Crash("mid-settle")
+
+    monkeypatch.setattr(gateway, "_mirror_to_sim_locked", boom)
+    conn = _db.connect_and_migrate(db_path)
+    with pytest.raises(_Crash):
+        gateway.call_model(
+            conn,
+            cell_id=cell_id,
+            provider=providers.MockProvider(),
+            request=providers.ModelRequest(
+                model="mock-1",
+                messages=({"role": "user", "content": "hi"},),
+                max_tokens=64,
+            ),
+            idempotency_key="cli-crash",
+        )
+    conn.close()  # process death: the transaction is never committed
+    monkeypatch.undo()
+
+    # Age the reservations past their TTL so the sweeper is willing to look;
+    # the alternative is sleeping out a 15-minute default.
+    conn = _db.connect_and_migrate(db_path)
+    conn.execute(
+        "UPDATE reservations SET expires_at = ?",
+        ((datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),),
+    )
+    conn.close()
+
+    assert cli.main(["--db", db_path, "sweep"]) == 0
+    out = capsys.readouterr().out
+    assert "Reservations swept: 2" in out
+    assert "-> execution_unknown" in out
+    assert "-> released" in out
+    assert "Stranded model calls resolved: 1" in out
+    assert "reconciled, never auto-released" in out
+
+
+def test_reconcile_before_init_errors(tmp_path, capsys):
+    assert cli.main([
+        "--db", str(tmp_path / "nope.db"), "reconcile",
+        "--call", "x", "--invoiced", "1.00", "--source", "s",
+    ]) == 1
+    assert "run `mitosis init` first" in capsys.readouterr().err
+
+
+def test_outstanding_lists_then_clears(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    cli.main(["--db", db_path, "call-model", "--cell", cell_id, "--prompt", "hi"])
+    out = capsys.readouterr().out
+    call_id = out.split("Model call ")[1].split("\n")[0].strip()
+
+    cli.main(["--db", db_path, "outstanding"])
+    out = capsys.readouterr().out
+    assert "1 billable, 0 reconciled, 1 outstanding" in out
+    assert call_id in out
+
+    assert cli.main([
+        "--db", db_path, "reconcile", "--call", call_id,
+        "--invoiced", "0", "--source", "inv-2026-07",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "Reconciled model call" in out
+    assert "source:    inv-2026-07" in out
+
+    cli.main(["--db", db_path, "outstanding"])
+    assert "Nothing outstanding." in capsys.readouterr().out
+
+
+def test_reconcile_refuses_to_run_twice(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    cli.main(["--db", db_path, "call-model", "--cell", cell_id, "--prompt", "hi"])
+    call_id = capsys.readouterr().out.split("Model call ")[1].split("\n")[0].strip()
+    cli.main([
+        "--db", db_path, "reconcile", "--call", call_id,
+        "--invoiced", "0", "--source", "inv",
+    ])
+    capsys.readouterr()
+    assert cli.main([
+        "--db", db_path, "reconcile", "--call", call_id,
+        "--invoiced", "0", "--source", "inv",
+    ]) == 1
+    assert "already reconciled" in capsys.readouterr().err
+
+
+def test_reconcile_rejects_precision_finer_than_micro_usd(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    cli.main(["--db", db_path, "call-model", "--cell", cell_id, "--prompt", "hi"])
+    call_id = capsys.readouterr().out.split("Model call ")[1].split("\n")[0].strip()
+    assert cli.main([
+        "--db", db_path, "reconcile", "--call", call_id,
+        "--invoiced", "0.00000001", "--source", "inv",
+    ]) == 1
+    assert "more precision than micro-USD supports" in capsys.readouterr().err
+
+
+def test_dispute_then_reconcile_resolves_a_crashed_call(tmp_path, capsys, monkeypatch):
+    """The whole operator loop after a crash: sweep -> outstanding -> dispute
+    -> reconcile, ending with no frozen money and nothing outstanding."""
+    from datetime import datetime, timedelta, timezone
+
+    import pytest
+
+    from mitosis import db as _db
+    from mitosis import gateway, providers
+
+    class _Crash(BaseException):
+        pass
+
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    capsys.readouterr()
+
+    monkeypatch.setattr(
+        gateway, "_mirror_to_sim_locked", lambda *a, **k: (_ for _ in ()).throw(_Crash())
+    )
+    conn = _db.connect_and_migrate(db_path)
+    with pytest.raises(_Crash):
+        gateway.call_model(
+            conn,
+            cell_id=cell_id,
+            provider=providers.MockProvider(),
+            request=providers.ModelRequest(
+                model="mock-1",
+                messages=({"role": "user", "content": "hi"},),
+                max_tokens=64,
+            ),
+            idempotency_key="cli-recon-crash",
+        )
+    conn.close()
+    monkeypatch.undo()
+
+    conn = _db.connect_and_migrate(db_path)
+    conn.execute(
+        "UPDATE reservations SET expires_at = ?",
+        ((datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),),
+    )
+    conn.close()
+
+    cli.main(["--db", db_path, "sweep"])
+    capsys.readouterr()
+
+    cli.main(["--db", db_path, "outstanding"])
+    out = capsys.readouterr().out
+    assert "execution_unknown" in out
+    assert "estimated=unknown" in out, "a call that never returned has no cost to show"
+    call_id = out.strip().split("\n")[-1].split()[0]
+
+    assert cli.main([
+        "--db", db_path, "dispute", "--call", call_id, "--reason", "no response",
+    ]) == 0
+    assert "Disputed model call" in capsys.readouterr().out
+
+    assert cli.main([
+        "--db", db_path, "reconcile", "--call", call_id,
+        "--invoiced", "0.0150", "--source", "anthropic-inv",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "unknown (the call never returned a usage report)" in out
+    assert "invoiced:  15000 micro-USD" in out
+
+    cli.main(["--db", db_path, "outstanding"])
+    out = capsys.readouterr().out
+    assert "Nothing outstanding." in out
+    assert "frozen in unreconciled open reservations: 0" in out

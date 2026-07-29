@@ -6,6 +6,15 @@ flow (human/Auditor-driven per §4.4) — not something the sweeper retries
 automatically, since "unknown external operations are reconciled, never
 auto-released" (Charter C7) implies a considered process, not a repeated
 sweep.
+
+What an expired reservation *means* is deliberately not this module's
+question: `ExternalOperationChecker` is the seam, and the caller supplies
+the implementation that knows the external system. Phase 4's model gateway
+supplies `gateway.GatewayOperationChecker`, which is why nothing here
+imports `gateway` or mentions a model call — the dependency runs the other
+way. A sweep leaves the *reservations* correct; bringing the gateway's own
+`model_calls` rows back into agreement with them is
+`gateway.resolve_stranded_calls`, and `mitosis sweep` runs both in order.
 """
 
 from __future__ import annotations

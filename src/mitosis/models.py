@@ -136,6 +136,10 @@ class Reservation(_Frozen):
     external_operation_id: str | None = None
     status: ReservationStatus
     idempotency_key: str
+    provider: str | None = None
+    """Set only on reservations created by the model gateway. The real-spend
+    breaker sums per-provider exposure off this field to enforce §5.1's
+    "max real spend per provider" cap."""
 
 
 class CellGenome(_Frozen):
@@ -240,6 +244,75 @@ class ResourceUsage(_Frozen):
     recorded_at_utc: datetime
     idempotency_key: str
     metadata: dict[str, Any] = {}
+
+
+class ModelCallStatus(StrEnum):
+    """Lifecycle of one gateway call. Mirrors the reservation FSM's shape
+    where it matters: `execution_unknown` means the provider may or may not
+    have billed us, so the funds stay committed until reconciliation (§4.4)."""
+
+    RESERVED = "reserved"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    EXECUTION_UNKNOWN = "execution_unknown"
+
+
+class ModelCall(_Frozen):
+    """One model call and the metadata SPEC.md §24.1 requires.
+
+    Costs are in micro-USD (1e-6 USD) rather than USD_REAL minor units —
+    see pricing.py: a single call routinely costs a fraction of a cent, so
+    the cent is too coarse to hold a per-call figure. `settled_minor_units`
+    is the cent-rounded amount that actually moved on the ledger.
+
+    `reconciled_micro_usd` is §24.1's `reconciled cost`: what the provider
+    actually invoiced, as opposed to what the pricing table predicted. It
+    stays None until an operator reconciles the call (reconciliation.py) —
+    nothing fetches an invoice automatically. `reconciled_at_utc` is what
+    distinguishes a reconciled call from an outstanding one; reconciliation
+    is an accounting axis, not an execution outcome, so `status` is unchanged
+    by it.
+    """
+
+    model_call_id: str
+    cell_id: str
+    experiment_id: str | None = None
+    status: ModelCallStatus
+
+    provider: str
+    requested_model: str
+    resolved_model: str | None = None
+    api_version: str | None = None
+
+    pricing_table_version: str
+    system_prompt_hash: str | None = None
+    user_prompt_hash: str
+    tool_schema_hashes: tuple[str, ...] = ()
+
+    parameters: dict[str, Any] = {}
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: int = 0
+    response_hash: str | None = None
+    stop_reason: str | None = None
+    response_text: str | None = None
+
+    cost_estimate_micro_usd: int = 0
+    cost_actual_micro_usd: int | None = None
+    reconciled_micro_usd: int | None = None
+    reconciled_at_utc: datetime | None = None
+    reconciliation_source: str | None = None
+    settled_minor_units: int = 0
+
+    real_reservation_id: str
+    resource_reservation_id: str
+
+    mirror_minor_units: int = 0
+    mirror_skipped_reason: str | None = None
+
+    error_text: str | None = None
+    created_at_utc: datetime
+    idempotency_key: str
 
 
 class PopulationLimits(_Frozen):

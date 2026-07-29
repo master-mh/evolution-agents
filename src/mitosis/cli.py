@@ -1,9 +1,10 @@
-"""MITOSIS CLI (SPEC.md §30). Phase 1 slice: init, status, create-cell.
+"""MITOSIS CLI (SPEC.md §30).
 
 argparse (stdlib) rather than a CLI framework, per §30.1 "avoid unnecessary
 frameworks". Money commands take --book, defaulting to USD_SIM (Amendment
-A7). Decimal strings are parsed via money.parse_minor_units — never binary
-float (§30 dollar-string rule).
+A7). Decimal strings are parsed via money.parse_minor_units, or
+pricing.parse_micro_usd where cents are too coarse (an invoice line) —
+never binary float (§30 dollar-string rule).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from . import (
     clock,
     db,
     events,
+    gateway,
     genome,
     golden,
     ids,
@@ -27,9 +29,13 @@ from . import (
     lineage,
     money,
     population,
+    pricing,
+    providers,
     real_spend_breaker,
+    reconciliation,
     reservations,
     resource_metering,
+    sweeper,
 )
 from .models import (
     DEFAULT_POPULATION_LIMITS,
@@ -257,6 +263,28 @@ def cmd_status(args: argparse.Namespace) -> None:
     e_by_status = events.count_by_status(conn)
     print(f"    inbox by status: {e_by_status}" if e_by_status else "    inbox: none yet")
     print(f"    outbox unpublished: {events.outbox_unpublished_count(conn)}")
+    print()
+    print(f"  model gateway (pricing table {pricing.PRICING_TABLE_VERSION}):")
+    by_provider = gateway.spend_by_provider(conn)
+    if not by_provider:
+        print("    no calls yet")
+    else:
+        mc_by_status = gateway.count_by_status(conn)
+        print(f"    calls by status: {mc_by_status}")
+        for name, stats in by_provider.items():
+            cap = snap.limits.provider_limits.get(name)
+            cap_text = (
+                f"   cap: {real_spend_breaker.provider_exposure(conn, name)}/{cap}"
+                if cap is not None
+                else "   cap: unset"
+            )
+            print(
+                f"    {name}: {stats['calls']} calls   "
+                f"{stats['input_tokens']} in / {stats['output_tokens']} out tokens   "
+                f"{stats['micro_usd']} micro-USD   "
+                f"settled {money.format_minor_units(stats['settled_minor_units'], 'USD_REAL')} USD_REAL"
+                f"{cap_text}"
+            )
 
     conn.close()
 
@@ -331,12 +359,277 @@ def cmd_reproduce(args: argparse.Namespace) -> None:
     conn.close()
 
 
+def cmd_fund_cell(args: argparse.Namespace) -> None:
+    """Credit an existing Cell in a given book.
+
+    `create-cell` funds a Cell in exactly one book, but a Cell that makes
+    model calls needs balances in three: USD_REAL for the provider charge,
+    RESOURCE for token metering (Amendment A6), and USD_SIM if the §2.4
+    mirror is to be funded. This is the verb that tops up the others.
+
+    Funding is capital allocation, not spend: it moves money from a colony
+    account into the Cell and is deliberately not gated by the real-spend
+    breaker (see real_spend_breaker's module docstring).
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    cell = lifecycle.get_cell(conn, args.cell)
+    if cell is None:
+        raise CliError(f"unknown cell: {args.cell}")
+
+    book = Book(args.book)
+    amount = money.parse_minor_units(args.amount, book.value)
+    if amount <= 0:
+        raise CliError("amount must be positive")
+
+    ledger.post_transaction(
+        conn,
+        book=book,
+        currency=book.value,
+        transaction_type="cell_funding",
+        idempotency_key=args.idempotency_key or f"cli_fund_cell:{ids.new_id()}",
+        description=f"fund cell {cell.cell_id} with {args.amount} {book.value}",
+        entries=[
+            EntrySpec(
+                account_id=args.funding_account,
+                amount_minor_units=-amount,
+                cell_id=cell.cell_id,
+            ),
+            EntrySpec(
+                account_id=f"cell:{cell.cell_id}:cash",
+                amount_minor_units=amount,
+                cell_id=cell.cell_id,
+            ),
+        ],
+    )
+
+    balance = ledger.get_balance(conn, f"cell:{cell.cell_id}:cash", book)
+    print(f"Funded cell {cell.cell_id}")
+    print(f"  book:    {book.value}")
+    print(f"  amount:  {args.amount} ({amount} minor units)")
+    print(f"  balance: {money.format_minor_units(balance, book.value)}")
+
+    conn.close()
+
+
+def cmd_call_model(args: argparse.Namespace) -> None:
+    """The one CLI verb that can spend real money.
+
+    `--provider anthropic` requires `--yes-spend-real-money` because every
+    other verb in this CLI moves synthetic or internal balances and this one
+    does not. An interactive typo here has a bill attached, so the confirmation
+    is a required flag rather than a prompt — it survives being run from a
+    script, where a prompt would either block forever or be auto-answered.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    cell = lifecycle.get_cell(conn, args.cell)
+    if cell is None:
+        raise CliError(f"unknown cell: {args.cell}")
+
+    if args.provider == providers.ANTHROPIC_PROVIDER:
+        if not args.yes_spend_real_money:
+            raise CliError(
+                "provider 'anthropic' makes a paid API call that spends real "
+                "money — re-run with --yes-spend-real-money to confirm"
+            )
+        provider: providers.ModelProvider = providers.AnthropicProvider()
+    elif args.provider == providers.MOCK_PROVIDER:
+        provider = providers.MockProvider()
+    else:
+        raise CliError(
+            f"unknown provider: {args.provider!r} "
+            f"(known: {providers.MOCK_PROVIDER}, {providers.ANTHROPIC_PROVIDER})"
+        )
+
+    request = providers.ModelRequest(
+        model=args.model,
+        messages=({"role": "user", "content": args.prompt},),
+        max_tokens=args.max_tokens,
+        system=args.system,
+    )
+
+    try:
+        call = gateway.call_model(
+            conn,
+            cell_id=cell.cell_id,
+            provider=provider,
+            request=request,
+            idempotency_key=args.idempotency_key or f"cli_call_model:{ids.new_id()}",
+            mirror_multiplier=args.mirror_multiplier,
+        )
+    except (pricing.PricingError, providers.ProviderError) as exc:
+        raise CliError(str(exc)) from exc
+
+    print(f"Model call {call.model_call_id}")
+    print(f"  status:    {call.status.value}")
+    print(f"  provider:  {call.provider}   requested: {call.requested_model}")
+    if call.resolved_model:
+        print(f"  resolved:  {call.resolved_model}   api: {call.api_version}")
+    print(f"  tokens:    {call.input_tokens} in / {call.output_tokens} out")
+    print(
+        f"  cost:      {call.cost_actual_micro_usd} micro-USD "
+        f"(settled {money.format_minor_units(call.settled_minor_units, 'USD_REAL')} USD_REAL)"
+    )
+    if call.mirror_skipped_reason:
+        print(f"  sim mirror: skipped — {call.mirror_skipped_reason}")
+    else:
+        print(
+            f"  sim mirror: {money.format_minor_units(call.mirror_minor_units, 'USD_SIM')} USD_SIM"
+        )
+    if call.error_text:
+        print(f"  error:     {call.error_text}")
+    if call.response_text:
+        print()
+        print(call.response_text)
+
+    conn.close()
+
+
 def cmd_advance_time(args: argparse.Namespace) -> None:
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
 
     new_time = clock.advance(conn, timedelta(days=args.days))
     print(f"Simulated time advanced by {args.days} day(s) to {new_time.isoformat()}")
+
+    conn.close()
+
+
+def cmd_sweep(args: argparse.Namespace) -> None:
+    """SPEC.md §4.4 / Charter C7. Resolve expired reservations, then bring
+    any `model_calls` row stranded by a crash back into agreement with them.
+
+    Two steps in this order because the second reads the first's output: the
+    sweeper decides what an expired reservation meant, and only then can a
+    stranded call be resolved from it.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    swept = sweeper.sweep(conn, checker=gateway.GatewayOperationChecker(conn))
+    print(f"Reservations swept: {len(swept)}")
+    for reservation in swept:
+        print(
+            f"  {reservation.reservation_id}  {reservation.book.value:<9} "
+            f"-> {reservation.status.value}"
+        )
+
+    resolved = gateway.resolve_stranded_calls(conn)
+    print(f"Stranded model calls resolved: {len(resolved)}")
+    for call in resolved:
+        print(f"  {call.model_call_id}  {call.provider} -> {call.status.value}")
+
+    unknown = reservations.count_by_status(conn).get("execution_unknown", 0)
+    if unknown:
+        print()
+        print(
+            f"{unknown} reservation(s) sit in 'execution_unknown' — real money is "
+            "still committed against external operations whose outcome the kernel "
+            "cannot determine. Charter C7: these are reconciled, never "
+            "auto-released."
+        )
+
+    conn.close()
+
+
+def cmd_reconcile(args: argparse.Namespace) -> None:
+    """SPEC.md §24.1 / §3.6. Apply a provider invoice figure to one call.
+
+    `--invoiced` is a dollar string parsed at micro-USD precision, not cents:
+    a single call's true cost is a fraction of a cent, and rounding the
+    operator's own evidence before it reaches the ledger would defeat the
+    purpose of reconciling against it.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    invoiced_micro = pricing.parse_micro_usd(args.invoiced)
+    call = reconciliation.reconcile_model_call(
+        conn,
+        args.call,
+        invoiced_micro_usd=invoiced_micro,
+        source=args.source,
+        note=args.note or "",
+    )
+    ledger_minor = pricing.micro_usd_to_minor_units(invoiced_micro)
+    # A call that never returned has no actual cost — that is the whole
+    # reason it needed reconciling — so say so rather than printing "None".
+    estimated = (
+        f"{call.cost_actual_micro_usd} micro-USD"
+        if call.cost_actual_micro_usd is not None
+        else "unknown (the call never returned a usage report)"
+    )
+    print(f"Reconciled model call {call.model_call_id}")
+    print(f"  provider:  {call.provider}")
+    print(f"  estimated: {estimated}")
+    print(f"  invoiced:  {invoiced_micro} micro-USD ({args.invoiced} USD)")
+    print(f"  on ledger: {ledger_minor} minor units")
+    print(f"  source:    {call.reconciliation_source}")
+    net = reconciliation.net_adjustment_minor_units(conn)
+    print(f"  colony net reconciliation adjustment to date: {net:+d} minor units")
+
+    conn.close()
+
+
+def cmd_dispute(args: argparse.Namespace) -> None:
+    """SPEC.md §4.4 `execution_unknown -> disputed`. No money moves."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    call = reconciliation.dispute_model_call(conn, args.call, reason=args.reason)
+    print(f"Disputed model call {call.model_call_id} ({call.provider})")
+    print("  funds stay committed; resolve with `mitosis reconcile` once settled")
+
+    conn.close()
+
+
+def cmd_outstanding(args: argparse.Namespace) -> None:
+    """Every call that has not been checked against an invoice, worst first."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    stats = reconciliation.summary(conn)
+    print(
+        f"Model calls: {stats['calls']} billable, {stats['reconciled']} reconciled, "
+        f"{stats['outstanding']} outstanding"
+    )
+    print(
+        f"Real money frozen in unreconciled open reservations: "
+        f"{stats['frozen_minor_units']} minor units"
+    )
+    print()
+
+    calls = reconciliation.outstanding(conn)
+    if not calls:
+        print("Nothing outstanding.")
+        conn.close()
+        return
+
+    for call in calls:
+        reservation = reservations.get_reservation(conn, call.real_reservation_id)
+        # Only an *open* reservation still holds money. A released one has a
+        # non-zero `maximum_amount - settled_amount` too — that is precisely
+        # the amount it handed back — so subtracting without checking status
+        # reports freed money as frozen.
+        frozen = (
+            reservation.maximum_amount - reservation.settled_amount
+            if reservation is not None
+            and reservation.status in reconciliation.OPEN_RESERVATION_STATUSES
+            else 0
+        )
+        estimated = (
+            call.cost_actual_micro_usd
+            if call.cost_actual_micro_usd is not None
+            else "unknown"
+        )
+        print(
+            f"  {call.model_call_id}  {call.provider:<10} {call.status.value:<18} "
+            f"reservation={reservation.status.value if reservation else '?':<18} "
+            f"estimated={estimated} micro-USD  frozen={frozen}"
+        )
 
     conn.close()
 
@@ -499,6 +792,53 @@ def build_parser() -> argparse.ArgumentParser:
     reproduce_parser.add_argument("--idempotency-key", default=None)
     reproduce_parser.set_defaults(func=cmd_reproduce)
 
+    fund_cell_parser = subparsers.add_parser(
+        "fund-cell", help="credit an existing Cell in a given book"
+    )
+    fund_cell_parser.add_argument("--cell", required=True, help="cell_id to fund")
+    fund_cell_parser.add_argument(
+        "--amount", required=True, help="decimal amount, e.g. 5.00"
+    )
+    fund_cell_parser.add_argument(
+        "--book", default=Book.USD_SIM.value, choices=[b.value for b in Book]
+    )
+    fund_cell_parser.add_argument(
+        "--funding-account", default="seed_bank", help="colony account to draw from"
+    )
+    fund_cell_parser.add_argument("--idempotency-key", default=None)
+    fund_cell_parser.set_defaults(func=cmd_fund_cell)
+
+    call_model_parser = subparsers.add_parser(
+        "call-model",
+        help="make a model call through the gateway (the only verb that can spend real money)",
+    )
+    call_model_parser.add_argument("--cell", required=True, help="calling cell_id")
+    call_model_parser.add_argument("--prompt", required=True, help="user message content")
+    call_model_parser.add_argument(
+        "--provider",
+        default=providers.MOCK_PROVIDER,
+        help=f"{providers.MOCK_PROVIDER} (free, deterministic) or "
+        f"{providers.ANTHROPIC_PROVIDER} (paid, real money)",
+    )
+    call_model_parser.add_argument(
+        "--model", default="mock-1", help="requested model id (must be in the pricing table)"
+    )
+    call_model_parser.add_argument("--system", default=None, help="optional system prompt")
+    call_model_parser.add_argument("--max-tokens", type=int, default=256)
+    call_model_parser.add_argument(
+        "--mirror-multiplier",
+        type=float,
+        default=gateway.DEFAULT_MIRROR_MULTIPLIER,
+        help="USD_SIM mirror of the real cost (§2.4); 0 disables mirroring",
+    )
+    call_model_parser.add_argument(
+        "--yes-spend-real-money",
+        action="store_true",
+        help="required confirmation for any paid provider",
+    )
+    call_model_parser.add_argument("--idempotency-key", default=None)
+    call_model_parser.set_defaults(func=cmd_call_model)
+
     advance_time_parser = subparsers.add_parser(
         "advance-time", help="advance the simulated clock forward"
     )
@@ -506,6 +846,43 @@ def build_parser() -> argparse.ArgumentParser:
         "--days", type=float, required=True, help="number of simulated days to advance (may be fractional)"
     )
     advance_time_parser.set_defaults(func=cmd_advance_time)
+
+    sweep_parser = subparsers.add_parser(
+        "sweep",
+        help="resolve expired reservations and any model call a crash left in flight",
+    )
+    sweep_parser.set_defaults(func=cmd_sweep)
+
+    reconcile_parser = subparsers.add_parser(
+        "reconcile",
+        help="apply a provider invoice figure to one model call (SPEC.md §24.1)",
+    )
+    reconcile_parser.add_argument("--call", required=True, help="model_call_id")
+    reconcile_parser.add_argument(
+        "--invoiced",
+        required=True,
+        help='what the provider actually billed, in dollars, e.g. "0.003500". '
+        "0 means the provider did not bill for this call",
+    )
+    reconcile_parser.add_argument(
+        "--source",
+        required=True,
+        help="where the figure came from (invoice id, console export, 'manual')",
+    )
+    reconcile_parser.add_argument("--note", default=None)
+    reconcile_parser.set_defaults(func=cmd_reconcile)
+
+    dispute_parser = subparsers.add_parser(
+        "dispute", help="contest a charge rather than accepting it (SPEC.md §4.4)"
+    )
+    dispute_parser.add_argument("--call", required=True, help="model_call_id")
+    dispute_parser.add_argument("--reason", required=True)
+    dispute_parser.set_defaults(func=cmd_dispute)
+
+    outstanding_parser = subparsers.add_parser(
+        "outstanding", help="model calls not yet checked against an invoice"
+    )
+    outstanding_parser.set_defaults(func=cmd_outstanding)
 
     golden_parser = subparsers.add_parser(
         "verify-golden-run",
@@ -541,6 +918,8 @@ def main(argv: list[str] | None = None) -> int:
         clock.ClockError,
         events.EventError,
         resource_metering.ResourceMeteringError,
+        reconciliation.ReconciliationError,
+        pricing.PricingError,
         golden.GoldenRunError,
         ValueError,
     ) as exc:

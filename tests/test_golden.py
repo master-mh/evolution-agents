@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from mitosis import db, golden, ids, ledger, lifecycle
+from mitosis import db, golden, ids, ledger, lifecycle, pricing
 from mitosis.models import Book, CellStatus
 
 
@@ -285,3 +285,31 @@ def test_diff_snapshots_reports_added_removed_and_changed():
     assert "only_expected: present in expectations, absent now" in differences
     assert "only_actual: absent from expectations, present now" in differences
     assert not any(line.startswith("same:") for line in differences)
+
+
+def test_snapshot_pins_the_model_gateway():
+    """SPEC.md §24 / §26: gateway drift — a price change, a metering change, a
+    settlement-rounding change — must show up as a golden-run failure rather
+    than as a quiet change in what the colony spends."""
+    conn = db.connect_and_migrate()
+    golden.run_scenario(conn)
+    calls = golden.semantic_snapshot(conn)["model_calls"]
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["provider"] == "mock"
+    assert call["status"] == "succeeded"
+    assert call["input_tokens"] > 0 and call["output_tokens"] > 0
+    assert call["pricing_table_version"] == pricing.PRICING_TABLE_VERSION
+
+
+def test_golden_run_never_spends_real_money():
+    """The replay must stay free and offline: a golden run that could bill
+    someone is not a golden run. The mock provider is priced at zero, so the
+    USD_REAL cost of every call in the scenario is exactly nothing."""
+    conn = db.connect_and_migrate()
+    golden.run_scenario(conn)
+    for call in golden.semantic_snapshot(conn)["model_calls"]:
+        assert call["provider"] == "mock"
+        assert call["cost_actual_micro_usd"] == 0
+        assert call["settled_minor_units"] == 0

@@ -61,12 +61,15 @@ from . import (
     clock,
     db,
     events,
+    gateway,
     ids,
     ledger,
     lifecycle,
     lineage,
     population,
+    providers,
     real_spend_breaker,
+    reconciliation,
     reservations,
     resource_metering,
 )
@@ -84,7 +87,13 @@ from .models import (
 EXPECTATIONS_FILENAME = "golden_expectations.json"
 
 # Bumped only by a deliberate, reviewed expectation migration (§26.2, A12).
-EXPECTATION_VERSION = 1
+#   1 -> 2: the scenario gained a model-gateway call on the mock provider,
+#           and the snapshot gained a `model_calls` section (§24).
+#   2 -> 3: the scenario gained a provider-invoice reconciliation of that
+#           call, and `model_calls` gained the §24.1 reconciled-cost fields.
+#           No money moves — the mock's true cost is zero and the invoice
+#           agrees — so the balances section is unchanged by this step.
+EXPECTATION_VERSION = 3
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -374,7 +383,69 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     events.process_event(conn, staged.event_id, producing_handler)
     events.dispatch_outbox(conn, lambda outbox_event: None)
 
-    # 9. Simulated clock.
+    # 9. Model gateway (§24). Runs on the mock provider, which is priced at
+    #    zero and is deterministic — so this step exercises the whole
+    #    reserve -> call -> settle -> meter -> mirror path in CI without any
+    #    external dependency and without spending a cent (§30.1 "mock before
+    #    paid APIs"). The paid provider is deliberately unreachable from the
+    #    golden run: a replay that could bill someone is not a replay.
+    #    The explorer is the USD_REAL-funded Cell, but a model call needs
+    #    balances in three books — USD_REAL for the provider charge, RESOURCE
+    #    for A6 token metering, USD_SIM for the §2.4 mirror — so it is topped
+    #    up first. That a Cell needs all three to make one call is itself
+    #    worth pinning.
+    for book, currency, amount in (
+        (Book.RESOURCE, "RESOURCE", 5_000),
+        (Book.USD_SIM, "USD", 400),
+    ):
+        ledger.post_transaction(
+            conn,
+            book=book,
+            currency=currency,
+            transaction_type="cell_funding",
+            idempotency_key=f"golden:gateway-funding:{book.value}",
+            effective_at_utc=SCENARIO_EPOCH,
+            entries=[
+                EntrySpec(account_id="seed_bank", amount_minor_units=-amount),
+                EntrySpec(
+                    account_id=f"cell:{explorer.cell_id}:cash",
+                    amount_minor_units=amount,
+                    cell_id=explorer.cell_id,
+                ),
+            ],
+        )
+
+    gateway.call_model(
+        conn,
+        cell_id=explorer.cell_id,
+        provider=providers.MockProvider(reply="golden run reply"),
+        request=providers.ModelRequest(
+            model="mock-1",
+            messages=({"role": "user", "content": "golden run prompt"},),
+            max_tokens=64,
+        ),
+        idempotency_key="golden:model_call:1",
+    )
+
+    # 10. Provider-invoice reconciliation (§24.1, §3.6). The invoice confirms
+    #     the estimate — for the mock provider the honest figure is zero,
+    #     which is also what the pricing table predicted — so this posts no
+    #     adjustment and moves no money. That is the point twice over: it
+    #     pins the §24.1 metadata path (`reconciled_micro_usd`,
+    #     `reconciled_at_utc`, the audit event) *and* it preserves the
+    #     property that a golden replay never moves USD_REAL. The
+    #     adjustment-posting paths, where the sign matters, are covered by
+    #     tests/test_reconciliation.py rather than here, because pinning them
+    #     would mean giving up that property for coverage the unit tests
+    #     already provide.
+    reconciliation.reconcile_model_call(
+        conn,
+        gateway.get_model_call_by_idempotency_key(conn, "golden:model_call:1").model_call_id,
+        invoiced_micro_usd=0,
+        source="golden-run-invoice",
+    )
+
+    # 11. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
 
@@ -503,6 +574,36 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         ).fetchall()
     ]
 
+    # §24 gateway. Deliberately excludes the response hash and latency:
+    # response text is the provider's business (and the mock's reply is an
+    # implementation detail of the test double), while latency is wall-clock
+    # and would make the run non-reproducible — the same reason the snapshot
+    # drops timestamps everywhere else. What is pinned is the accounting:
+    # who called what, how many tokens, and what it cost.
+    model_call_rows = [
+        {
+            "cell": aliases.get(row["cell_id"], "cell#?"),
+            "provider": row["provider"],
+            "requested_model": row["requested_model"],
+            "resolved_model": row["resolved_model"],
+            "status": row["status"],
+            "input_tokens": row["input_tokens"],
+            "output_tokens": row["output_tokens"],
+            "cost_actual_micro_usd": row["cost_actual_micro_usd"],
+            "settled_minor_units": row["settled_minor_units"],
+            "mirror_minor_units": row["mirror_minor_units"],
+            "pricing_table_version": row["pricing_table_version"],
+            # §24.1 reconciled cost. The *source* is pinned but the timestamp
+            # is not — `reconciled_at_utc` is wall-clock, same exclusion as
+            # every other timestamp in this snapshot; `reconciled` records
+            # only that it was set.
+            "reconciled_micro_usd": row["reconciled_micro_usd"],
+            "reconciled": row["reconciled_at_utc"] is not None,
+            "reconciliation_source": row["reconciliation_source"],
+        }
+        for row in conn.execute("SELECT * FROM model_calls ORDER BY rowid").fetchall()
+    ]
+
     clock_state = clock.get_state(conn)
 
     return {
@@ -511,6 +612,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "cells": cells,
         "reservations": reservation_rows,
         "resource_usage": resource_rows,
+        "model_calls": model_call_rows,
         "coroner_reports": coroner_rows,
         "audit_event_types": audit_event_types,
         "event_inbox": inbox,

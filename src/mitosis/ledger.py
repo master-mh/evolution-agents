@@ -11,7 +11,9 @@ check idempotency-key replay. It exists so other modules (reservations.py)
 can post a ledger transaction as part of a larger atomic operation without
 nesting SQLite transactions. `post_transaction` is the public, standalone
 entry point: it checks for idempotency-key replay and manages its own
-transaction boundary.
+transaction boundary. `_post_transaction_locked` sits between the two — the
+replay check without the transaction boundary — for callers (gateway.py)
+composing several money movements into one atomic step.
 """
 
 from __future__ import annotations
@@ -189,6 +191,45 @@ def _write_transaction(
     return txn
 
 
+def _post_transaction_locked(
+    conn: sqlite3.Connection,
+    *,
+    book: Book,
+    currency: str,
+    entries: list[EntrySpec],
+    transaction_type: str,
+    idempotency_key: str,
+    description: str = "",
+    event_id: str | None = None,
+    effective_at_utc: datetime | None = None,
+    metadata: dict | None = None,
+) -> Transaction:
+    """`post_transaction` minus the transaction boundary: the caller must
+    already hold a write transaction (BEGIN IMMEDIATE) and is responsible for
+    COMMIT/ROLLBACK. Still idempotent on idempotency_key.
+
+    Exists for the same reason `_write_transaction` does, one level up: a
+    caller composing several money movements into a single atomic step
+    (gateway.py's success path) needs the replay check without nesting a
+    SQLite transaction inside its own.
+    """
+    existing = get_transaction_by_idempotency_key(conn, idempotency_key)
+    if existing is not None:
+        return existing
+    return _write_transaction(
+        conn,
+        book=book,
+        currency=currency,
+        entries=entries,
+        transaction_type=transaction_type,
+        idempotency_key=idempotency_key,
+        description=description,
+        event_id=event_id,
+        effective_at_utc=effective_at_utc,
+        metadata=metadata,
+    )
+
+
 def post_transaction(
     conn: sqlite3.Connection,
     *,
@@ -213,7 +254,7 @@ def post_transaction(
 
     conn.execute("BEGIN IMMEDIATE")
     try:
-        txn = _write_transaction(
+        txn = _post_transaction_locked(
             conn,
             book=book,
             currency=currency,
@@ -320,6 +361,21 @@ def spend_by_book(conn: sqlite3.Connection, cell_id: str) -> dict[str, int]:
     positive entries that represent money leaving the cell's control for
     good, e.g. a reservation's settlement destination entry. Used for
     coroner reports (SPEC.md §10.5) via lifecycle.kill.
+
+    **Known limitation: this overstates spend for a Cell that received a
+    reconciliation credit.** When an invoice comes in below what the ledger
+    recorded, reconciliation.py posts a negative adjustment — cash back to
+    the Cell, `external_expense` debited. The refund's positive leg lands on
+    the Cell's own cash and is excluded here (correctly), but the negative
+    `external_expense` leg is dropped by `amount_minor_units > 0`, so the
+    refund never reduces the figure. Removing that filter is not the fix:
+    birth funding's negative leg is tagged with the same cell_id, so
+    dropping the sign filter would make a freshly-funded Cell read as having
+    spent a negative amount. Telling the two apart needs an account-level
+    distinction between funding sources and spend destinations that §31's
+    account list does not currently draw, so it is logged in
+    FUTURE_BUILD_HOOKS rather than guessed at here. The impact is bounded:
+    this figure feeds coroner reports only, never an enforcement check.
     """
     own_accounts = (cell_cash(cell_id), cell_committed(cell_id))
     rows = conn.execute(

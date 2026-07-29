@@ -1,5 +1,5 @@
 {
-  "expectation_version": 1,
+  "expectation_version": 3,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,19 +10,23 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "badf5c6298dadd9829ecaa71dcce89ad799075c072339ad5559beb0dbcdd805b",
+  "semantic_hash": "1e509c81a0df736289e06f49b8b417a7ec23d69cdecb9478f35229991e0c4a00",
   "snapshot": {
     "audit_event_types": {
       "cell_lifecycle_transition": 12,
       "event_dead_lettered": 1,
+      "model_call_reconciled": 1,
+      "model_call_settled": 1,
       "real_spend_limit_configured": 1
     },
     "balances": {
+      "RESOURCE::cell:cell#1:cash": 4998,
+      "RESOURCE::cell:cell#1:committed": 0,
       "RESOURCE::cell:cell#2:cash": 5000,
       "RESOURCE::cell:cell#2:committed": 1150,
       "RESOURCE::external_capital": -50000,
-      "RESOURCE::infrastructure_reserve": 1850,
-      "RESOURCE::seed_bank": 42000,
+      "RESOURCE::infrastructure_reserve": 1852,
+      "RESOURCE::seed_bank": 37000,
       "USD_REAL::cell:cell#1:cash": 965,
       "USD_REAL::cell:cell#1:committed": 15,
       "USD_REAL::external_capital": -10000,
@@ -30,13 +34,14 @@
       "USD_REAL::seed_bank": 9000,
       "USD_SIM::cell:cell#0:cash": 3450,
       "USD_SIM::cell:cell#0:committed": 0,
+      "USD_SIM::cell:cell#1:cash": 400,
       "USD_SIM::cell:cell#3:cash": 1250,
       "USD_SIM::cell:cell#3:committed": 250,
       "USD_SIM::cell:cell#4:cash": 500,
       "USD_SIM::colony_treasury": 300,
       "USD_SIM::external_capital": -100000,
       "USD_SIM::external_expense": 1550,
-      "USD_SIM::seed_bank": 92700
+      "USD_SIM::seed_bank": 92300
     },
     "cells": [
       {
@@ -148,6 +153,24 @@
         "published": true
       }
     ],
+    "model_calls": [
+      {
+        "cell": "cell#1",
+        "cost_actual_micro_usd": 0,
+        "input_tokens": 25,
+        "mirror_minor_units": 0,
+        "output_tokens": 24,
+        "pricing_table_version": "2026-07-27",
+        "provider": "mock",
+        "reconciled": true,
+        "reconciled_micro_usd": 0,
+        "reconciliation_source": "golden-run-invoice",
+        "requested_model": "mock-1",
+        "resolved_model": "mock-1",
+        "settled_minor_units": 0,
+        "status": "succeeded"
+      }
+    ],
     "reservations": [
       {
         "book": "USD_SIM",
@@ -204,6 +227,22 @@
         "maximum_amount": 3000,
         "settled_amount": 1850,
         "status": "partially_settled"
+      },
+      {
+        "book": "USD_REAL",
+        "cell": "cell#1",
+        "external_operation_type": "model_call",
+        "maximum_amount": 1,
+        "settled_amount": 0,
+        "status": "released"
+      },
+      {
+        "book": "RESOURCE",
+        "cell": "cell#1",
+        "external_operation_type": "model_call",
+        "maximum_amount": 2,
+        "settled_amount": 2,
+        "status": "settled"
       }
     ],
     "resource_usage": [
@@ -230,18 +269,33 @@
         "minor_units": 150,
         "quantity": 45,
         "resource_type": "cpu_seconds"
+      },
+      {
+        "cell": "cell#1",
+        "minor_units": 1,
+        "quantity": 25,
+        "resource_type": "input_tokens"
+      },
+      {
+        "cell": "cell#1",
+        "minor_units": 1,
+        "quantity": 24,
+        "resource_type": "output_tokens"
       }
     ],
     "transaction_types": {
       "RESOURCE::cell_birth_funding": 1,
+      "RESOURCE::cell_funding": 1,
       "RESOURCE::colony_seed_capital": 1,
-      "RESOURCE::reservation_reserve": 1,
-      "RESOURCE::reservation_settle": 1,
+      "RESOURCE::reservation_reserve": 2,
+      "RESOURCE::reservation_settle": 2,
       "USD_REAL::cell_birth_funding": 1,
       "USD_REAL::colony_seed_capital": 1,
-      "USD_REAL::reservation_reserve": 2,
+      "USD_REAL::reservation_release": 1,
+      "USD_REAL::reservation_reserve": 3,
       "USD_REAL::reservation_settle": 1,
       "USD_SIM::cell_birth_funding": 2,
+      "USD_SIM::cell_funding": 1,
       "USD_SIM::cell_reproduction_funding": 1,
       "USD_SIM::colony_seed_capital": 1,
       "USD_SIM::event_side_effect": 3,

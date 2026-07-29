@@ -138,69 +138,17 @@ def record_usage(
     if existing is not None:
         return existing
 
-    if quantity <= 0:
-        raise ResourceMeteringError("quantity must be positive")
-    if minor_units <= 0:
-        raise ResourceMeteringError("minor_units must be positive")
-
-    usage_id = ids.new_id()
-    now = datetime.now(timezone.utc)
-
     conn.execute("BEGIN IMMEDIATE")
     try:
-        # Reservation fetched and validated inside the write lock, not
-        # before it: two concurrent recordings against the same reservation
-        # must not both pass the status/book/ownership checks before either
-        # commits (same "check inside BEGIN IMMEDIATE" shape as the
-        # overspend check below, and as the C4/C5/C9 caps elsewhere).
-        reservation = reservations.get_reservation(conn, reservation_id)
-        if reservation is None:
-            raise ResourceMeteringError(f"no such reservation: {reservation_id}")
-        if reservation.cell_id != cell_id:
-            raise ResourceMeteringError(
-                f"reservation {reservation_id} belongs to cell {reservation.cell_id!r}, not {cell_id!r}"
-            )
-        if reservation.book != Book.RESOURCE:
-            raise ResourceMeteringError(
-                f"reservation {reservation_id} is book {reservation.book.value!r}, not RESOURCE (Amendment A6)"
-            )
-        if reservation.status != ReservationStatus.RESERVED:
-            # Not just the two terminal statuses (settled/released): once a
-            # reservation leaves `reserved` for *any* reason — including
-            # partially_settled, whose FSM only permits -> released next
-            # (reservations._ALLOWED_TRANSITIONS) — there is no remaining path
-            # to settle any further recorded usage, so it would be permanently
-            # unlinked from a settlement (Amendment A6). `reserved` is the only
-            # state usage may accumulate against.
-            raise ResourceMeteringError(
-                f"reservation {reservation_id} is {reservation.status.value!r}, not 'reserved' — "
-                "cannot record usage against it"
-            )
-
-        already_recorded = total_minor_units(conn, reservation_id)
-        if already_recorded + minor_units > reservation.maximum_amount:
-            raise ResourceOverspendError(
-                f"reservation {reservation_id}: recording {minor_units} would bring cumulative "
-                f"usage to {already_recorded + minor_units}, exceeding its cap of {reservation.maximum_amount} (Charter C4)"
-            )
-        conn.execute(
-            """
-            INSERT INTO resource_usage (
-                usage_id, cell_id, reservation_id, resource_type, quantity,
-                minor_units, recorded_at_utc, idempotency_key, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                usage_id,
-                cell_id,
-                reservation_id,
-                resource_type.value,
-                quantity,
-                minor_units,
-                now.isoformat(),
-                idempotency_key,
-                json.dumps(metadata or {}, sort_keys=True, separators=(",", ":")),
-            ),
+        usage_id = _record_usage_locked(
+            conn,
+            cell_id=cell_id,
+            reservation_id=reservation_id,
+            resource_type=resource_type,
+            quantity=quantity,
+            minor_units=minor_units,
+            idempotency_key=idempotency_key,
+            metadata=metadata,
         )
         conn.execute("COMMIT")
     except sqlite3.IntegrityError as exc:
@@ -217,6 +165,94 @@ def record_usage(
     result = get_usage(conn, usage_id)
     assert result is not None
     return result
+
+
+def _record_usage_locked(
+    conn: sqlite3.Connection,
+    *,
+    cell_id: str,
+    reservation_id: str,
+    resource_type: ResourceType,
+    quantity: int,
+    minor_units: int,
+    idempotency_key: str,
+    metadata: dict | None = None,
+) -> str:
+    """Non-transactional core of `record_usage`; returns the usage_id. The
+    caller must already hold a write transaction (BEGIN IMMEDIATE) — see
+    reservations.py's module docstring for why the gateway needs to meter
+    inside the same transaction that settles.
+
+    Idempotency is checked here too rather than only in the wrapper, because
+    the wrapper's pre-BEGIN check is an optimisation, not the guard.
+    """
+    existing = get_usage_by_idempotency_key(conn, idempotency_key)
+    if existing is not None:
+        return existing.usage_id
+
+    if quantity <= 0:
+        raise ResourceMeteringError("quantity must be positive")
+    if minor_units <= 0:
+        raise ResourceMeteringError("minor_units must be positive")
+
+    usage_id = ids.new_id()
+    now = datetime.now(timezone.utc)
+
+    # Reservation fetched and validated inside the write lock, not
+    # before it: two concurrent recordings against the same reservation
+    # must not both pass the status/book/ownership checks before either
+    # commits (same "check inside BEGIN IMMEDIATE" shape as the
+    # overspend check below, and as the C4/C5/C9 caps elsewhere).
+    reservation = reservations.get_reservation(conn, reservation_id)
+    if reservation is None:
+        raise ResourceMeteringError(f"no such reservation: {reservation_id}")
+    if reservation.cell_id != cell_id:
+        raise ResourceMeteringError(
+            f"reservation {reservation_id} belongs to cell {reservation.cell_id!r}, not {cell_id!r}"
+        )
+    if reservation.book != Book.RESOURCE:
+        raise ResourceMeteringError(
+            f"reservation {reservation_id} is book {reservation.book.value!r}, not RESOURCE (Amendment A6)"
+        )
+    if reservation.status != ReservationStatus.RESERVED:
+        # Not just the two terminal statuses (settled/released): once a
+        # reservation leaves `reserved` for *any* reason — including
+        # partially_settled, whose FSM only permits -> released next
+        # (reservations._ALLOWED_TRANSITIONS) — there is no remaining path
+        # to settle any further recorded usage, so it would be permanently
+        # unlinked from a settlement (Amendment A6). `reserved` is the only
+        # state usage may accumulate against.
+        raise ResourceMeteringError(
+            f"reservation {reservation_id} is {reservation.status.value!r}, not 'reserved' — "
+            "cannot record usage against it"
+        )
+
+    already_recorded = total_minor_units(conn, reservation_id)
+    if already_recorded + minor_units > reservation.maximum_amount:
+        raise ResourceOverspendError(
+            f"reservation {reservation_id}: recording {minor_units} would bring cumulative "
+            f"usage to {already_recorded + minor_units}, exceeding its cap of {reservation.maximum_amount} (Charter C4)"
+        )
+    conn.execute(
+        """
+        INSERT INTO resource_usage (
+            usage_id, cell_id, reservation_id, resource_type, quantity,
+            minor_units, recorded_at_utc, idempotency_key, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            usage_id,
+            cell_id,
+            reservation_id,
+            resource_type.value,
+            quantity,
+            minor_units,
+            now.isoformat(),
+            idempotency_key,
+            json.dumps(metadata or {}, sort_keys=True, separators=(",", ":")),
+        ),
+    )
+    return usage_id
 
 
 def verify_linkage(conn: sqlite3.Connection) -> bool:

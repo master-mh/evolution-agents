@@ -10,6 +10,14 @@ once a reservation leaves `reserved`/`execution_unknown`/`disputed`, the
 same operation retried against the new (terminal-ish) status is rejected
 rather than replayed.
 
+`settle`/`release`/`mark_*` each pair a `_*_locked` core with a thin wrapper
+that owns the BEGIN/COMMIT, the same split `ledger._write_transaction` uses.
+The cores exist because that C7 guarantee only covers *one* reservation: a
+caller resolving several at once (gateway.py settles a USD_REAL and a
+RESOURCE reservation, meters, mirrors and records a model call for a single
+paid call) needs all of it inside one transaction, or a crash mid-sequence
+leaves money half-moved with no way to tell which half.
+
 `request()` enforces Charter C4 ("Cells cannot overspend their authorised
 budget") at the point of reservation, across all three books: a Cell may
 never reserve more than currently sits in its own cell:{id}:cash. This is
@@ -89,6 +97,7 @@ def _row_to_reservation(row: sqlite3.Row) -> Reservation:
         external_operation_id=row["external_operation_id"],
         status=ReservationStatus(row["status"]),
         idempotency_key=row["idempotency_key"],
+        provider=row["provider"],
     )
 
 
@@ -127,9 +136,13 @@ def request(
     experiment_id: str | None = None,
     external_operation_type: str | None = None,
     external_operation_id: str | None = None,
+    provider: str | None = None,
 ) -> Reservation:
     """requested -> reserved in one atomic step (§4.4): funds move
     cell:{id}:cash -> cell:{id}:committed. Idempotent on idempotency_key.
+
+    `provider` tags the reservation for §5.1's per-provider real-spend cap
+    and is set only by the model gateway.
     """
     existing = get_reservation_by_idempotency_key(conn, idempotency_key)
     if existing is not None:
@@ -150,7 +163,9 @@ def request(
         # either commits (Charter C5 under concurrency). USD_SIM/RESOURCE
         # reservations are untouched — the breaker is real-spend only.
         if book == Book.USD_REAL:
-            real_spend_breaker.check(conn, requested_amount=maximum_amount, now=now)
+            real_spend_breaker.check(
+                conn, requested_amount=maximum_amount, now=now, provider=provider
+            )
 
         # Charter C4, all books: a Cell cannot reserve more than it
         # currently holds in cash. Checked under the same write lock as the
@@ -190,8 +205,8 @@ def request(
                 reservation_id, cell_id, experiment_id, book, currency,
                 maximum_amount, settled_amount, reserved_at, expires_at,
                 external_operation_type, external_operation_id, status,
-                idempotency_key
-            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                idempotency_key, provider
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 reservation_id,
@@ -206,6 +221,7 @@ def request(
                 external_operation_id,
                 ReservationStatus.RESERVED.value,
                 idempotency_key,
+                provider,
             ),
         )
         conn.execute("COMMIT")
@@ -236,55 +252,13 @@ def settle(
     maximum_amount) or partially_settled (settled_amount < maximum_amount).
     committed -> destination_account_id.
     """
-    if not accounts.is_known_account(destination_account_id):
-        raise ReservationError(
-            f"unrecognized destination_account_id: {destination_account_id!r} "
-            "(not a fixed account or cell:{id}:cash|committed)"
-        )
-
     conn.execute("BEGIN IMMEDIATE")
     try:
-        # Fetched and re-validated inside the write lock (not before it): two
-        # concurrent settle() calls against the same reservation must not
-        # both decide against the pre-lock status.
-        reservation = get_reservation(conn, reservation_id)
-        if reservation is None:
-            raise ReservationError(f"no such reservation: {reservation_id}")
-        if settled_amount < 0 or settled_amount > reservation.maximum_amount:
-            raise ReservationError(
-                f"settled_amount {settled_amount} out of range "
-                f"[0, {reservation.maximum_amount}]"
-            )
-        is_full = settled_amount == reservation.maximum_amount
-        target = ReservationStatus.SETTLED if is_full else ReservationStatus.PARTIALLY_SETTLED
-        _check_transition(reservation.status, target)
-
-        if settled_amount > 0:
-            ledger._write_transaction(
-                conn,
-                book=reservation.book,
-                currency=reservation.currency,
-                transaction_type="reservation_settle",
-                idempotency_key=f"reservation_settle:{reservation_id}:{settled_amount}",
-                description=f"settle {settled_amount} of reservation {reservation_id}",
-                entries=[
-                    EntrySpec(
-                        account_id=cell_committed(reservation.cell_id),
-                        amount_minor_units=-settled_amount,
-                        cell_id=reservation.cell_id,
-                        experiment_id=reservation.experiment_id,
-                    ),
-                    EntrySpec(
-                        account_id=destination_account_id,
-                        amount_minor_units=settled_amount,
-                        cell_id=reservation.cell_id,
-                        experiment_id=reservation.experiment_id,
-                    ),
-                ],
-            )
-        conn.execute(
-            "UPDATE reservations SET status = ?, settled_amount = ? WHERE reservation_id = ?",
-            (target.value, settled_amount, reservation_id),
+        _settle_locked(
+            conn,
+            reservation_id,
+            settled_amount=settled_amount,
+            destination_account_id=destination_account_id,
         )
         conn.execute("COMMIT")
     except Exception:
@@ -294,6 +268,64 @@ def settle(
     result = get_reservation(conn, reservation_id)
     assert result is not None
     return result
+
+
+def _settle_locked(
+    conn: sqlite3.Connection,
+    reservation_id: str,
+    *,
+    settled_amount: int,
+    destination_account_id: str,
+) -> None:
+    """Non-transactional core of `settle`. Caller holds the write lock."""
+    if not accounts.is_known_account(destination_account_id):
+        raise ReservationError(
+            f"unrecognized destination_account_id: {destination_account_id!r} "
+            "(not a fixed account or cell:{id}:cash|committed)"
+        )
+
+    # Fetched and re-validated inside the write lock (not before it): two
+    # concurrent settle() calls against the same reservation must not
+    # both decide against the pre-lock status.
+    reservation = get_reservation(conn, reservation_id)
+    if reservation is None:
+        raise ReservationError(f"no such reservation: {reservation_id}")
+    if settled_amount < 0 or settled_amount > reservation.maximum_amount:
+        raise ReservationError(
+            f"settled_amount {settled_amount} out of range "
+            f"[0, {reservation.maximum_amount}]"
+        )
+    is_full = settled_amount == reservation.maximum_amount
+    target = ReservationStatus.SETTLED if is_full else ReservationStatus.PARTIALLY_SETTLED
+    _check_transition(reservation.status, target)
+
+    if settled_amount > 0:
+        ledger._write_transaction(
+            conn,
+            book=reservation.book,
+            currency=reservation.currency,
+            transaction_type="reservation_settle",
+            idempotency_key=f"reservation_settle:{reservation_id}:{settled_amount}",
+            description=f"settle {settled_amount} of reservation {reservation_id}",
+            entries=[
+                EntrySpec(
+                    account_id=cell_committed(reservation.cell_id),
+                    amount_minor_units=-settled_amount,
+                    cell_id=reservation.cell_id,
+                    experiment_id=reservation.experiment_id,
+                ),
+                EntrySpec(
+                    account_id=destination_account_id,
+                    amount_minor_units=settled_amount,
+                    cell_id=reservation.cell_id,
+                    experiment_id=reservation.experiment_id,
+                ),
+            ],
+        )
+    conn.execute(
+        "UPDATE reservations SET status = ?, settled_amount = ? WHERE reservation_id = ?",
+        (target.value, settled_amount, reservation_id),
+    )
 
 
 def release(conn: sqlite3.Connection, reservation_id: str) -> Reservation:
@@ -303,42 +335,7 @@ def release(conn: sqlite3.Connection, reservation_id: str) -> Reservation:
     """
     conn.execute("BEGIN IMMEDIATE")
     try:
-        # Fetched and re-validated inside the write lock — same reasoning
-        # as settle() above.
-        reservation = get_reservation(conn, reservation_id)
-        if reservation is None:
-            raise ReservationError(f"no such reservation: {reservation_id}")
-        _check_transition(reservation.status, ReservationStatus.RELEASED)
-
-        remaining = reservation.maximum_amount - reservation.settled_amount
-
-        if remaining > 0:
-            ledger._write_transaction(
-                conn,
-                book=reservation.book,
-                currency=reservation.currency,
-                transaction_type="reservation_release",
-                idempotency_key=f"reservation_release:{reservation_id}",
-                description=f"release {remaining} from reservation {reservation_id}",
-                entries=[
-                    EntrySpec(
-                        account_id=cell_committed(reservation.cell_id),
-                        amount_minor_units=-remaining,
-                        cell_id=reservation.cell_id,
-                        experiment_id=reservation.experiment_id,
-                    ),
-                    EntrySpec(
-                        account_id=cell_cash(reservation.cell_id),
-                        amount_minor_units=remaining,
-                        cell_id=reservation.cell_id,
-                        experiment_id=reservation.experiment_id,
-                    ),
-                ],
-            )
-        conn.execute(
-            "UPDATE reservations SET status = ? WHERE reservation_id = ?",
-            (ReservationStatus.RELEASED.value, reservation_id),
-        )
+        _release_locked(conn, reservation_id)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -347,6 +344,46 @@ def release(conn: sqlite3.Connection, reservation_id: str) -> Reservation:
     result = get_reservation(conn, reservation_id)
     assert result is not None
     return result
+
+
+def _release_locked(conn: sqlite3.Connection, reservation_id: str) -> None:
+    """Non-transactional core of `release`. Caller holds the write lock."""
+    # Fetched and re-validated inside the write lock — same reasoning
+    # as settle() above.
+    reservation = get_reservation(conn, reservation_id)
+    if reservation is None:
+        raise ReservationError(f"no such reservation: {reservation_id}")
+    _check_transition(reservation.status, ReservationStatus.RELEASED)
+
+    remaining = reservation.maximum_amount - reservation.settled_amount
+
+    if remaining > 0:
+        ledger._write_transaction(
+            conn,
+            book=reservation.book,
+            currency=reservation.currency,
+            transaction_type="reservation_release",
+            idempotency_key=f"reservation_release:{reservation_id}",
+            description=f"release {remaining} from reservation {reservation_id}",
+            entries=[
+                EntrySpec(
+                    account_id=cell_committed(reservation.cell_id),
+                    amount_minor_units=-remaining,
+                    cell_id=reservation.cell_id,
+                    experiment_id=reservation.experiment_id,
+                ),
+                EntrySpec(
+                    account_id=cell_cash(reservation.cell_id),
+                    amount_minor_units=remaining,
+                    cell_id=reservation.cell_id,
+                    experiment_id=reservation.experiment_id,
+                ),
+            ],
+        )
+    conn.execute(
+        "UPDATE reservations SET status = ? WHERE reservation_id = ?",
+        (ReservationStatus.RELEASED.value, reservation_id),
+    )
 
 
 def mark_execution_unknown(conn: sqlite3.Connection, reservation_id: str) -> Reservation:
@@ -366,17 +403,7 @@ def _bare_status_transition(
 ) -> Reservation:
     conn.execute("BEGIN IMMEDIATE")
     try:
-        # Fetched and re-validated inside the write lock — same reasoning
-        # as settle()/release() above.
-        reservation = get_reservation(conn, reservation_id)
-        if reservation is None:
-            raise ReservationError(f"no such reservation: {reservation_id}")
-        _check_transition(reservation.status, target)
-
-        conn.execute(
-            "UPDATE reservations SET status = ? WHERE reservation_id = ?",
-            (target.value, reservation_id),
-        )
+        _bare_status_transition_locked(conn, reservation_id, target)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -385,3 +412,21 @@ def _bare_status_transition(
     result = get_reservation(conn, reservation_id)
     assert result is not None
     return result
+
+
+def _bare_status_transition_locked(
+    conn: sqlite3.Connection, reservation_id: str, target: ReservationStatus
+) -> None:
+    """Non-transactional core of `_bare_status_transition`. Caller holds the
+    write lock."""
+    # Fetched and re-validated inside the write lock — same reasoning
+    # as settle()/release() above.
+    reservation = get_reservation(conn, reservation_id)
+    if reservation is None:
+        raise ReservationError(f"no such reservation: {reservation_id}")
+    _check_transition(reservation.status, target)
+
+    conn.execute(
+        "UPDATE reservations SET status = ? WHERE reservation_id = ?",
+        (target.value, reservation_id),
+    )

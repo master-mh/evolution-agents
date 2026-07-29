@@ -17,9 +17,14 @@ requires an explicit call (there's no automatic raise path) and always
 emits an audit event, distinguishing a raise from a lower/initial-configure
 in the event type so the trail is legible.
 
-"max real spend per provider" (§5.1) is stored (`provider_limits`) but not
-enforced — there's no model gateway or provider identification in this
-kernel yet (Phase 4).
+"max real spend per provider" (§5.1) **is** enforced, as of the model gateway
+slice: `check(..., provider=...)` compares that provider's own exposure
+(settled spend in the month window + currently reserved) against
+`provider_limits[provider]`. A provider with no entry in `provider_limits` is
+uncapped by that check — the global caps still apply — because inventing a
+default cap for an unlisted provider would fail closed on a colony that has
+simply not configured one. Reservations carry the provider tag
+(`reservations.provider`, migration 0010); only the gateway sets it.
 """
 
 from __future__ import annotations
@@ -151,20 +156,138 @@ def _concurrent_reserved(conn: sqlite3.Connection) -> int:
     return row["total"]
 
 
-def _settled_spend_since(conn: sqlite3.Connection, since: datetime) -> int:
-    """Sum of the destination-side (positive) entries of USD_REAL
-    reservation_settle transactions effective since `since`."""
+def _concurrent_reserved_for_provider(conn: sqlite3.Connection, provider: str) -> int:
     row = conn.execute(
         """
+        SELECT COALESCE(SUM(maximum_amount - settled_amount), 0) AS total
+        FROM reservations
+        WHERE book = 'USD_REAL' AND provider = ? AND status NOT IN ('settled', 'released')
+        """,
+        (provider,),
+    ).fetchone()
+    return row["total"]
+
+
+def _settled_spend_for_provider_since(
+    conn: sqlite3.Connection, provider: str, since: datetime
+) -> int:
+    """Per-provider analogue of _settled_spend_since.
+
+    Two routes to the provider, both required, because a transaction does not
+    carry a provider tag itself. Ordinary settlements are reached through the
+    reservation's `provider` column. The directly-posted charges — a cost
+    overrun (gateway) and a reconciliation adjustment (reconciliation.py) —
+    are **not** settlements against a reservation, so a reservation join
+    alone misses them, and it misses them precisely when a provider is
+    running hotter than predicted or has just invoiced above estimate, which
+    is when the cap matters most. Those are reached through the `model_calls`
+    row named in the transaction's idempotency key.
+
+    Both routes read `_REAL_SPEND_TRANSACTION_TYPES`, so adding a type there
+    is now sufficient — the split that made this function silently miss a new
+    type is closed. The direct-posting branch also relies on the convention
+    that such a transaction's idempotency key is `{type}:{model_call_id}`.
+    """
+    since_iso = since.astimezone(timezone.utc).isoformat()
+    direct_types = tuple(t for t in _REAL_SPEND_TRANSACTION_TYPES if t != "reservation_settle")
+
+    settled = 0
+    if "reservation_settle" in _REAL_SPEND_TRANSACTION_TYPES:
+        settled = conn.execute(
+            """
+            SELECT COALESCE(SUM(e.amount_minor_units), 0) AS total
+            FROM ledger_entries e
+            JOIN ledger_transactions t ON t.transaction_id = e.transaction_id
+            JOIN reservations r
+              ON t.idempotency_key LIKE 'reservation_settle:' || r.reservation_id || ':%'
+            WHERE t.book = 'USD_REAL'
+              AND t.transaction_type = 'reservation_settle'
+              AND e.account_id = ?
+              AND r.provider = ?
+              AND t.effective_at_utc >= ?
+            """,
+            (_SPEND_ACCOUNT, provider, since_iso),
+        ).fetchone()["total"]
+
+    direct = 0
+    if direct_types:
+        placeholders = ", ".join("?" for _ in direct_types)
+        direct = conn.execute(
+            f"""
+            SELECT COALESCE(SUM(e.amount_minor_units), 0) AS total
+            FROM ledger_entries e
+            JOIN ledger_transactions t ON t.transaction_id = e.transaction_id
+            JOIN model_calls m
+              ON t.idempotency_key = t.transaction_type || ':' || m.model_call_id
+            WHERE t.book = 'USD_REAL'
+              AND t.transaction_type IN ({placeholders})
+              AND e.account_id = ?
+              AND m.provider = ?
+              AND t.effective_at_utc >= ?
+            """,
+            (*direct_types, _SPEND_ACCOUNT, provider, since_iso),
+        ).fetchone()["total"]
+
+    return settled + direct
+
+
+def provider_exposure(
+    conn: sqlite3.Connection, provider: str, *, now: datetime | None = None
+) -> int:
+    """Settled spend in the month window plus currently reserved, for one
+    provider — the same "settled + reserved" basis §5.3 requires of the
+    global caps, so many small calls to one provider cannot collectively
+    exceed its cap while each stays under it."""
+    now = now or datetime.now(timezone.utc)
+    return _concurrent_reserved_for_provider(
+        conn, provider
+    ) + _settled_spend_for_provider_since(conn, provider, now - _MONTH)
+
+
+# Every transaction type that represents real money leaving the colony. A type
+# missing from this tuple is real spend the hour/day/month caps cannot see, so
+# anything that posts an external USD_REAL charge must be added here — the
+# model gateway's cost overrun is one such charge and is not a settlement, and
+# a reconciliation adjustment is a third.
+#
+# This tuple is now genuinely the single source: `_settled_spend_since` and
+# `_settled_spend_for_provider_since` both read it, rather than the latter
+# hardcoding its own copy in SQL as it did through the gateway slice.
+_REAL_SPEND_TRANSACTION_TYPES = (
+    "reservation_settle",
+    "model_call_cost_overrun",
+    "model_call_reconciliation_adjustment",
+)
+
+# The leg that measures real money leaving the colony. Summing this account's
+# *signed* entries — rather than filtering on `amount > 0` as the first two
+# versions of these queries did — is what makes a negative adjustment work: a
+# reconciliation credit debits external_expense, and on the old filter its
+# positive counter-leg (the refund landing back in the Cell's cash) would have
+# been counted as fresh spend, so paying a Cell back would have pushed it
+# closer to the cap instead of further from it.
+_SPEND_ACCOUNT = "external_expense"
+
+
+def _settled_spend_since(conn: sqlite3.Connection, since: datetime) -> int:
+    """Net USD_REAL flow into `external_expense` from external-spend
+    transactions effective since `since`."""
+    placeholders = ", ".join("?" for _ in _REAL_SPEND_TRANSACTION_TYPES)
+    row = conn.execute(
+        f"""
         SELECT COALESCE(SUM(e.amount_minor_units), 0) AS total
         FROM ledger_entries e
         JOIN ledger_transactions t ON t.transaction_id = e.transaction_id
         WHERE t.book = 'USD_REAL'
-          AND t.transaction_type = 'reservation_settle'
-          AND e.amount_minor_units > 0
+          AND t.transaction_type IN ({placeholders})
+          AND e.account_id = ?
           AND t.effective_at_utc >= ?
         """,
-        (since.astimezone(timezone.utc).isoformat(),),
+        (
+            *_REAL_SPEND_TRANSACTION_TYPES,
+            _SPEND_ACCOUNT,
+            since.astimezone(timezone.utc).isoformat(),
+        ),
     ).fetchone()
     return row["total"]
 
@@ -189,16 +312,29 @@ def check(
     requested_amount: int,
     now: datetime | None = None,
     limits: RealSpendLimits | None = None,
+    provider: str | None = None,
 ) -> None:
     """Raise RealSpendCapExceededError if reserving requested_amount now
     would push any cap over its limit. Must be called after the caller has
     already acquired a write lock (BEGIN IMMEDIATE) — see
     reservations.request — so this check is atomic with the reservation
     insert under concurrency (Charter C5).
+
+    `provider` additionally enforces §5.1's per-provider cap. It is checked
+    *first*: when a colony has deliberately capped one provider well below
+    its global limits, the per-provider breach is the informative error.
     """
     now = now or datetime.now(timezone.utc)
     snap = snapshot(conn, now=now, limits=limits)
     limits = snap.limits
+
+    if provider is not None and provider in limits.provider_limits:
+        cap = limits.provider_limits[provider]
+        projected = provider_exposure(conn, provider, now=now) + requested_amount
+        if projected > cap:
+            raise RealSpendCapExceededError(
+                f"real-spend provider cap exceeded for {provider!r}: {projected} > {cap}"
+            )
 
     if requested_amount > limits.per_request_minor_units:
         raise RealSpendCapExceededError(
