@@ -253,6 +253,13 @@ def provider_exposure(
 # This tuple is now genuinely the single source: `_settled_spend_since` and
 # `_settled_spend_for_provider_since` both read it, rather than the latter
 # hardcoding its own copy in SQL as it did through the gateway slice.
+#
+# Membership is no longer a convention a reviewer has to notice:
+# `tests/test_real_spend_registration.py` walks the kernel's AST and fails on any
+# transaction type that is neither registered here nor explicitly exempted there,
+# and proves each registered type is summed by both spend windows. A type added
+# here also needs its idempotency key shaped `{transaction_type}:{model_call_id}`
+# or the per-provider join below will not find it.
 _REAL_SPEND_TRANSACTION_TYPES = (
     "reservation_settle",
     "model_call_cost_overrun",

@@ -9,7 +9,10 @@ IDs that run in CI"):
   charter_balance_matches_ledger     -> C3
   charter_no_overspend                -> C4 (RESOURCE-book usage never exceeds its reservation
                                               cap; a reservation can never exceed a Cell's cash)
-  charter_realspend_cap              -> C5 (concurrent-reserved cap vs configured limit)
+  charter_realspend_cap              -> C5 (concurrent-reserved cap vs configured limit; the
+                                              completeness of the breaker's transaction-type
+                                              registry is covered by the same test ID in
+                                              tests/test_real_spend_registration.py)
   charter_idempotent_handlers        -> C6 (event redelivery applies handler side effects once)
   charter_crash_recovery             -> C7 (reservation FSM stateful machine)
   charter_dead_cell_inert            -> C8 (dead Cells reject every further transition)

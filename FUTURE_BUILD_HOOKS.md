@@ -101,3 +101,20 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **Prompt caching** is not used at all. At Phase 4 volumes with a shared system prompt it is the
   single largest available cost reduction, and it changes the cost model (cache writes cost more,
   reads cost far less) in a way the pricing table cannot currently express.
+- **Real-spend type registration is guarded by a test, not by the ledger.**
+  `tests/test_real_spend_registration.py` walks the kernel's AST, so it models the shapes the kernel
+  uses today: a `transaction_type=` keyword whose value is a literal or a module-level constant, and
+  a `book=` that is either `Book.MEMBER` or dynamic. A future call site that computes its type some
+  other way is caught only by the "unrecognised expression" guard, which forces a human look rather
+  than deciding for itself. The airtight alternative is a runtime check where the transaction is
+  written — if `book` is USD_REAL and any entry hits `external_expense`, require a registered type —
+  which cannot be bypassed by a novel code shape. It was not built here because the registry lives in
+  `real_spend_breaker` and the check belongs in `ledger`, so it needs the tuple moved to a neutral
+  module first, and because raising there means a legitimate-but-unregistered transaction fails
+  closed in production. That is arguably the *right* failure direction for real money and is worth
+  revisiting before sustained real spend.
+- **`reservation_settle`'s destination account is dynamic**, taken from the reservation record, so the
+  precise static check ("any call site naming `external_expense` must use a registered type") cannot
+  see the kernel's single largest real-spend path. It is covered behaviourally instead. A future type
+  that also resolves its destination at runtime would likewise be invisible to that check and would
+  rest entirely on the classification test forcing a human decision.

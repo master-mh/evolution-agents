@@ -25,11 +25,31 @@
 
 - [x] **Provider-invoice reconciliation** — DONE (ADR-023), closing the producer-with-no-consumer ADR-022 had just created: crash recovery parks calls in `execution_unknown` and nothing could resolve them. New `reconciliation.py` + migration `0011`: two paths (funds still committed → resolve through §4.4's FSM; funds already moved → post a **new** adjustment transaction, never edit history per §3.6), `reconciled_micro_usd`/`reconciled_at_utc`/`reconciliation_source` (§24.1), and CLI `reconcile`/`dispute`/`outstanding`. **The `_REAL_SPEND_TRANSACTION_TYPES` footgun had to be fixed to land this** — the adjustment is the predicted third real-spend type, and it can be *negative*, which both breaker queries would have counted as fresh spend (their `amount > 0` filter selects a refund's cell-cash leg), so refunding a Cell would have pushed it toward the circuit breaker. Both queries now sum the signed `external_expense` leg and read one list. Two bugs found by hand-verification: a §4.4 violation (`disputed` has no `partially_settled` exit) and my own docstring overclaiming that this fixes ADR-020's rounding. 405 tests passing (37 new); golden run extended via a reviewed A12 migration (expectation version 2 → 3, no money movement).
 
+- [x] **Real-spend type registration guard** — DONE, replacing the convention that let the
+  cost-overrun type ship unregistered. New `tests/test_real_spend_registration.py` (7 tests) attacks
+  it from three angles, because no one of them is sufficient: an **AST walk** over the kernel
+  requiring every `transaction_type=` to be either registered in `_REAL_SPEND_TRANSACTION_TYPES` or
+  exempted *with a stated reason* (the angle that fires on a genuinely new type, whatever it does); a
+  **precise static check** that any call site naming `external_expense` uses a registered type (the
+  one that would have caught the overrun); and a **behavioural check**, parametrized over the
+  registry itself, that each registered type is summed by *both* the global and per-provider windows.
+  Writing it surfaced a subtlety I had assumed away: `model_call_sim_mirror` posts to
+  `external_expense` too, in `Book.USD_SIM` — so the static check must resolve the **book**, not just
+  the account, and the USD_SIM exclusion is now asserted explicitly rather than left implicit, since
+  that is the one way a real-spend type could hide from it. Also pins the previously-undocumented
+  coupling that a registered direct-posting type must shape its idempotency key
+  `{type}:{model_call_id}` or the per-provider join silently misses it — registration in the tuple is
+  necessary but not sufficient. Teeth-checked by reintroducing each bug in turn: unregistering the
+  overrun type fails 2 tests and names `gateway.py:569`, adding a novel type fails classification,
+  breaking the key convention fails the per-provider assertion. 412 tests passing (7 new); golden-run
+  hash unchanged, as a test-only change should leave it. The airtight alternative — a runtime check
+  in `ledger` that no code shape can bypass — is logged in FUTURE_BUILD_HOOKS with why it wasn't
+  built here.
+
 ## Next
 - [ ] **Make a real paid call.** Everything is wired and the mock path is proven end to end, but no `USD_REAL` has actually left the building yet — that needs an `ANTHROPIC_API_KEY` and a deliberate `--yes-spend-real-money` run against a tiny cap.
 - [ ] **Aggregate-invoice reconciliation** — the half ADR-023 provably cannot do. Per-call reconciliation leaves ADR-020's sub-cent rounding overstatement exactly where it was (3.5¢ reconciles back through the same ceiling to the 4¢ already recorded); only an invoice *total* spanning many calls can post the correction. Additive: needs an invoice-level record, reusing all the per-call sign handling and breaker registration.
 - [ ] **Forward recovery for the gateway** — ADR-022's deferred alternative, which belongs with the reconciliation plumbing. Rollback is atomic but loses the provider's reported usage, so a crashed call still needs a human. Recording the response durably before applying the accounting (a `settling` status) would let recovery finish the settlement automatically.
-- [ ] A test asserting every USD_REAL transaction type reaching `external_expense` is registered in `_REAL_SPEND_TRANSACTION_TYPES` or explicitly exempted. Registration is currently a convention enforced by a reviewer noticing — which is how the overrun type was missed the first time.
 - [ ] `ledger.spend_by_book` overstates spend for a Cell that received a reconciliation credit; the fix needs a §31 account-level distinction between funding sources and spend destinations. Coroner reports only, never enforcement. See FUTURE_BUILD_HOOKS.
 - [ ] Tighten the pre-call token estimate — `providers._estimate_tokens` is a deliberate over-estimate (2 chars/token). The provider's `count_tokens` endpoint would cut over-reservation sharply and make cost overruns (ADR-021) rarer.
 - [ ] Experiment tracking — the other Phase 2 prerequisite; also unblocks `max_parallel_experiments` and the coroner report's `experiment_ids`/`stage_reached` (currently always empty/None).
