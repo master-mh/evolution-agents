@@ -101,13 +101,22 @@ def cell(conn):
     return created
 
 
-def _call(conn, cell, *, key="k", fail=None, unknown=False):
+class _ZeroPricedProvider(StubProvider):
+    """A successful call that costs nothing, which is what a zero-priced entry in
+    the pricing table produces — the mock provider is the live example."""
+
+    name = "mock"
+    model = "mock-1"
+
+
+def _call(conn, cell, *, key="k", fail=None, unknown=False, provider=None):
+    provider = provider or StubProvider(fail=fail, unknown=unknown)
     return gateway.call_model(
         conn,
         cell_id=cell.cell_id,
-        provider=StubProvider(fail=fail, unknown=unknown),
+        provider=provider,
         request=providers.ModelRequest(
-            model=PRICED_MODEL,
+            model=getattr(provider, "model", PRICED_MODEL),
             messages=({"role": "user", "content": "hello there"},),
             max_tokens=1000,
         ),
@@ -413,6 +422,35 @@ def test_outstanding_puts_frozen_money_first(conn, cell):
     assert [c.model_call_id for c in reconciliation.outstanding(conn)] == [
         settled.model_call_id
     ]
+
+
+def test_zero_cost_calls_are_not_outstanding_work(conn, cell):
+    """A resolved call that cost nothing appears on no invoice, so listing it as
+    outstanding is noise that grows without bound as mock calls accumulate. A
+    call that cost real money still leads, and one still holding funds is
+    outstanding whatever it cost."""
+    billable = _call(conn, cell, key="billable")
+    free = _call(conn, cell, key="free", provider=_ZeroPricedProvider())
+
+    ids = [c.model_call_id for c in reconciliation.outstanding(conn)]
+    assert billable.model_call_id in ids
+    assert free.model_call_id not in ids
+    assert reconciliation.summary(conn)["calls"] == 1
+
+    # Frozen money outranks costing nothing: an unresolved call stays listed
+    # even with no settled amount, because its outcome is unknown.
+    unknown = _unknown_call(conn, cell, key="frozen")
+    assert unknown.model_call_id in [c.model_call_id for c in reconciliation.outstanding(conn)]
+
+
+def test_zero_cost_call_can_still_be_reconciled_explicitly(conn, cell):
+    """`outstanding` is a worklist, not a gate — excluding a call from it must
+    not stop a surprise charge being applied to it."""
+    free = _call(conn, cell, key="free", provider=_ZeroPricedProvider())
+    reconciled = reconciliation.reconcile_model_call(
+        conn, free.model_call_id, invoiced_micro_usd=500, source="surprise-invoice"
+    )
+    assert reconciled.reconciled_micro_usd == 500
 
 
 def test_summary_counts_and_frozen_money(conn, cell):

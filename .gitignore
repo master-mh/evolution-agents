@@ -6,3 +6,8 @@ __pycache__/
 .pytest_cache/
 *.db
 *.sqlite3
+
+# Never commit credentials. The colony can spend real money, so a leaked
+# ANTHROPIC_API_KEY is a billable incident, not just an exposure.
+.env
+.env.*

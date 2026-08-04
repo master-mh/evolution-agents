@@ -46,8 +46,21 @@
   in `ledger` that no code shape can bypass — is logged in FUTURE_BUILD_HOOKS with why it wasn't
   built here.
 
+- [x] **Make a real paid call** — DONE (2026-08-05). `claude-haiku-4-5`, 12 in / 4 out, 32 micro-USD
+  true cost, **1 cent recorded**, model replied `ok`. Verified against the ledger: cost math
+  reconciles exactly, one `reservation_settle` entry on `external_expense`, conservation and hash
+  chain green, A6 linkage complete, nothing stranded. Measured rather than predicted: ADR-020's
+  rounding overstates by **312×** at this size, and the pre-call estimate over-reserved **10.8×**
+  while *under*-counting input tokens (11 predicted vs 12 actual) — the opposite of the documented
+  "deliberate over-estimate", because the 2-chars/token heuristic ignores per-message overhead. Two
+  real failure paths ran first and both behaved: Charter C4 refused an under-funded RESOURCE
+  reservation, and a 401 was classified definitely-unbilled so funds released rather than freezing in
+  `execution_unknown`. Also fixed `outstanding`/`summary` counting zero-cost mock calls as billable
+  work (shared `_BILLABLE_PREDICATE`; still a worklist, not a gate), and added `.env`/`.env.*` to
+  `.gitignore`, which had neither. 414 tests passing; golden-run hash unchanged.
+
 ## Next
-- [ ] **Make a real paid call.** Everything is wired and the mock path is proven end to end, but no `USD_REAL` has actually left the building yet — that needs an `ANTHROPIC_API_KEY` and a deliberate `--yes-spend-real-money` run against a tiny cap.
+
 - [ ] **Aggregate-invoice reconciliation** — the half ADR-023 provably cannot do. Per-call reconciliation leaves ADR-020's sub-cent rounding overstatement exactly where it was (3.5¢ reconciles back through the same ceiling to the 4¢ already recorded); only an invoice *total* spanning many calls can post the correction. Additive: needs an invoice-level record, reusing all the per-call sign handling and breaker registration.
 - [ ] **Forward recovery for the gateway** — ADR-022's deferred alternative, which belongs with the reconciliation plumbing. Rollback is atomic but loses the provider's reported usage, so a crashed call still needs a human. Recording the response durably before applying the accounting (a `settling` status) would let recovery finish the settlement automatically.
 - [ ] `ledger.spend_by_book` overstates spend for a Cell that received a reconciliation credit; the fix needs a §31 account-level distinction between funding sources and spend destinations. Coroner reports only, never enforcement. See FUTURE_BUILD_HOOKS.

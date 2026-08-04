@@ -376,6 +376,18 @@ def dispute_model_call(
     return result
 
 
+# A call worth checking against a provider invoice: one that has already moved
+# real money, one that recorded a real cost, or one still holding funds whose
+# outcome is unknown. A resolved zero-cost call is none of these. Kept as one
+# string so `outstanding` and `summary` cannot drift apart — the same split that
+# let a third real-spend type be missed by one of two breaker queries.
+_BILLABLE_PREDICATE = """(
+            m.settled_minor_units > 0
+            OR COALESCE(m.cost_actual_micro_usd, 0) > 0
+            OR r.status IN ('reserved', 'execution_unknown', 'disputed')
+        )"""
+
+
 def outstanding(conn: sqlite3.Connection) -> list[ModelCall]:
     """Every call still awaiting reconciliation, worst first.
 
@@ -383,14 +395,22 @@ def outstanding(conn: sqlite3.Connection) -> list[ModelCall]:
     reservation is still open has real money frozen in `committed` and cannot
     resolve itself, so it leads. Behind it sit already-settled calls, where
     reconciliation only confirms or corrects a figure that has already moved.
+
+    A call that neither cost anything nor holds anything is excluded: a
+    zero-priced provider (the mock) produces calls no invoice will ever list, so
+    counting them as outstanding is noise that grows without bound as mock calls
+    accumulate. This is a worklist, not a gate — `reconcile` still accepts any
+    model_call_id, so a surprise charge on a nominally free call can still be
+    applied.
     """
     rows = conn.execute(
-        """
+        f"""
         SELECT m.model_call_id AS model_call_id
         FROM model_calls m
         JOIN reservations r ON r.reservation_id = m.real_reservation_id
         WHERE m.reconciled_at_utc IS NULL
           AND m.status != 'failed'
+          AND {_BILLABLE_PREDICATE}
         ORDER BY
           CASE WHEN r.status IN ('reserved', 'execution_unknown', 'disputed')
                THEN 0 ELSE 1 END,
@@ -409,13 +429,15 @@ def summary(conn: sqlite3.Connection) -> dict[str, int]:
     """Counts for `mitosis status`: how much of the colony's real spend has
     been checked against an invoice, and how much has not."""
     row = conn.execute(
-        """
+        f"""
         SELECT
           COUNT(*) AS total,
-          COALESCE(SUM(CASE WHEN reconciled_at_utc IS NOT NULL THEN 1 ELSE 0 END), 0)
+          COALESCE(SUM(CASE WHEN m.reconciled_at_utc IS NOT NULL THEN 1 ELSE 0 END), 0)
             AS reconciled
-        FROM model_calls
-        WHERE status != 'failed'
+        FROM model_calls m
+        JOIN reservations r ON r.reservation_id = m.real_reservation_id
+        WHERE m.status != 'failed'
+          AND {_BILLABLE_PREDICATE}
         """
     ).fetchone()
     frozen = conn.execute(

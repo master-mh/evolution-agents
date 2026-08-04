@@ -625,11 +625,15 @@ def test_outstanding_lists_then_clears(tmp_path, capsys):
     out = capsys.readouterr().out
     call_id = out.split("Model call ")[1].split("\n")[0].strip()
 
+    # The CLI's default provider is the zero-priced mock, and no invoice will
+    # ever list a call that cost nothing — so it is not outstanding work.
     cli.main(["--db", db_path, "outstanding"])
     out = capsys.readouterr().out
-    assert "1 billable, 0 reconciled, 1 outstanding" in out
-    assert call_id in out
+    assert "0 billable, 0 reconciled, 0 outstanding" in out
+    assert "Nothing outstanding." in out
 
+    # But `outstanding` is a worklist, not a gate: reconcile still accepts the
+    # call by id, so a surprise charge on a nominally free call can be applied.
     assert cli.main([
         "--db", db_path, "reconcile", "--call", call_id,
         "--invoiced", "0", "--source", "inv-2026-07",
