@@ -67,6 +67,7 @@ from . import (
     lifecycle,
     lineage,
     population,
+    prediction,
     providers,
     real_spend_breaker,
     reconciliation,
@@ -93,7 +94,12 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           call, and `model_calls` gained the §24.1 reconciled-cost fields.
 #           No money moves — the mock's true cost is zero and the invoice
 #           agrees — so the balances section is unchanged by this step.
-EXPECTATION_VERSION = 3
+#   3 -> 4: the scenario gained three §8.5 predictions (one resolved true,
+#           one resolved false, one left open) and a `predictions` snapshot
+#           section. Predictions move no money, so `balances`,
+#           `transaction_types` and `reservations` are all unchanged; the
+#           diff is confined to `predictions` and two new audit event types.
+EXPECTATION_VERSION = 4
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -445,7 +451,39 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         source="golden-run-invoice",
     )
 
-    # 11. Simulated clock.
+    # 11. Prediction register (§8.5, Amendment A14). Two predictions, resolved
+    #     opposite ways, so the snapshot pins both scoring rules and both
+    #     outcomes rather than only the flattering case. A third is left
+    #     deliberately unresolved: `unresolved` appearing in the snapshot is
+    #     what stops a future change from silently dropping the anti-gaming
+    #     surface, which a register of only-resolved predictions would.
+    #     `resolves_by` is derived from SCENARIO_EPOCH, never `now()`, so
+    #     nothing here reads the wall clock.
+    for suffix, claim, probability, outcome in (
+        ("hit", "golden-run claim A", 0.8, True),
+        ("miss", "golden-run claim B", 0.6, False),
+    ):
+        registered = prediction.register(
+            conn,
+            cell_id=builder.cell_id,
+            claim=claim,
+            probability=probability,
+            resolves_by=SCENARIO_RESERVATION_EXPIRY,
+            idempotency_key=f"golden:prediction:{suffix}",
+        )
+        prediction.resolve(
+            conn, registered.prediction_id, occurred=outcome, source="golden-run-outcome"
+        )
+    prediction.register(
+        conn,
+        cell_id=builder.cell_id,
+        claim="golden-run claim C (left open on purpose)",
+        probability=0.5,
+        resolves_by=SCENARIO_RESERVATION_EXPIRY,
+        idempotency_key="golden:prediction:open",
+    )
+
+    # 12. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
 
@@ -580,6 +618,25 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
     # and would make the run non-reproducible — the same reason the snapshot
     # drops timestamps everywhere else. What is pinned is the accounting:
     # who called what, how many tokens, and what it cost.
+    # Scores are rounded because Brier and log are floats: a bit-level
+    # difference in the last place across platforms would break replay for a
+    # reason that has nothing to do with behaviour. Six places is far finer
+    # than any calibration decision needs. Hashes and timestamps are excluded
+    # for the same reasons they are everywhere else in this snapshot.
+    prediction_rows = [
+        {
+            "cell": aliases.get(row["cell_id"], "cell#?"),
+            "claim": row["claim"],
+            "probability": row["probability"],
+            "outcome": row["outcome"],
+            "resolved": row["resolved_at_utc"] is not None,
+            "resolution_source": row["resolution_source"],
+            "brier_score": None if row["brier_score"] is None else round(row["brier_score"], 6),
+            "log_score": None if row["log_score"] is None else round(row["log_score"], 6),
+        }
+        for row in conn.execute("SELECT * FROM prediction_register ORDER BY rowid").fetchall()
+    ]
+
     model_call_rows = [
         {
             "cell": aliases.get(row["cell_id"], "cell#?"),
@@ -614,6 +671,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "resource_usage": resource_rows,
         "model_calls": model_call_rows,
         "coroner_reports": coroner_rows,
+        "predictions": prediction_rows,
         "audit_event_types": audit_event_types,
         "event_inbox": inbox,
         "event_outbox": outbox,

@@ -13,7 +13,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (
@@ -29,6 +29,7 @@ from . import (
     lineage,
     money,
     population,
+    prediction,
     pricing,
     providers,
     real_spend_breaker,
@@ -359,6 +360,84 @@ def cmd_reproduce(args: argparse.Namespace) -> None:
         print("  (unmutated — shares the parent's genome, per content addressing)")
 
     conn.close()
+
+
+def cmd_predict(args: argparse.Namespace) -> None:
+    """Register a prediction before its outcome is known (SPEC.md §8.5)."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    resolves_by = datetime.now(timezone.utc) + timedelta(days=args.resolves_in_days)
+    try:
+        record = prediction.register(
+            conn,
+            cell_id=args.cell,
+            claim=args.claim,
+            probability=args.probability,
+            resolves_by=resolves_by,
+            experiment_id=args.experiment,
+            idempotency_key=args.idempotency_key,
+        )
+    except prediction.PredictionError as exc:
+        raise CliError(str(exc)) from exc
+
+    print(f"Registered prediction {record.prediction_id}")
+    print(f"  cell:        {record.cell_id}")
+    print(f"  claim:       {record.claim}")
+    print(f"  probability: {record.probability}")
+    print(f"  resolves by: {record.resolves_by_utc.isoformat()}")
+    print(f"  hash:        {record.prediction_hash}")
+
+
+def cmd_resolve_prediction(args: argparse.Namespace) -> None:
+    """Record what actually happened, and score it."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        record = prediction.resolve(
+            conn, args.prediction, occurred=args.occurred, source=args.source
+        )
+    except prediction.PredictionError as exc:
+        raise CliError(str(exc)) from exc
+
+    print(f"Resolved prediction {record.prediction_id}")
+    print(f"  claim:       {record.claim}")
+    print(f"  predicted:   {record.probability}")
+    print(f"  outcome:     {'occurred' if record.outcome else 'did not occur'}")
+    print(f"  brier score: {record.brier_score:.4f}  (0 perfect, 0.25 = always guessing 0.5)")
+    print(f"  log score:   {record.log_score:.4f}   (lower is better)")
+
+
+def cmd_calibration(args: argparse.Namespace) -> None:
+    """§8.5's reality gap as a calibration curve rather than a vibe."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    stats = prediction.scores(conn, args.cell)
+    scope = f"cell {args.cell}" if args.cell else "colony-wide"
+    print(f"Prediction calibration — {scope}")
+    print(f"  registered: {stats['total']}   resolved: {stats['resolved']}   "
+          f"unresolved: {stats['unresolved']}   overdue: {stats['overdue']}")
+    if stats["mean_brier"] is None:
+        print("  no resolved predictions yet — nothing to score")
+    else:
+        print(f"  mean Brier: {stats['mean_brier']:.4f}   mean log: {stats['mean_log']:.4f}")
+
+    if stats["overdue"]:
+        print(f"\n  WARNING: {stats['overdue']} prediction(s) past their deadline and unresolved.")
+        print("  A calibration curve built only from resolved predictions is self-selected;")
+        print("  treat the scores above as unreliable until these are resolved.")
+
+    curve = prediction.calibration(conn, cell_id=args.cell, buckets=args.buckets)
+    if curve:
+        print("\n  predicted -> observed:")
+        for bucket in curve:
+            print(
+                f"    {bucket['bucket_low']:.1f}–{bucket['bucket_high']:.1f}: "
+                f"predicted {bucket['mean_predicted']:.2f}, "
+                f"observed {bucket['observed_frequency']:.2f}  (n={bucket['count']})"
+            )
+
+    print(f"\n  register hash chain valid: {prediction.verify_chain(conn)}")
 
 
 def cmd_record_revenue(args: argparse.Namespace) -> None:
@@ -870,6 +949,51 @@ def build_parser() -> argparse.ArgumentParser:
     revenue_parser.add_argument("--note", default="")
     revenue_parser.add_argument("--idempotency-key", default=None)
     revenue_parser.set_defaults(func=cmd_record_revenue)
+
+    predict_parser = subparsers.add_parser(
+        "predict", help="register a prediction before its outcome is known (SPEC.md §8.5)"
+    )
+    predict_parser.add_argument("--cell", required=True, help="predicting cell_id")
+    predict_parser.add_argument(
+        "--claim",
+        required=True,
+        help='a claim that is unambiguously true or false once resolved, e.g. "revenue >= 50"',
+    )
+    predict_parser.add_argument(
+        "--probability",
+        required=True,
+        type=float,
+        help="P(claim is true), strictly between 0 and 1 — certainty is refused",
+    )
+    predict_parser.add_argument(
+        "--resolves-in-days", type=float, default=7.0, help="deadline for knowing the outcome"
+    )
+    predict_parser.add_argument("--experiment", default=None)
+    predict_parser.add_argument("--idempotency-key", default=None)
+    predict_parser.set_defaults(func=cmd_predict)
+
+    resolve_parser = subparsers.add_parser(
+        "resolve-prediction", help="record what actually happened and score it"
+    )
+    resolve_parser.add_argument("--prediction", required=True, help="prediction_id")
+    outcome_group = resolve_parser.add_mutually_exclusive_group(required=True)
+    outcome_group.add_argument(
+        "--occurred", dest="occurred", action="store_true", help="the claim came true"
+    )
+    outcome_group.add_argument(
+        "--did-not-occur", dest="occurred", action="store_false", help="the claim did not come true"
+    )
+    resolve_parser.add_argument(
+        "--source", required=True, help="where the outcome came from — ledger, invoice, manual"
+    )
+    resolve_parser.set_defaults(func=cmd_resolve_prediction)
+
+    calibration_parser = subparsers.add_parser(
+        "calibration", help="predicted vs observed, the §8.5 reality gap"
+    )
+    calibration_parser.add_argument("--cell", default=None, help="scope to one cell_id")
+    calibration_parser.add_argument("--buckets", type=int, default=10)
+    calibration_parser.set_defaults(func=cmd_calibration)
 
     call_model_parser = subparsers.add_parser(
         "call-model",

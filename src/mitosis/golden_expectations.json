@@ -1,5 +1,5 @@
 {
-  "expectation_version": 3,
+  "expectation_version": 4,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,13 +10,15 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "1e509c81a0df736289e06f49b8b417a7ec23d69cdecb9478f35229991e0c4a00",
+  "semantic_hash": "0c9e8d660d42813382ef4515d88aedfbf046951e16d92b47af84f945c382fdd1",
   "snapshot": {
     "audit_event_types": {
       "cell_lifecycle_transition": 12,
       "event_dead_lettered": 1,
       "model_call_reconciled": 1,
       "model_call_settled": 1,
+      "prediction_registered": 3,
+      "prediction_resolved": 2,
       "real_spend_limit_configured": 1
     },
     "balances": {
@@ -169,6 +171,38 @@
         "resolved_model": "mock-1",
         "settled_minor_units": 0,
         "status": "succeeded"
+      }
+    ],
+    "predictions": [
+      {
+        "brier_score": 0.04,
+        "cell": "cell#2",
+        "claim": "golden-run claim A",
+        "log_score": 0.223144,
+        "outcome": 1,
+        "probability": 0.8,
+        "resolution_source": "golden-run-outcome",
+        "resolved": true
+      },
+      {
+        "brier_score": 0.36,
+        "cell": "cell#2",
+        "claim": "golden-run claim B",
+        "log_score": 0.916291,
+        "outcome": 0,
+        "probability": 0.6,
+        "resolution_source": "golden-run-outcome",
+        "resolved": true
+      },
+      {
+        "brier_score": null,
+        "cell": "cell#2",
+        "claim": "golden-run claim C (left open on purpose)",
+        "log_score": null,
+        "outcome": null,
+        "probability": 0.5,
+        "resolution_source": null,
+        "resolved": false
       }
     ],
     "reservations": [

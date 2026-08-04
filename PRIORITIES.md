@@ -89,6 +89,21 @@
   unchanged, and notably the golden run does *not* cover this — misclassifying an account leaves it
   passing. 453 tests passing (5 new). Hand-verified live: a 1¢ credit moves USD_REAL spend 1 → 0.
 
+- [x] **Prediction register** — DONE (2026-08-05), Amendment A14 / §8.5, normative since v0.2 and
+  unbuilt until now. `prediction.py` + migration 0012: register-before-outcome, hash-chained like the
+  ledger, scored with both rules §8.5 names (Brier and log), with §8.5's calibration curve returned
+  as buckets because the *shape* is the diagnosis — systematic over- and under-confidence produce the
+  same mean Brier and need opposite corrections. **Binary claims only**, because Brier and log are
+  defined over binary outcomes: a continuous quantity is predicted by threshold, and scoring a point
+  estimate properly needs CRPS, which §8.5 does not authorise (logged). **Certainty refused** in
+  Python and by schema CHECK — an infinite log score would make a population unorderable and
+  therefore unselectable. **The anti-gaming surface is the load-bearing part**: `overdue()` plus
+  `unresolved`/`overdue` reported beside the means, since a Cell resolving only its winners has a
+  perfect curve and a pile of losers behind it. Golden run extended via a reviewed A12 migration
+  (version 3 → 4; only `predictions` and two audit types changed — no money moved). 481 tests
+  passing (28 new). Hand-verified live: editing a resolved prediction breaks the chain, reverting
+  restores it.
+
 ## Next
 - [ ] **A Cell that acts.** The missing subsystem: an agent loop that reads a genome, calls the
   gateway, and records a deliberable. Keep genome content as *data the loop interprets*, never code
@@ -96,9 +111,6 @@
   Phase 5.
 - [ ] **Structured proposals** — a Cell proposing strategy needs validated fields back, not prose.
   Logged as out-of-scope in the gateway slice; now on the critical path for self-direction.
-- [ ] **Prediction register** — a Cell states expected earnings *before* spending, so selection can
-  run on the accuracy of its own bets before any customer exists. The cheapest real selection
-  pressure available, and it works with zero revenue.
 - [ ] **Fitness + death criteria (§10.5)** — with revenue and spend both recorded, fitness is
   computable and `kill()` already exists. Revenue + death closes the evolutionary loop, since
   reproduction already works.

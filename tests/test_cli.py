@@ -826,3 +826,67 @@ def test_unknown_provider_lists_all_three(tmp_path, capsys):
     ]) == 1
     err = capsys.readouterr().err
     assert "mock" in err and "anthropic" in err and "ollama" in err
+
+
+def test_predict_resolve_and_calibration_end_to_end(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    capsys.readouterr()
+
+    assert cli.main([
+        "--db", db_path, "predict", "--cell", cell_id,
+        "--claim", "revenue >= 50", "--probability", "0.8",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "Registered prediction" in out
+    assert "revenue >= 50" in out
+    prediction_id = out.split("Registered prediction ")[1].split("\n")[0].strip()
+
+    assert cli.main([
+        "--db", db_path, "resolve-prediction", "--prediction", prediction_id,
+        "--occurred", "--source", "ledger",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "brier score: 0.0400" in out
+
+    assert cli.main(["--db", db_path, "calibration"]) == 0
+    out = capsys.readouterr().out
+    assert "registered: 1   resolved: 1" in out
+    assert "predicted 0.80, observed 1.00" in out
+    assert "register hash chain valid: True" in out
+
+
+def test_calibration_warns_when_predictions_are_overdue(tmp_path, capsys):
+    """A curve built only from resolved predictions is self-selected, and an
+    operator reading the mean has no way to know unless told."""
+    import sqlite3
+
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    cli.main([
+        "--db", db_path, "predict", "--cell", cell_id,
+        "--claim", "overdue claim", "--probability", "0.9",
+    ])
+    capsys.readouterr()
+
+    # Move the deadline into the past rather than racing the wall clock: a
+    # sub-second deadline is not reliably elapsed by the time the next command
+    # runs, and sleeping to make it so would be slower and no more truthful.
+    conn = sqlite3.connect(db_path)
+    conn.execute("UPDATE prediction_register SET resolves_by_utc = '2020-01-01T00:00:00+00:00'")
+    conn.commit()
+    conn.close()
+
+    cli.main(["--db", db_path, "calibration"])
+    out = capsys.readouterr().out
+    assert "overdue: 1" in out
+    assert "WARNING" in out
+    assert "self-selected" in out
+
+
+def test_predict_refuses_certainty_through_the_cli(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    capsys.readouterr()
+    assert cli.main([
+        "--db", db_path, "predict", "--cell", cell_id,
+        "--claim", "certain", "--probability", "1.0",
+    ]) == 1
+    assert "strictly between 0 and 1" in capsys.readouterr().err

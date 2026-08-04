@@ -153,3 +153,27 @@ actually queued for building — this file is memory, not a backlog to work thro
   to `external_expense`, so misclassifying `infrastructure_reserve` leaves `verify-golden-run`
   passing while `spend_by_book` returns `{}`. Extending the scenario so the *killed* Cell also
   consumes metered resources would close it, at the cost of an A12 expectation migration.
+- **Point-estimate predictions cannot be scored by Brier or log.** §8.5 names exactly those two
+  rules and both are defined over binary outcomes, so `prediction.py` takes threshold claims
+  ("revenue >= 50") rather than "I expect 50". Scoring a *distribution* or point estimate properly
+  needs CRPS or an interval score, which the spec does not authorise — a real expressiveness limit
+  (a Cell cannot say "about 50, give or take 10"), and it should be a spec amendment rather than an
+  implementation choice made quietly.
+- **Nothing forces a prediction to be resolved.** `overdue()` and the CLI warning make omission
+  visible, but a Cell that never resolves anything simply has no scores. Once selection reads
+  calibration, unresolved-past-deadline should probably count as a *failed* prediction rather than
+  as no evidence — otherwise the optimal strategy is to predict constantly and resolve nothing.
+  That is a policy decision for the selection mechanism, and it belongs with §10.5 death criteria.
+- **Predictions are not linked to the spend they are about.** A Cell can register a prediction
+  without acting on it, and the register has no notion of "this prediction preceded that model
+  call". Two-stage spend (predict cheaply, then act) needs that link to be enforceable rather than
+  conventional — an `experiment_id` column exists and is the obvious hook once experiment tracking
+  lands.
+- **Automatic resolution from ledger state.** Outcomes are supplied by the caller, exactly like an
+  invoice figure. Many claims ("revenue >= 50 by epoch 4") are decidable directly from the ledger,
+  and resolving those automatically would remove both the manual step and the temptation not to
+  take it. Needs a claim grammar rather than free text, which is a bigger commitment than this
+  slice should make.
+- **§25's promotion ladder does not consume calibration yet.** §25.2 requires reality gap per rung
+  and §8.5 says the register feeds the ladder; the ladder does not exist. When it does, the
+  consumer wants per-rung scoping, which the current `scores(cell_id)` shape does not offer.
