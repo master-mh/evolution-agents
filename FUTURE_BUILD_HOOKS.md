@@ -139,3 +139,17 @@ actually queued for building — this file is memory, not a backlog to work thro
   quality of that shadow price is now load-bearing in a way it never was when USD_REAL caps were the
   real constraint. Reconciling it against real sandbox/GPU logs (Amendment A6's other half) moves up
   in priority the moment Cells run local inference in a loop.
+- **`spend_by_book`'s account classification is unenforced at write time.** `unclassified_accounts()`
+  fails a test if a *fixed* account is unclassified, but a reservation can settle to any account
+  `accounts.is_known_account` accepts — including another Cell's cash. Such a settlement is silently
+  non-spend, which is right for a transfer and wrong if it was payment for work. A settle-time
+  assertion, or a `spend|transfer` argument on `reservations.settle`, would make the intent explicit
+  instead of inferred from the destination.
+- **Cell-to-Cell payment has no representation.** Once Cells trade with each other (§31's M2M
+  commerce), one Cell's spend is another's revenue, and today the ledger records only a cash
+  movement that reads as spend for neither. Fitness across a trading colony needs this before
+  internal markets mean anything.
+- **The golden run does not cover the spend/capital classification.** Its coroner'd Cell only spends
+  to `external_expense`, so misclassifying `infrastructure_reserve` leaves `verify-golden-run`
+  passing while `spend_by_book` returns `{}`. Extending the scenario so the *killed* Cell also
+  consumes metered resources would close it, at the cost of an A12 expectation migration.

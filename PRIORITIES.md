@@ -75,12 +75,21 @@
   Hand-verified on the live colony: **net position +74 minor units, the first profit figure MITOSIS
   could compute.**
 
+- [x] **`ledger.spend_by_book` account-level fix** — DONE (2026-08-05), landed before anything
+  selects on profit. `accounts.py` gained `SPEND_DESTINATIONS`/`CAPITAL_ACCOUNTS` (each with its
+  reason) plus `unclassified_accounts()`, and `spend_by_book` is now the **signed** sum over spend
+  destinations — so a reconciliation credit reduces it and a capital movement never enters it.
+  Neither half was fixable alone: dropping the sign filter without scoping by account makes a
+  freshly-funded Cell read **−1000**. **The framing mattered more than the query:** the distinction
+  is consumption vs capital movement, *not* internal vs external — the gateway settles every
+  RESOURCE metering into `infrastructure_reserve`, so the internal/external framing I started with
+  would have erased every Cell's entire compute consumption, exactly where Ollama makes RESOURCE the
+  only remaining bound. Teeth-checking also surfaced a second, previously unnamed overstatement: the
+  old query counted `colony_treasury` capital returns as spend (1600 vs 700). Golden-run hash
+  unchanged, and notably the golden run does *not* cover this — misclassifying an account leaves it
+  passing. 453 tests passing (5 new). Hand-verified live: a 1¢ credit moves USD_REAL spend 1 → 0.
+
 ## Next
-- [ ] **`ledger.spend_by_book` sign bug is now on the critical path.** It was logged as "coroner
-  reports only, never enforcement" — that stops being true the moment fitness (revenue − spend)
-  drives selection, because a Cell that received a reconciliation credit reads as having spent more
-  than it did. Needs §31's account-level distinction between funding sources and spend destinations.
-  **Land this before anything selects on profit.**
 - [ ] **A Cell that acts.** The missing subsystem: an agent loop that reads a genome, calls the
   gateway, and records a deliberable. Keep genome content as *data the loop interprets*, never code
   it executes — Charter C15 holds only while genomes are inert, and the sandbox behind it (C12) is

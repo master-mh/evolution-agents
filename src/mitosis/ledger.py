@@ -24,7 +24,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from . import ids
-from .accounts import cell_cash, cell_committed
+from .accounts import SPEND_DESTINATIONS, cell_cash, cell_committed
 from .models import Book, Entry, EntrySpec, Transaction
 
 
@@ -352,43 +352,45 @@ def get_balance(conn: sqlite3.Connection, account_id: str, book: Book) -> int:
 
 
 def spend_by_book(conn: sqlite3.Connection, cell_id: str) -> dict[str, int]:
-    """Total minor units a Cell has genuinely spent (settled to an account
-    outside its own cell:{id}:cash/committed pair), grouped by book.
+    """Net minor units a Cell has spent — value it *consumed* — by book.
 
-    Internal cash<->committed moves (reserve/release) and inbound birth
-    funding are entries tagged with this cell_id too, but they land on the
-    cell's own accounts or are negative — excluding both leaves only the
-    positive entries that represent money leaving the cell's control for
-    good, e.g. a reservation's settlement destination entry. Used for
-    coroner reports (SPEC.md §10.5) via lifecycle.kill.
+    Measured as the **signed** sum of this Cell's entries landing on a
+    `accounts.SPEND_DESTINATIONS` account. Signed, so a reconciliation credit
+    reduces the figure; scoped by destination, so capital movements do not
+    inflate it.
 
-    **Known limitation: this overstates spend for a Cell that received a
-    reconciliation credit.** When an invoice comes in below what the ledger
-    recorded, reconciliation.py posts a negative adjustment — cash back to
-    the Cell, `external_expense` debited. The refund's positive leg lands on
-    the Cell's own cash and is excluded here (correctly), but the negative
-    `external_expense` leg is dropped by `amount_minor_units > 0`, so the
-    refund never reduces the figure. Removing that filter is not the fix:
-    birth funding's negative leg is tagged with the same cell_id, so
-    dropping the sign filter would make a freshly-funded Cell read as having
-    spent a negative amount. Telling the two apart needs an account-level
-    distinction between funding sources and spend destinations that §31's
-    account list does not currently draw, so it is logged in
-    FUTURE_BUILD_HOOKS rather than guessed at here. The impact is bounded:
-    this figure feeds coroner reports only, never an enforcement check.
+    The earlier version filtered `amount_minor_units > 0` over every account
+    outside the Cell's own pair, and that was wrong in a way worth recording
+    because the two errors hid each other. A reconciliation credit debits
+    `external_expense` with a negative amount, so the sign filter dropped it and
+    a refunded Cell kept its full recorded spend. But simply removing the filter
+    would have made a freshly-funded Cell read as having spent a *negative*
+    amount, because birth funding's negative leg carries the same cell_id.
+    Neither half is fixable alone: the sign matters only once the account is
+    known, which is what `accounts.SPEND_DESTINATIONS` now supplies.
+
+    The distinction being drawn is consumption versus capital movement, not
+    internal versus external — settling metered compute into
+    `infrastructure_reserve` never leaves the colony but is unambiguously cost
+    to the Cell. See `accounts.py` for the per-account reasoning.
+
+    Feeds coroner reports (SPEC.md §10.5) today. **It is about to feed fitness**,
+    which is why this was worth fixing before selection reads it: a Cell that
+    was refunded would otherwise look more expensive than it was, and selection
+    would kill the wrong Cells with the error compounding down every generation.
     """
-    own_accounts = (cell_cash(cell_id), cell_committed(cell_id))
+    destinations = tuple(sorted(SPEND_DESTINATIONS))
+    placeholders = ", ".join("?" for _ in destinations)
     rows = conn.execute(
-        """
+        f"""
         SELECT t.book AS book, COALESCE(SUM(e.amount_minor_units), 0) AS spent
         FROM ledger_entries e
         JOIN ledger_transactions t ON t.transaction_id = e.transaction_id
         WHERE e.cell_id = ?
-          AND e.amount_minor_units > 0
-          AND e.account_id NOT IN (?, ?)
+          AND e.account_id IN ({placeholders})
         GROUP BY t.book
         """,
-        (cell_id, *own_accounts),
+        (cell_id, *destinations),
     ).fetchall()
     return {r["book"]: r["spent"] for r in rows}
 
