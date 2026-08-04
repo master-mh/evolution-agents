@@ -2,81 +2,91 @@
 
 Keeps only the current entry so this file stays small enough to read in full every session.
 Earlier slices (1–10, plus CI wiring, seeded ids, reproduction/lineage, the full Phase 4 gateway
-arc, real-spend type registration, the first real paid call, revenue + Ollama, and the
-`spend_by_book` account fix, 2026-07-21 through 2026-08-05):
+arc, real-spend type registration, the first real paid call, revenue + Ollama, the `spend_by_book`
+account fix, and the prediction register, 2026-07-21 through 2026-08-05):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-05 — Prediction register: selection pressure without a customer
+## 2026-08-05 — Death criteria: the evolutionary loop closes
 
-Amendment A14 / §8.5, normative since the v0.2 spec and unbuilt until now. **The reason to build it
-before an agent loop exists:** selection needs a fitness signal, revenue needs a customer, and there
-isn't one — but calibration needs neither. A Cell that predicts its own outcomes badly is
-demonstrably worse than one that predicts them well, whatever it is doing and whether or not anyone
-pays for it. This is the cheapest real selection pressure available, and it can start
-discriminating between Cells on day one.
+Reproduction has worked since the lineage slice. What was missing was any principled reason for a
+Cell to stop — so a colony could grow but never select. This is the other half, and with it the
+loop is closed: birth, spend, earn, predict, die.
 
-- **`prediction.py` + migration 0012 (`prediction_register`, §31).** Register before the outcome is
-  known, resolve once, score with both rules §8.5 names — Brier `(p−o)²` and log `−ln(p_actual)`.
-  `calibration()` returns §8.5's curve; `scores()` the means.
-- **Binary claims, because the spec named the rules.** Brier and log are defined over binary
-  outcomes, so a continuous quantity is predicted by stating a threshold — "revenue >= 50 minor
-  units" — not a point estimate. This is the spec's constraint, not an implementation shortcut, and
-  worth being explicit about: **a point revenue estimate cannot be scored by either named rule.**
-  Doing that properly needs CRPS or an interval rule, which §8.5 does not authorise, so it is logged
-  rather than invented.
-- **Certainty is refused.** `probability` must be strictly inside (0, 1), enforced in Python *and*
-  by a schema CHECK. The reason is not fastidiousness: the log score of a confident-and-wrong
-  prediction is infinite, one such prediction would pin a Cell's mean at −inf permanently, and **a
-  population containing several infinitely-bad Cells cannot be ordered — so it cannot be selected
-  on.** `log_score` also clamps, so a row that somehow escaped the CHECK scores very badly rather
-  than uncomparably.
-- **Hash-chained, like the ledger, for the same reason.** A per-row hash proves nothing against an
-  editor who recomputes it; chaining means altering any prediction invalidates every prediction
-  after it. That is what turns "register-before-outcome" from a convention into something
-  `verify_chain` can check. **The hash covers the prediction and never the outcome** — including the
-  outcome would defeat its only purpose, and would also make recording what happened look like
-  tampering (pinned by `test_resolving_does_not_break_the_chain`).
-- **The anti-gaming surface, which is the part that decides whether any of this means anything.** A
-  Cell that resolves only its winners has a beautiful calibration curve and a pile of unresolved
-  losers behind it. `overdue()` lists predictions past their own deadline, `scores()` reports
-  `unresolved` and `overdue` *beside* the means rather than quietly omitting them, and the CLI
-  prints an explicit warning that the scores are self-selected and unreliable while any are
-  outstanding. Nothing here *forces* resolution — that is a policy question for whatever drives
-  selection — but the omission is now impossible to miss.
-- **Calibration is returned as buckets, not one number, because the shape is the diagnosis.**
-  Systematic overconfidence and systematic underconfidence can produce the *same* mean Brier score
-  and call for opposite corrections. `test_calibration_curve_separates_confidence_from_accuracy`
-  pins exactly that case: ten claims at p=0.9 that come true half the time.
-- **CLI:** `predict`, `resolve-prediction` (mutually exclusive `--occurred` / `--did-not-occur`, so
-  an outcome cannot be omitted by accident), and `calibration`, which prints the curve, the scores,
-  the overdue warning, and the chain-validity check.
-- **481 tests passing** (28 new, 0 removed; up from 453). New `tests/test_prediction.py` (25),
-  `test_cli.py` +3.
-- **Golden run extended through a reviewed A12 migration** (expectation version 3 → 4): three
-  predictions — one resolved true, one resolved false, one left deliberately open so `unresolved`
-  appears in the snapshot and a future change cannot silently drop the anti-gaming surface. Diff
-  reviewed section by section: only `predictions` and two new `audit_event_types` changed, while
-  `balances`, `transaction_types`, `reservations`, `cells`, `resource_usage`, `model_calls` and
-  `coroner_reports` are **absent from the diff entirely** — the evidence that predictions move no
-  money. Scores were re-derived by hand against the snapshot: `(0.8−1)² = 0.04`, `−ln(0.8) =
-  0.223144`, `(0.6−0)² = 0.36`, `−ln(0.4) = 0.916291`. Float scores are rounded to six places in the
-  snapshot so a last-place difference across platforms cannot break replay for a reason unrelated
-  to behaviour.
-- **Teeth-checked three ways:** making the hash cover the outcome fails three chain tests including
-  the resolve-is-not-tampering one; removing the chaining check fails the tamper test; allowing
-  certainty fails at the schema CHECK — which incidentally proved the two guards are independent,
-  since the test then fails on the wrong exception type.
-- **Hand-verified on the live colony** that made the real paid call. Migration 0012 applied cleanly
-  to a genuine pre-0012 database. Two predictions registered and resolved (0.85→occurred, Brier
-  0.0225; 0.3→did not occur, Brier 0.09; mean 0.0563 ✓). Then the property that matters: editing a
-  resolved prediction's probability directly in SQL made `verify_chain` return **False**, and
-  reverting it returned **True**. Tamper-evidence demonstrated on real data, not only in a test.
-- One test bug of my own, worth recording: the overdue CLI test originally set a sub-second deadline
-  and raced the wall clock, which had not elapsed by the next command. Rewritten to move the
-  deadline into the past — deterministic, faster, and a more honest depiction of what an overdue
-  prediction actually is.
+**Reading §10.5 first changed the design substantially, and the spec forbids what "selection on
+fitness" would naturally mean.**
+
+- **§10.5: "Estimated negative EV *alone* must not kill a Cell"** unless evidence is sufficiently
+  strong *and* an independent Auditor or evaluator concurs. So compute-fitness-and-cull-the-bottom
+  — the obvious implementation, and the one the previous three slices might look like they were
+  building toward — is exactly what the spec prohibits. An estimate is not evidence, and a colony
+  that culls on estimates selects for Cells that look good to the estimator. `reap` therefore kills
+  only on realised facts, and negative EV is a separate entry point that structurally cannot be
+  reached without a concurring Auditor.
+- **§10.2: "Do not collapse all dimensions into one scalar."** So domination is **Pareto**
+  domination — at least as good on every measured dimension, strictly better on one — rather than a
+  ranking on a weighted sum. A Cell that earns more but predicts worse is *not* dominated. That is
+  the constraint doing real work rather than being cited.
+- **§10.3: Explorers "need no immediate revenue."** Handled without a special case: comparisons are
+  restricted to near-duplicates (same genome hash, which in this kernel is effectively same-type per
+  ADR-018/019), so an Explorer is only ever compared with another Explorer.
+- **§9.3: "A proposed child's forecast can never trigger a kill."** Every input to `findings` comes
+  from the ledger or the resolved prediction register. Nothing forecasts.
+
+### What landed
+
+- **`death.py`.** `DeathCriterion` covers all of §10.5's criteria — including the unimplementable
+  ones, so a coroner report's `cause_of_death` uses one vocabulary from the start and the gap is
+  visible in the type rather than only in prose. `findings()` returns the criteria a Cell currently
+  meets *with the realised evidence*, which reaches the coroner report, so a death always carries
+  the numbers that caused it. `reap()` is **dry-run by default**: a death is irreversible, files a
+  coroner report, and Charter C8 makes the Cell permanently inert, so the first time a colony can
+  end its own Cells is not the moment to discover a criterion was too eager.
+- **Two criteria implemented, and the honest list of what is not.** `budget_exhausted` (holds
+  nothing, nothing pending) and `dominated_by_near_duplicate` (Pareto, realised). Not implemented:
+  `failed_validation_gates` and `evidence_not_reproducible` need experiment tracking (Phase 2);
+  `policy_violation` needs §31's `policy_violations` table, and inferring it from a quarantine
+  reason would be guessing, since `quarantine` takes free text and is also used for poison events;
+  `displacement` is §9.3's own slice — **which this unblocks**, via `is_objectively_failing`, the
+  predicate §9.3 was waiting on.
+- **`kill_for_negative_ev` is the guarded path**, and its independence checks are its substance: the
+  auditor cannot be the subject, must be alive, and must be an auditor or immune Cell (§10.4). The
+  concurrence is written to the audit trail and the auditor's id into the coroner report, so a death
+  on an estimate can always be traced to who agreed to it.
+- **A Cell mid-operation is never exhausted.** Zero cash with funds committed means a call is in
+  flight; killing then would strand its reservation.
+- **CLI:** `reap` (dry-run unless `--execute`) and `cell-fitness`, which prints revenue, spend, net
+  contribution and calibration side by side — deliberately not a score, per §10.2.
+
+### A trap caught while writing it
+
+Domination on net contribution alone makes an **idle** Cell — spent nothing, earned nothing, net
+zero — dominate one that invested and has not yet returned. That selects for doing nothing, which in
+an evolutionary colony is the failure mode that quietly ends the experiment while every invariant
+stays green. Fixed with `_has_realised_record`: a Cell with no realised record is not superior, it
+is unmeasured. Pinned by `test_an_idle_cell_does_not_dominate_one_that_invested`, and the teeth
+check confirms removing the gate fails it.
+
+### Verification
+
+- **501 tests passing** (20 new, 0 removed; up from 481). Golden-run hash unchanged — correct, since
+  the golden scenario contains no Cell meeting an objective criterion and `reap` is never called;
+  a changed hash would have meant death criteria firing somewhere they should not.
+- **Teeth-checked four ways**, one per constitutional constraint: making negative EV automatic fails
+  `test_negative_ev_is_never_reachable_from_reap`; removing the idle gate fails the idle-domination
+  test; collapsing calibration out of the comparison (a scalar collapse, §10.2) fails
+  `test_domination_requires_being_better_on_every_dimension`; allowing self-concurrence fails the
+  own-death test.
+- **The most important test is `test_losing_money_is_not_a_death_criterion`.** A Cell that spent 600
+  and earned 100 survives, because §10.5 does not make that fatal. Breaking it would cull on
+  estimates and nothing would report it — the colony would simply stop exploring.
+- **Hand-verified end to end** on a scratch colony: drained a Cell, `reap` reported it without
+  killing, `reap --execute` killed it, and the coroner report recorded both the criterion and its
+  evidence (`budget_exhausted: {'book': 'USD_SIM', 'cash': 0, 'committed': 0}`) with
+  `spend_by_book` reading `{"USD_SIM": 500}` — the function fixed two slices ago now feeding a real
+  death. On the live colony, `cell-fitness` reads 75 revenue / 0 spend / mean Brier 0.0563 and
+  `reap` correctly finds nothing.
 - Not yet committed — reporting for review first.
-- Next: §10.5 death criteria. With calibration and `spend_by_book` both trustworthy and `kill()`
-  already built, death is what closes the evolutionary loop — reproduction already works, so a
-  colony that can select is a colony that can evolve. The agent loop remains the missing subsystem,
-  and nothing here changes that: a Cell still cannot make its own predictions.
+- Next: §9.3 displacement is now unblocked and is the natural follow-on — a birth denied at capacity
+  can evict an objectively-failing Cell rather than simply waiting. Beyond that the agent loop is
+  still the missing subsystem, and it is worth being plain that **nothing here selects on its own**:
+  `reap` must be called, and no Cell yet acts, predicts, or earns without a human driving it.

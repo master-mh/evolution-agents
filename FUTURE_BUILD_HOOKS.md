@@ -177,3 +177,26 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **§25's promotion ladder does not consume calibration yet.** §25.2 requires reality gap per rung
   and §8.5 says the register feeds the ladder; the ladder does not exist. When it does, the
   consumer wants per-rung scoping, which the current `scores(cell_id)` shape does not offer.
+- **`reap` selects nothing on its own.** It must be called, by a human or a scheduler that does not
+  exist. That is deliberate for a first slice — death is irreversible — but a colony that only dies
+  when someone runs a command is not evolving, and whatever eventually drives it needs a policy for
+  cadence (per epoch? per birth attempt?) that §10.5 does not specify.
+- **Domination compares only two dimensions.** §10.2's fitness vector names ten (return on committed
+  capital, time to settlement, maximum drawdown, refund rate, unsettled liability, human minutes,
+  retention, reproducibility, dependency concentration); this kernel can measure net contribution and
+  calibration. Pareto domination over a *narrow* vector is more aggressive than over a wide one — a
+  Cell dominated on 2 of 2 dimensions might survive on 4 of 10 — so the criterion will get *less*
+  eager as more dimensions land, not more. Worth stating because the intuition runs the other way.
+- **`budget_exhausted` cannot distinguish "spent it all" from "never funded".** A Cell created and
+  never topped up looks identical to one that consumed a full budget. Today both are arguably
+  exhausted; once stages exist (§25), "stage budget" is a per-stage allocation and the distinction
+  becomes real.
+- **Nothing reclaims a dead Cell's residual RESOURCE or USD_SIM balance.** `kill()` never swept
+  reservations or reclaimed balances (already logged), and `reap` inherits that: a Cell killed for
+  USD_REAL exhaustion may still hold RESOURCE. Harmless while books are separate, but it leaks
+  capacity in a colony at carrying capacity.
+- **A near-duplicate is currently "same genome hash", which is effectively "same type."** Phase 1
+  genome content is a placeholder (ADR-018/019), so every Explorer shares one hash. Once genomes
+  carry real strategy content, same-hash becomes *much* narrower and domination will fire far less
+  often — the criterion silently changes strength as genomes gain content, which is worth knowing
+  before tuning anything against its current behaviour.

@@ -104,16 +104,32 @@
   passing (28 new). Hand-verified live: editing a resolved prediction breaks the chain, reverting
   restores it.
 
+- [x] **Death criteria (§10.5, A15)** — DONE (2026-08-05); the evolutionary loop is closed
+  (reproduction already worked). **Reading §10.5 changed the design: the spec forbids
+  compute-fitness-and-cull-the-bottom.** "Estimated negative EV *alone* must not kill a Cell"
+  without strong evidence *and* an independent Auditor concurring, so `reap` kills only on realised
+  facts and `kill_for_negative_ev` is a separate path that structurally cannot be reached without a
+  living, non-self, auditor/immune concurrer (recorded in the audit trail and the coroner report).
+  §10.2 forbids scalar collapse, so domination is **Pareto** across net contribution and calibration
+  — earning more but predicting worse is *not* domination. §10.3's Explorers are protected for free
+  by restricting comparison to same-genome near-duplicates. Implemented: `budget_exhausted`,
+  `dominated_by_near_duplicate`. Not implemented, with reasons recorded: validation gates and
+  evidence reproduction (need Phase 2 experiments), policy violation (needs §31's `policy_violations`
+  table; inferring it from a free-text quarantine reason would be guessing). **Caught while
+  building: domination on net contribution alone lets an *idle* Cell dominate one that invested —
+  selecting for doing nothing.** Fixed and pinned. `reap` is dry-run by default; death is
+  irreversible. 501 tests passing (20 new); golden hash unchanged. Hand-verified end to end.
+
 ## Next
+- [ ] **§9.3 displacement — now unblocked.** `death.is_objectively_failing` is the predicate §9.3
+  was waiting on ("a child may displace only a Cell already failing objective criteria"). A birth
+  denied at capacity can now evict rather than wait. ADR-009/Amendment A2.
 - [ ] **A Cell that acts.** The missing subsystem: an agent loop that reads a genome, calls the
   gateway, and records a deliberable. Keep genome content as *data the loop interprets*, never code
   it executes — Charter C15 holds only while genomes are inert, and the sandbox behind it (C12) is
   Phase 5.
 - [ ] **Structured proposals** — a Cell proposing strategy needs validated fields back, not prose.
   Logged as out-of-scope in the gateway slice; now on the critical path for self-direction.
-- [ ] **Fitness + death criteria (§10.5)** — with revenue and spend both recorded, fitness is
-  computable and `kill()` already exists. Revenue + death closes the evolutionary loop, since
-  reproduction already works.
 
 - [ ] **Aggregate-invoice reconciliation** — the half ADR-023 provably cannot do. Per-call reconciliation leaves ADR-020's sub-cent rounding overstatement exactly where it was (3.5¢ reconciles back through the same ceiling to the 4¢ already recorded); only an invoice *total* spanning many calls can post the correction. Additive: needs an invoice-level record, reusing all the per-call sign handling and breaker registration.
 - [ ] **Forward recovery for the gateway** — ADR-022's deferred alternative, which belongs with the reconciliation plumbing. Rollback is atomic but loses the provider's reported usage, so a crashed call still needs a human. Recording the response durably before applying the accounting (a `settling` status) would let recovery finish the settlement automatically.

@@ -19,6 +19,7 @@ from pathlib import Path
 from . import (
     clock,
     db,
+    death,
     events,
     gateway,
     genome,
@@ -360,6 +361,66 @@ def cmd_reproduce(args: argparse.Namespace) -> None:
         print("  (unmutated — shares the parent's genome, per content addressing)")
 
     conn.close()
+
+
+def cmd_reap(args: argparse.Namespace) -> None:
+    """Kill Cells meeting an objective §10.5 death criterion.
+
+    Dry-run by default. A death is irreversible — a coroner report is filed and
+    Charter C8 makes the Cell permanently inert — so ending Cells requires
+    saying so explicitly.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    found = death.reap(conn, dry_run=not args.execute)
+    if not found:
+        print("No Cell meets an objective death criterion (SPEC.md §10.5).")
+        print("Losing money is not a criterion; having none left is.")
+        return
+
+    verb = "Killed" if args.execute else "Would kill"
+    print(f"{verb} {len(found)} Cell(s):")
+    for finding in found:
+        print(f"  {finding.cell_id}")
+        print(f"    criterion: {finding.criterion.value}")
+        for key, value in sorted(finding.evidence.items()):
+            print(f"      {key}: {value}")
+    if not args.execute:
+        print("\nDry run — nothing was killed. Re-run with --execute to act.")
+
+
+def cmd_cell_fitness(args: argparse.Namespace) -> None:
+    """A Cell's realised record. Not a score — §10.2 forbids collapsing the
+    dimensions into one, so they are printed side by side."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    cell = lifecycle.get_cell(conn, args.cell)
+    if cell is None:
+        raise CliError(f"unknown cell: {args.cell}")
+
+    record = death.contribution(conn, cell)
+    print(f"Cell {cell.cell_id} ({cell.cell_type.value}, {cell.status.value})")
+    print(f"  book:              {cell.book.value}")
+    print(f"  revenue:           {record.revenue_minor_units} minor units")
+    print(f"  spend:             {record.spend_minor_units} minor units")
+    print(f"  net contribution:  {record.net_contribution} minor units")
+    if record.mean_brier is None:
+        print(f"  calibration:       no resolved predictions "
+              f"({record.unresolved_predictions} outstanding)")
+    else:
+        print(f"  calibration:       mean Brier {record.mean_brier:.4f} "
+              f"over {record.resolved_predictions} resolved "
+              f"({record.unresolved_predictions} outstanding)")
+
+    found = death.findings(conn, cell.cell_id)
+    if found:
+        print("\n  meets objective death criteria (§10.5):")
+        for finding in found:
+            print(f"    {finding.describe()}")
+    else:
+        print("\n  meets no objective death criterion")
 
 
 def cmd_predict(args: argparse.Namespace) -> None:
@@ -994,6 +1055,22 @@ def build_parser() -> argparse.ArgumentParser:
     calibration_parser.add_argument("--cell", default=None, help="scope to one cell_id")
     calibration_parser.add_argument("--buckets", type=int, default=10)
     calibration_parser.set_defaults(func=cmd_calibration)
+
+    reap_parser = subparsers.add_parser(
+        "reap", help="kill Cells meeting an objective death criterion (SPEC.md §10.5)"
+    )
+    reap_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="actually kill them; without this the command only reports what it would do",
+    )
+    reap_parser.set_defaults(func=cmd_reap)
+
+    fitness_parser = subparsers.add_parser(
+        "cell-fitness", help="a Cell's realised record: revenue, spend, calibration"
+    )
+    fitness_parser.add_argument("--cell", required=True)
+    fitness_parser.set_defaults(func=cmd_cell_fitness)
 
     call_model_parser = subparsers.add_parser(
         "call-model",
