@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from mitosis import cli
 
 
@@ -744,3 +746,83 @@ def test_dispute_then_reconcile_resolves_a_crashed_call(tmp_path, capsys, monkey
     out = capsys.readouterr().out
     assert "Nothing outstanding." in out
     assert "frozen in unreconciled open reservations: 0" in out
+
+
+def test_record_revenue_credits_the_cell_and_prints_running_total(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+
+    assert cli.main([
+        "--db", db_path, "record-revenue", "--cell", cell_id,
+        "--amount", "12.50", "--source", "acme-inv-7", "--note", "first sale",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "Recorded revenue" in out
+    assert "1250 minor units" in out
+    assert "acme-inv-7" in out
+    assert "first sale" in out
+    assert "cell earned to date: 1250" in out
+
+    cli.main([
+        "--db", db_path, "record-revenue", "--cell", cell_id,
+        "--amount", "0.50", "--source", "acme-inv-8",
+    ])
+    assert "cell earned to date: 1300" in capsys.readouterr().out
+
+
+def test_record_revenue_requires_a_source_and_refuses_nonpositive(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit):
+        cli.main(["--db", db_path, "record-revenue", "--cell", cell_id, "--amount", "1.00"])
+
+    assert cli.main([
+        "--db", db_path, "record-revenue", "--cell", cell_id,
+        "--amount", "0.00", "--source", "x",
+    ]) == 1
+    assert "must be positive" in capsys.readouterr().err
+
+
+def test_record_revenue_to_unknown_cell_exits_nonzero(tmp_path, capsys):
+    db_path, _ = _init_and_cell(tmp_path, capsys)
+    capsys.readouterr()
+    assert cli.main([
+        "--db", db_path, "record-revenue", "--cell", "nope",
+        "--amount", "1.00", "--source", "x",
+    ]) == 1
+    assert "no such cell" in capsys.readouterr().err
+
+
+def test_ollama_provider_needs_no_spend_confirmation(tmp_path, capsys):
+    """Local inference costs nothing, so gating it behind
+    --yes-spend-real-money would train the operator to pass that flag by
+    habit — which is the flag protecting real money."""
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    capsys.readouterr()
+
+    # Reaches the provider rather than being refused for want of a confirmation
+    # flag. With no server running the call is *recorded as failed* and exits 0
+    # — a provider that is down is an outcome the gateway handles, not a CLI
+    # usage error, the same shape the live 401 took.
+    assert cli.main([
+        "--db", db_path, "call-model", "--cell", cell_id,
+        "--provider", "ollama", "--model", "llama3.2", "--prompt", "hi",
+    ]) == 0
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "yes-spend-real-money" not in combined
+    assert "status:    failed" in captured.out
+    assert "ollama serve" in captured.out, "the error names the fix"
+
+
+def test_unknown_provider_lists_all_three(tmp_path, capsys):
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    _fund_for_calls(db_path, cell_id)
+    capsys.readouterr()
+    assert cli.main([
+        "--db", db_path, "call-model", "--cell", cell_id,
+        "--provider", "openai", "--prompt", "hi",
+    ]) == 1
+    err = capsys.readouterr().err
+    assert "mock" in err and "anthropic" in err and "ollama" in err

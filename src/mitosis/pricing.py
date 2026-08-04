@@ -72,6 +72,28 @@ PRICING_TABLE: dict[str, dict[str, ModelPrice]] = {
         "claude-sonnet-5": ModelPrice("3", "15"),
         "claude-haiku-4-5": ModelPrice("1", "5"),
     },
+    # Locally hosted via Ollama. Priced at zero because the colony pays for the
+    # hardware, not per token — there is no invoice and no per-call marginal
+    # cost, so a nonzero USD_REAL price would be a fiction.
+    #
+    # Models are registered explicitly rather than priced zero by wildcard, and
+    # that friction is deliberate: an Ollama-compatible endpoint can front a
+    # *paid* hosted model, and a wildcard would silently price it at zero and
+    # blind Charter C5's caps to real spend. An unknown model failing loudly is
+    # the safe direction. Adding one is a single line here.
+    #
+    # A zero price does NOT mean a free call in the RESOURCE book: local compute
+    # is still metered and shadow-priced (§2.2), so a runaway local Cell is
+    # still bounded by its RESOURCE budget.
+    "ollama": {
+        "llama3.2": ModelPrice("0", "0"),
+        "llama3.1": ModelPrice("0", "0"),
+        "qwen2.5": ModelPrice("0", "0"),
+        "mistral": ModelPrice("0", "0"),
+        "phi4": ModelPrice("0", "0"),
+        "gemma3": ModelPrice("0", "0"),
+        "deepseek-r1": ModelPrice("0", "0"),
+    },
 }
 
 

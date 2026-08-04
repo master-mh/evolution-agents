@@ -118,3 +118,24 @@ actually queued for building — this file is memory, not a backlog to work thro
   see the kernel's single largest real-spend path. It is covered behaviourally instead. A future type
   that also resolves its destination at runtime would likewise be invisible to that check and would
   rest entirely on the classification test forcing a human decision.
+- **`test_revenue_does_not_move_the_spend_breaker` is a backstop, not a guard.** It can only fail if
+  revenue *both* posts to `external_expense` *and* is registered as a real-spend type; each half
+  alone is caught by `tests/test_real_spend_registration.py` instead. That layering is fine, but it
+  means the breaker test would go quietly vacuous if the registration guard were ever weakened, and
+  nothing currently connects the two.
+- **Revenue has no negative counterpart.** A refund, chargeback or clawback is a real commercial
+  event and `record_revenue` refuses non-positive amounts outright. The signed-adjustment machinery
+  already exists in `reconciliation.py` and is the obvious model, but a Cell whose revenue can be
+  clawed back also needs its fitness recomputed, so this waits for fitness to exist.
+- **Ollama's `resolved_model` drift is recorded and unused, same as Anthropic's.** A local tag like
+  `llama3.2:latest` silently changes what it points at when a user re-pulls, which is §8.4 regime
+  change with no watcher — and unlike a hosted API there is no announcement to notice.
+- **The pricing table's Ollama entries will drift from what is actually pulled.** Registration is
+  deliberate (a wildcard would blind C5 to a paid model behind an Ollama-compatible endpoint), but
+  nothing reconciles the registered list against `ollama list`, so a model a Cell wants may simply
+  fail. A `mitosis providers --check` that diffs the two would make the friction diagnosable.
+- **A local provider's RESOURCE shadow price is caller-supplied, and now it matters more.** With
+  Ollama free in USD_REAL, the RESOURCE book is the *only* thing bounding a local Cell — so the
+  quality of that shadow price is now load-bearing in a way it never was when USD_REAL caps were the
+  real constraint. Reconciling it against real sandbox/GPU logs (Amendment A6's other half) moves up
+  in priority the moment Cells run local inference in a loop.

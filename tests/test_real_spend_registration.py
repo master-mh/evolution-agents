@@ -57,6 +57,12 @@ _EXTERNAL_EXPENSE = "external_expense"
 # which is a different account from `external_expense` and flows the other way.
 _EXEMPT_TRANSACTION_TYPES = {
     "colony_seed_capital": "external_capital -> seed_bank: capital entering the colony, not leaving",
+    "cell_revenue": (
+        "revenue -> cell cash: money entering the colony. USD_REAL-capable and it does "
+        "raise a Cell's spending power via Charter C4's balance check, but it never "
+        "touches external_expense, and Charter C5's caps bound gross spend rather than "
+        "a net position — earning must not buy permission to spend past a cap"
+    ),
     "cell_funding": "seed_bank -> cell cash: internal transfer",
     "cell_birth_funding": "funding account -> cell cash: internal transfer",
     "cell_reproduction_funding": "parent cash -> child cash: internal transfer (ADR-019)",

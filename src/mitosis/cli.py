@@ -35,8 +35,10 @@ from . import (
     reconciliation,
     reservations,
     resource_metering,
+    revenue,
     sweeper,
 )
+from .accounts import cell_cash
 from .models import (
     DEFAULT_POPULATION_LIMITS,
     DEFAULT_REAL_SPEND_LIMITS,
@@ -359,6 +361,43 @@ def cmd_reproduce(args: argparse.Namespace) -> None:
     conn.close()
 
 
+def cmd_record_revenue(args: argparse.Namespace) -> None:
+    """Credit a Cell with money it earned.
+
+    The counterpart to `call-model`: that verb is the only one that can spend
+    real money, this is the only one that can bring it in. Together they are
+    what makes a Cell's profitability a measurable number rather than an
+    aspiration.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    book = Book(args.book)
+    amount = money.parse_minor_units(args.amount, book.value)
+    try:
+        transaction = revenue.record_revenue(
+            conn,
+            cell_id=args.cell,
+            amount_minor_units=amount,
+            source=args.source,
+            book=book,
+            note=args.note,
+            idempotency_key=args.idempotency_key,
+        )
+    except revenue.RevenueError as exc:
+        raise CliError(str(exc)) from exc
+
+    earned = revenue.total_revenue(conn, args.cell, book)
+    print(f"Recorded revenue for cell {args.cell}")
+    print(f"  amount:    {args.amount} ({amount} minor units) {book.value}")
+    print(f"  source:    {args.source}")
+    if args.note:
+        print(f"  note:      {args.note}")
+    print(f"  txn:       {transaction.transaction_id}")
+    print(f"  cell earned to date: {earned} minor units {book.value}")
+    print(f"  cell cash now:       {ledger.get_balance(conn, cell_cash(args.cell), book)}")
+
+
 def cmd_fund_cell(args: argparse.Namespace) -> None:
     """Credit an existing Cell in a given book.
 
@@ -436,12 +475,18 @@ def cmd_call_model(args: argparse.Namespace) -> None:
                 "money — re-run with --yes-spend-real-money to confirm"
             )
         provider: providers.ModelProvider = providers.AnthropicProvider()
+    elif args.provider == providers.OLLAMA_PROVIDER:
+        # Local inference: no credential, no invoice, no --yes-spend-real-money
+        # gate. Its models are priced at zero (see pricing.PRICING_TABLE), so
+        # the USD_REAL path settles at 0 while RESOURCE metering still applies.
+        provider = providers.OllamaProvider()
     elif args.provider == providers.MOCK_PROVIDER:
         provider = providers.MockProvider()
     else:
         raise CliError(
-            f"unknown provider: {args.provider!r} "
-            f"(known: {providers.MOCK_PROVIDER}, {providers.ANTHROPIC_PROVIDER})"
+            f"unknown provider: {args.provider!r} (known: "
+            f"{providers.MOCK_PROVIDER}, {providers.ANTHROPIC_PROVIDER}, "
+            f"{providers.OLLAMA_PROVIDER})"
         )
 
     request = providers.ModelRequest(
@@ -807,6 +852,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fund_cell_parser.add_argument("--idempotency-key", default=None)
     fund_cell_parser.set_defaults(func=cmd_fund_cell)
+
+    revenue_parser = subparsers.add_parser(
+        "record-revenue",
+        help="credit a Cell with money it earned (the only verb that brings money in)",
+    )
+    revenue_parser.add_argument("--cell", required=True, help="cell_id that earned it")
+    revenue_parser.add_argument("--amount", required=True, help="decimal amount, e.g. 5.00")
+    revenue_parser.add_argument(
+        "--source",
+        required=True,
+        help="who paid and for what — an invoice id, customer ref, or 'manual'",
+    )
+    revenue_parser.add_argument(
+        "--book", default=Book.USD_REAL.value, choices=[Book.USD_REAL.value, Book.USD_SIM.value]
+    )
+    revenue_parser.add_argument("--note", default="")
+    revenue_parser.add_argument("--idempotency-key", default=None)
+    revenue_parser.set_defaults(func=cmd_record_revenue)
 
     call_model_parser = subparsers.add_parser(
         "call-model",

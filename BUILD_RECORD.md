@@ -2,64 +2,101 @@
 
 Keeps only the current entry so this file stays small enough to read in full every session.
 Earlier slices (1–10, plus CI wiring, seeded ids, reproduction/lineage, the full Phase 4 gateway
-arc, and real-spend type registration, 2026-07-21 through 2026-07-30):
+arc, real-spend type registration, and the first real paid call, 2026-07-21 through 2026-08-05):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-05 — The first real paid call: one cent, and what it measured
+## 2026-08-05 — Revenue, and a second provider: the two halves of a fitness signal
 
-MITOSIS has spent real money. `claude-haiku-4-5` (resolved
-`claude-haiku-4-5-20251001`), 12 input tokens, 4 output tokens, 32 micro-USD of true cost, **1 cent
-recorded in USD_REAL**. The model replied `ok`. Every number below was verified against the ledger
-rather than read off the CLI's own summary.
+Both prerequisites for open-ended, self-directing Cells, built together because neither is useful
+alone. **Money can now enter the colony**, so profitability is a number rather than an aspiration;
+and **inference can now be free**, so a Cell can think without every thought hitting Charter C5's
+caps. Nothing here makes a Cell autonomous — that is still the missing subsystem — but it is what
+autonomy would need underneath it.
 
-- **The call was set up to be boring on purpose.** A dedicated `first-real-call.db` capped at 5¢ per
-  request and $1.00 per month, one explorer Cell funded in all three books, and a free `MockProvider`
-  dry run on the same colony first — so the only untested variable when real money moved was the live
-  API itself.
-- **Cost math reconciles exactly.** 12 input × $1/Mtok = 12 μ$, 4 output × $5/Mtok = 20 μ$, total 32
-  μ$ — matching `cost_actual_micro_usd` and both `resource_usage` rows independently. One
-  `reservation_settle` entry of 1 minor unit on `external_expense`, and it is the *only* USD_REAL
-  entry on that account in the whole colony. Cell cash 20¢ → 19¢. Conservation OK in all three books,
-  hash chain valid, A6 linkage complete, `committed` zero everywhere.
-- **ADR-020's overstatement, measured rather than argued: 312×.** True cost 0.0032¢, recorded 1¢. The
-  ceiling is correct — rounding down would have Charter C5's caps computing off an understated bill —
-  but at this size the ledger is recording the *floor of a cent*, not the cost. This is the sharpest
-  possible argument for aggregate-invoice reconciliation, which is the only thing that can recover
-  it, and it is now a number instead of a prediction.
-- **The estimate over-reserved by 10.8×** (347 μ$ held against 32 μ$ actual), because it reserves the
-  full `max_tokens` output. Harmless to the ledger — the remainder released cleanly — but with a 5¢
-  per-request cap it is the *estimate*, not the real cost, that decides whether a call is permitted.
-- **And it under-counts input, which is the opposite of what was assumed.** `_estimate_tokens` uses 2
-  chars/token and predicted 11 where the API's own `count_tokens` returned 12. It is documented as a
-  deliberate over-estimate; for short prompts it is not, because the heuristic ignores per-message
-  structural overhead. The backlog item to tighten it should be rewritten: input needs a *floor*,
-  output needs a tighter ceiling.
-- **Two failure paths ran for real before the successful one, and both behaved.** A RESOURCE
-  under-funding tripped Charter C4 (`cannot reserve 347`, C4 refusing before any money moved), and an
-  invalid key produced a 401 that `_is_execution_unknown` classified as definitely-unbilled — so
-  funds were *released* rather than frozen in `execution_unknown`. Verified afterwards: across five
-  failed attempts, every USD_REAL reservation reached `released`, `committed` was 0, and no
-  transaction touched `external_expense`. The release-on-failure path that the gateway slice's bug #1
-  was about had never run outside a test until now.
-- **Model drift was recorded and nothing consumed it**, exactly as documented: requested
-  `claude-haiku-4-5`, resolved `claude-haiku-4-5-20251001`. §24.2 captured it; reacting to it as a
-  §8.4 regime change remains unimplemented.
-- **Also fixed, spotted while verifying: `outstanding` counted zero-cost calls as billable work.**
-  The mock provider is priced at 0, so it produces calls no invoice will ever list, and both
-  `outstanding` and `summary` counted them — noise that grows without bound as mock calls accumulate.
-  Both now share one `_BILLABLE_PREDICATE` (already moved real money, recorded a real cost, or still
-  holding funds), deliberately kept as a single string so the two queries cannot drift apart — the
-  same two-copies-of-one-rule shape that let a third real-spend type be missed by one of two breaker
-  queries. It remains a **worklist, not a gate**: `reconcile` still accepts any `model_call_id`, so a
-  surprise charge on a nominally free call can still be applied, and that is pinned by its own test.
-- **414 tests passing** (2 new, 0 removed; up from 412). `test_outstanding_lists_then_clears` was
-  rewritten rather than deleted — it had encoded the old behaviour, and now asserts the new semantics
-  plus the worklist-not-a-gate property. Teeth-checked by reverting the predicate: both new tests
-  fail against the old shape. Golden-run hash unchanged (expectation version still 3), correct for a
-  change that alters no economic outcome.
-- **`.gitignore` gained `.env` / `.env.*`.** It had neither, and the credential file needed for a
-  paid call sits in the repo root — with `git add -A` in the commit flow, an API key was one command
-  away from being pushed to GitHub.
+### Revenue (`revenue.py`, SPEC.md §31, §2.2)
+
+- **The `revenue` account existed in §31's fixed-account list and nothing ever posted to it.** A
+  Cell's profitability was therefore not merely unmeasured but *unmeasurable* — the number had
+  nowhere to live. `record_revenue` gives it one, mirroring spend exactly: a spend debits the Cell
+  and credits `external_expense`; revenue debits `revenue` and credits the Cell's cash. The
+  `revenue` account accumulates gross earnings negated, the same convention `external_capital`
+  already uses, so conservation per book (Charter C2) is unchanged.
+- **Revenue is not spend, and the separation is the load-bearing decision.** It never touches
+  `external_expense`, so the real-spend breaker cannot see it — deliberately. Charter C5 bounds how
+  much the colony may *spend*, not its net position, and a Cell that earns must not thereby earn
+  permission to spend past a cap. The one intended coupling is Charter C4: earnings are cash, and a
+  Cell may reserve up to its cash. Both halves are pinned by their own tests.
+- **The teeth check on that separation produced the clearest possible argument for it.** Mutating
+  revenue to post to `external_expense` *and* registering `cell_revenue` as a real-spend type makes
+  the hour window read **−10,000 instead of 0** — a Cell would literally earn its way *backwards*
+  through the circuit breaker. Each half of that mutation is independently caught by last slice's
+  registration guard (the disjointness check for one, the precise static check naming
+  `revenue.py:106` for the other), and the breaker test catches the combination. Stated plainly
+  because it matters: `test_revenue_does_not_move_the_spend_breaker` **cannot fail on either half
+  alone** — it is a backstop, and the registration guard is what actually holds each side.
+- **Attribution is mandatory.** `source` is required and refused when blank, the same rule
+  reconciliation applies to invoice figures, for the same reason: an unattributable credit to a Cell
+  is precisely how a fitness signal gets fabricated, and fitness is what this exists to feed. The
+  default idempotency key is derived from the source, so posting the same attributed payment twice
+  is refused by the ledger rather than silently doubling a Cell's apparent fitness.
+- **A dead Cell can still receive revenue** — payment arrives after the work, sometimes after the
+  worker, and a coroner report omitting final earnings would misstate the thing it exists to record.
+  Status is not checked; existence is, so revenue cannot be posted to a typo.
+- **RESOURCE is refused.** Nobody pays a colony in compute units, and allowing it would let a Cell
+  top up its own metering budget by declaring revenue.
+
+### Ollama provider (`providers.OllamaProvider`, SPEC.md §30.1)
+
+- **The second provider, and the one that makes exploration affordable.** A Cell that proposes
+  strategies constantly cannot do that against a metered API without the proposal stage dominating
+  its budget. Local inference has no per-call marginal cost, so the creative loop can run flat out
+  and never touch a cap. Registered in the pricing table at zero.
+- **Zero dependencies.** Uses stdlib `urllib` against Ollama's HTTP API rather than an SDK — unlike
+  `anthropic`, which is optional precisely because it is heavy. A local model should not cost the
+  kernel an install.
+- **Charter C14 in its cleanest form: there is no key to leak.** Ollama is unauthenticated on
+  localhost, so no credential exists anywhere in the provider's surface — asserted by a test rather
+  than assumed. `OLLAMA_HOST` is a URL, not a secret, and is still passed through `redact()` on the
+  error path in case it points at an authenticated proxy.
+- **Never reports `execution_unknown`, which is a deliberate departure from
+  `_is_execution_unknown`'s conservatism.** That default exists because wrongly releasing a
+  reservation for a call that *was* billed loses real money silently. A local provider cannot bill:
+  its USD_REAL exposure is structurally zero, so freezing funds would park money against an invoice
+  that can never exist, and `mitosis outstanding` would ask a human to resolve something no evidence
+  could ever resolve. What a timeout does cost is RESOURCE metering accuracy — a shadow-price
+  imprecision, not a money risk. Documented on the class and pinned across 400/500/503/timeout.
+- **Models are registered explicitly rather than priced zero by wildcard**, and that friction is on
+  purpose: an Ollama-compatible endpoint can front a *paid* hosted model, and a wildcard would
+  silently price it at zero and blind Charter C5 to real spend. An unknown model fails loudly.
+- **A zero price is not a free call.** Local compute is still metered and shadow-priced in the
+  RESOURCE book, so a runaway local Cell is still bounded — proven end to end by an integration test
+  driving the gateway with a stubbed Ollama: USD_REAL settles at 0 and the breaker stays at 0, while
+  the provider's *reported* token counts (17 in / 5 out) are metered, not estimates.
+- **Ollama names everything differently** (`num_predict`, `prompt_eval_count`, `eval_count`), and
+  getting that mapping wrong corrupts A6 metering silently rather than failing. Each is pinned;
+  dropping `num_predict` would let a local call generate past its metered budget.
+- Missing usage counters (Ollama omits `prompt_eval_count` on a fully cached prompt) meter as zero
+  rather than crashing — zero recorded tokens is true, and a crash would strand the reservation.
+
+### Verification
+
+- **448 tests passing** (34 new, 0 removed; up from 414). New `tests/test_revenue.py` (13),
+  `tests/test_ollama_provider.py` (16), `test_cli.py` +5. Golden-run hash unchanged.
+- **Last slice's registration guard fired on the very next slice, as designed.** `cell_revenue` was
+  refused as unclassified until it was explicitly exempted with a stated reason — the convention it
+  replaced would have let a new money-moving type through on a reviewer's attention.
+- **Hand-verified on the live colony** that made the real paid call: recorded 75¢ of revenue against
+  the Cell that had spent 1¢. Cash 19 → 94, `revenue` account −75, conservation and hash chain green,
+  breaker unmoved at 1/25, and re-posting the same `source` returned the *same* transaction id with
+  no double-count. **Net position: +74 minor units — the first profit figure MITOSIS has ever been
+  able to compute.**
+- One verification bug worth recording because it nearly became a false alarm: a shell-interpolated
+  account id in my own check string was mangled (`…986ash`), so `get_balance` was asked about a
+  nonexistent account and returned 0, making it look as though the balance had not moved. The code
+  was correct; the check was not. Identifiers in hand-verification scripts should come from the
+  database, not from shell interpolation.
 - Not yet committed — reporting for review first.
-- Next: see PRIORITIES. The honest summary is that the *kernel* is proven and the *colony* does not
-  exist yet — nothing in MITOSIS can currently earn a cent, and Phases 2 and 3 remain skipped.
+- Next: fitness (revenue − spend) is now computable, but `ledger.spend_by_book`'s sign bug becomes
+  load-bearing the moment selection reads it — a credited Cell currently reads as having spent more
+  than it did. That fix needs §31's account-level split between funding sources and spend
+  destinations, and it should land *before* anything selects on profit. See PRIORITIES.

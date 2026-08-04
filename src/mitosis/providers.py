@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict
 
 MOCK_PROVIDER = "mock"
 ANTHROPIC_PROVIDER = "anthropic"
+OLLAMA_PROVIDER = "ollama"
 
 # Anthropic keys are `sk-ant-...`; the generic `sk-` form covers the shape most
 # other providers use. Deliberately broad: a false-positive redaction in an
@@ -224,6 +225,138 @@ class AnthropicProvider:
         # `api_key` dies with this frame: it is passed straight into the client
         # and never stored on self, returned, or logged.
         return anthropic.Anthropic(api_key=api_key, timeout=self.timeout_seconds)
+
+
+class OllamaProvider:
+    """A locally-hosted model, served by Ollama over plain HTTP.
+
+    The second provider, and the one that makes open-ended exploration
+    affordable: a Cell that proposes strategies constantly cannot do that
+    against a metered API without the proposal stage dominating its budget.
+    Local inference has no per-call marginal cost, so the creative loop can run
+    flat out without ever touching Charter C5's caps.
+
+    **No credential exists**, which is the cleanest possible form of Charter
+    C14: there is no key to leak because Ollama is unauthenticated on localhost.
+    `host_env` is a plain URL, never a secret, and is still passed through
+    `redact()` on the error path in case someone points it at an authenticated
+    proxy with credentials embedded in the URL.
+
+    **Uses stdlib `urllib` rather than an SDK**, so this provider adds no
+    dependency at all — unlike `anthropic`, which is optional precisely because
+    it is heavy. A local model should not cost the kernel an install.
+
+    **Never reports `execution_unknown`, and that is a deliberate departure
+    from `_is_execution_unknown`'s conservatism.** That default exists because
+    wrongly releasing a reservation for a call that *was* billed loses real
+    money silently. A local provider cannot bill: its USD_REAL exposure is
+    structurally zero, so freezing funds pending reconciliation would park money
+    against an invoice that will never exist, and `mitosis outstanding` would
+    ask a human to resolve something no evidence can ever resolve. What a
+    timeout does cost is RESOURCE-book metering accuracy — a local model may
+    have burned compute the kernel never records. That is a shadow-price
+    imprecision, not a money risk, and it is the right trade.
+    """
+
+    name = OLLAMA_PROVIDER
+
+    def __init__(
+        self,
+        *,
+        host_env: str = "OLLAMA_HOST",
+        default_host: str = "http://localhost:11434",
+        timeout_seconds: float = 120.0,
+    ) -> None:
+        self.host_env = host_env
+        self.default_host = default_host
+        self.timeout_seconds = timeout_seconds
+
+    @property
+    def host(self) -> str:
+        return (os.environ.get(self.host_env) or self.default_host).rstrip("/")
+
+    def complete(self, request: ModelRequest) -> ModelResponse:
+        if request.max_tokens <= 0:
+            raise ProviderConfigError("max_tokens must be positive")
+
+        messages = [dict(m) for m in request.messages]
+        if request.system is not None:
+            messages.insert(0, {"role": "system", "content": request.system})
+        payload = {
+            "model": request.model,
+            "messages": messages,
+            "stream": False,
+            # Ollama's cap on generated tokens. Named differently from every
+            # hosted API, and the gateway's reservation is computed against
+            # `max_tokens`, so getting this wrong would let a local call
+            # overrun its metered RESOURCE budget.
+            "options": {"num_predict": request.max_tokens},
+        }
+
+        started = time.monotonic()
+        body = self._post("/api/chat", payload)
+        latency_ms = int((time.monotonic() - started) * 1000)
+
+        message = body.get("message") or {}
+        # `prompt_eval_count` is absent when Ollama serves a fully cached
+        # prompt, and `eval_count` is absent on an empty generation. Defaulting
+        # to 0 keeps A6 metering honest rather than crashing the settlement:
+        # zero recorded tokens is true, and the RESOURCE reservation releases.
+        return ModelResponse(
+            text=message.get("content", ""),
+            resolved_model=body.get("model") or request.model,
+            api_version="ollama",
+            input_tokens=int(body.get("prompt_eval_count") or 0),
+            output_tokens=int(body.get("eval_count") or 0),
+            stop_reason=body.get("done_reason"),
+            latency_ms=latency_ms,
+        )
+
+    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        import json
+        import urllib.error
+        import urllib.request
+
+        url = f"{self.host}{path}"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode(),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_seconds) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode()[:400]
+            except Exception:  # noqa: BLE001 — the status code is the signal
+                pass
+            if exc.code == 404:
+                raise ProviderConfigError(
+                    redact(
+                        f"ollama has no model {payload.get('model')!r} at {self.host} "
+                        f"— pull it first: ollama pull {payload.get('model')}"
+                    )
+                ) from exc
+            raise ProviderCallError(
+                redact(f"HTTPError {exc.code} from ollama: {detail}"),
+                execution_unknown=False,
+            ) from exc
+        except urllib.error.URLError as exc:
+            # Connection refused, DNS failure, or timeout. Nothing local can be
+            # billed, so this is a configuration problem, not an unknown outcome.
+            raise ProviderConfigError(
+                redact(
+                    f"cannot reach ollama at {self.host} ({exc.reason}) — "
+                    "is it running? start it with: ollama serve"
+                )
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 — mapped onto the reservation FSM
+            raise ProviderCallError(
+                redact(f"{type(exc).__name__}: {exc}"), execution_unknown=False
+            ) from exc
 
 
 def _is_execution_unknown(exc: Exception) -> bool:

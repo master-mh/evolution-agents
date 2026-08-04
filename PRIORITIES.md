@@ -59,7 +59,40 @@
   work (shared `_BILLABLE_PREDICATE`; still a worklist, not a gate), and added `.env`/`.env.*` to
   `.gitignore`, which had neither. 414 tests passing; golden-run hash unchanged.
 
+- [x] **Revenue path + Ollama provider** — DONE (2026-08-05), the two prerequisites for
+  self-directing Cells. **Revenue**: new `revenue.py` — the `revenue` account existed in §31's list
+  and nothing ever posted to it, so profitability was unmeasurable, not merely unmeasured.
+  `record_revenue` mirrors spend (debit `revenue`, credit Cell cash), requires attribution, is
+  idempotent per source, and works for a dead Cell (payment outlives the worker). Deliberately
+  invisible to Charter C5: earning must not buy permission to spend past a cap — the teeth check
+  showed the combined mis-wiring makes the hour window read **−10,000**, i.e. a Cell earning
+  *backwards* through the breaker. **Ollama**: local inference at zero price via stdlib `urllib`
+  (no new dependency), no credential to leak at all, models registered explicitly rather than
+  zero-by-wildcard (an Ollama-compatible endpoint can front a paid model), and never
+  `execution_unknown` since a local provider cannot bill. Free in money is not free in compute —
+  RESOURCE metering still bounds it, proven end to end. Last slice's registration guard fired on
+  `cell_revenue` immediately, as designed. 448 tests passing (34 new); golden-run hash unchanged.
+  Hand-verified on the live colony: **net position +74 minor units, the first profit figure MITOSIS
+  could compute.**
+
 ## Next
+- [ ] **`ledger.spend_by_book` sign bug is now on the critical path.** It was logged as "coroner
+  reports only, never enforcement" — that stops being true the moment fitness (revenue − spend)
+  drives selection, because a Cell that received a reconciliation credit reads as having spent more
+  than it did. Needs §31's account-level distinction between funding sources and spend destinations.
+  **Land this before anything selects on profit.**
+- [ ] **A Cell that acts.** The missing subsystem: an agent loop that reads a genome, calls the
+  gateway, and records a deliberable. Keep genome content as *data the loop interprets*, never code
+  it executes — Charter C15 holds only while genomes are inert, and the sandbox behind it (C12) is
+  Phase 5.
+- [ ] **Structured proposals** — a Cell proposing strategy needs validated fields back, not prose.
+  Logged as out-of-scope in the gateway slice; now on the critical path for self-direction.
+- [ ] **Prediction register** — a Cell states expected earnings *before* spending, so selection can
+  run on the accuracy of its own bets before any customer exists. The cheapest real selection
+  pressure available, and it works with zero revenue.
+- [ ] **Fitness + death criteria (§10.5)** — with revenue and spend both recorded, fitness is
+  computable and `kill()` already exists. Revenue + death closes the evolutionary loop, since
+  reproduction already works.
 
 - [ ] **Aggregate-invoice reconciliation** — the half ADR-023 provably cannot do. Per-call reconciliation leaves ADR-020's sub-cent rounding overstatement exactly where it was (3.5¢ reconciles back through the same ceiling to the 4¢ already recorded); only an invoice *total* spanning many calls can post the correction. Additive: needs an invoice-level record, reusing all the per-call sign handling and breaker registration.
 - [ ] **Forward recovery for the gateway** — ADR-022's deferred alternative, which belongs with the reconciliation plumbing. Rollback is atomic but loses the provider's reported usage, so a crashed call still needs a human. Recording the response durably before applying the accounting (a `settling` status) would let recovery finish the settlement automatically.
