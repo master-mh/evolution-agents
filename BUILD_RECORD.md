@@ -86,7 +86,7 @@ completes the bookkeeping. Pinned by a test that simulates exactly that window.
   it proposed and claimed nothing that moved a canonical metric, which is §0.3 working. Ledger and
   prediction chains valid, conservation green in all three books, A6 linkage complete, wake event
   processed, RESOURCE balance down 4 units: the Cell paid for its own thinking.
-- Not committed — reporting for review first.
+- Committed as `e7b1f69` and pushed; CI green.
 - **What this does not show:** the loop has never been driven by a real model. Ollama was not
   reachable on this machine, and the paid path needs an explicit decision to spend. So there is no
   evidence yet about how often a real model returns schema-valid JSON — the unparseable path
