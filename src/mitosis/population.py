@@ -12,19 +12,34 @@ their prerequisites don't exist in this kernel yet: experiment tracking and
 a clock wired into a real epoch counter respectively.
 
 Amendment A2 (displacement is objective-only, docs/DECISIONS.md ADR-009) is
-also not implemented here: displacing an already-failing Cell to make room
-requires the §10.5 death criteria (stage budgets, validation gates,
-reproducibility checks), none of which this kernel evaluates yet. So the
-only two outcomes right now are "granted" or "denied" — there is no
-displacement path. A denied birth is the conservative, spec-compliant
-behaviour when displacement can't be evaluated: SPEC.md §9.3 says a birth
-"waits" when at capacity with no valid displacement target; a synchronous
-kernel call can't wait, so it raises instead.
+implemented as of the §9.3 slice, but *not* here: `Displacer` below is the
+seam, and `displacement.ObjectiveDisplacer` is the implementation, so
+nothing in this module imports `death` or knows what an objective criterion
+is. The dependency has to run that way round — `lifecycle` imports
+`population`, and `death` imports `lifecycle` — and it is also the right
+shape: carrying capacity is a counting problem, and which Cell is failing
+is not.
+
+**`Displacer` deliberately cannot see the proposed child.** §9.3 and
+ADR-009 both say a child's *forecast* may never trigger a kill, and the
+cheapest way to guarantee that is a signature carrying no information about
+the child at all — not its genome, not its budget, not its forecast. The
+birth records which Cell it displaced (see `lifecycle.create_cell`), so the
+link is auditable in both directions without the selection ever depending
+on it.
+
+Displacement is **opt-in**: a caller with no `displacer` gets the old
+behaviour, denial. §9.3 says a birth that cannot be licensed "waits"; a
+synchronous kernel call can't wait, so it raises — and a caller must say
+explicitly that it would rather evict than wait, because eviction is a
+death and a death is irreversible.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass, field
+from typing import Protocol
 
 from .models import DEFAULT_POPULATION_LIMITS, CellStatus, PopulationLimits
 
@@ -35,6 +50,36 @@ class PopulationError(Exception):
 
 class CarryingCapacityError(PopulationError):
     pass
+
+
+@dataclass(frozen=True)
+class Displacement:
+    """One Cell evicted to make room for a birth (§9.3).
+
+    `criterion`/`evidence` are the *objective* grounds that made the Cell
+    eligible, carried back so the birth can record them — a displacement is
+    only ever a consequence of the target's own realised record.
+    """
+
+    cell_id: str
+    criterion: str
+    evidence: dict[str, object] = field(default_factory=dict)
+
+    def describe(self) -> str:
+        return f"displacement: {self.criterion}: {self.evidence}"
+
+
+class Displacer(Protocol):
+    """The §9.3 seam. Note what is absent: every parameter describes the
+    *colony*, none describes the child. See the module docstring."""
+
+    def displace(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        require_active: bool,
+        exclude: frozenset[str],
+    ) -> Displacement | None: ...
 
 
 def set_limits_if_absent(conn: sqlite3.Connection, limits: PopulationLimits) -> PopulationLimits:
@@ -90,27 +135,86 @@ def active_count(conn: sqlite3.Connection) -> int:
     return row["n"]
 
 
+def _binding_caps(conn: sqlite3.Connection, limits: PopulationLimits) -> tuple[str, ...]:
+    """Which population caps a birth would breach right now.
+
+    A birth inserts an `alive` Cell, so it consumes one living slot *and*
+    one active slot; both are checked. Which cap binds decides what a
+    displacement has to free: only killing an `alive` Cell frees an active
+    slot, whereas any living Cell (alive/dormant/quarantined) frees a living
+    one. Evicting a dormant Cell to relieve an active-cap breach would be a
+    death that bought nothing.
+    """
+    breached = []
+    if living_count(conn) >= limits.max_living_cells:
+        breached.append("living")
+    if active_count(conn) >= limits.max_active_cells:
+        breached.append("active")
+    return tuple(breached)
+
+
+def _capacity_error(conn: sqlite3.Connection, limits: PopulationLimits, suffix: str = "") -> str:
+    return (
+        f"birth denied: colony at capacity "
+        f"({living_count(conn)}/{limits.max_living_cells} living, "
+        f"{active_count(conn)}/{limits.max_active_cells} active){suffix}"
+    )
+
+
 def check_birth_licence(
-    conn: sqlite3.Connection, limits: PopulationLimits | None = None
-) -> None:
-    """Raise CarryingCapacityError if birth would exceed configured limits.
+    conn: sqlite3.Connection,
+    limits: PopulationLimits | None = None,
+    *,
+    displacer: Displacer | None = None,
+    exclude: frozenset[str] = frozenset(),
+) -> Displacement | None:
+    """Raise CarryingCapacityError if birth would exceed configured limits,
+    unless a `displacer` can free a slot per §9.3.
 
     Must be called after the caller has already acquired a write lock
     (BEGIN IMMEDIATE) so the count-then-insert is atomic under concurrency
     (Charter C9's "under concurrency" spirit, same pattern as the C5
     real-spend cap check) — otherwise two concurrent births could both pass
-    this check before either commits.
+    this check before either commits. Displacement inherits that lock: the
+    eviction and the birth commit together or not at all.
+
+    Returns the Displacement if one was performed, else None. **At most one
+    Cell is ever evicted per birth**, and the caps are re-checked afterwards
+    rather than assumed relieved — so a displacer that frees the wrong kind
+    of slot (or none) degrades to a denied birth, never to a second kill.
     """
     limits = limits or get_limits(conn)
 
-    living = living_count(conn)
-    if living >= limits.max_living_cells:
+    breached = _binding_caps(conn, limits)
+    if not breached:
+        return None
+
+    if displacer is None:
+        raise CarryingCapacityError(_capacity_error(conn, limits))
+
+    displaced = displacer.displace(
+        conn, require_active="active" in breached, exclude=exclude
+    )
+    if displaced is None:
+        # §9.3: "If no objectively-failing Cell exists and the colony is at
+        # capacity, the birth waits." A synchronous call cannot wait.
         raise CarryingCapacityError(
-            f"birth denied: colony at capacity ({living}/{limits.max_living_cells} living cells)"
+            _capacity_error(
+                conn,
+                limits,
+                " and no Cell is objectively failing, so none may be displaced "
+                "(SPEC.md §9.3 / ADR-009) — the birth waits",
+            )
         )
 
-    active = active_count(conn)
-    if active >= limits.max_active_cells:
+    still_breached = _binding_caps(conn, limits)
+    if still_breached:
         raise CarryingCapacityError(
-            f"birth denied: colony at capacity ({active}/{limits.max_active_cells} active cells)"
+            _capacity_error(
+                conn,
+                limits,
+                f" — displacing {displaced.cell_id} did not free a slot for "
+                f"{'/'.join(still_breached)}",
+            )
         )
+    return displaced

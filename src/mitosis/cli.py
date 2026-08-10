@@ -20,6 +20,7 @@ from . import (
     clock,
     db,
     death,
+    displacement,
     events,
     gateway,
     genome,
@@ -293,6 +294,27 @@ def cmd_status(args: argparse.Namespace) -> None:
     conn.close()
 
 
+def _print_displacement(conn, cell_id: str) -> None:
+    """Report any Cell this birth displaced, read back from the audit trail —
+    which is where §9.3 requires it to be recorded, so printing it from
+    anywhere else would be reporting something the colony didn't durably say."""
+    row = conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE cell_id = ? "
+        "AND event_type = 'cell_lifecycle_transition' ORDER BY rowid LIMIT 1",
+        (cell_id,),
+    ).fetchone()
+    if row is None:
+        return
+    metadata = json.loads(row["metadata_json"] or "{}")
+    displaced = metadata.get("displaced_cell_id")
+    if not displaced:
+        return
+    print(f"  displaced: {displaced} (SPEC.md §9.3)")
+    print(f"    it was already failing: {metadata.get('displaced_criterion')}")
+    for key, value in sorted((metadata.get("displaced_evidence") or {}).items()):
+        print(f"      {key}: {value}")
+
+
 def cmd_create_cell(args: argparse.Namespace) -> None:
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
@@ -309,6 +331,7 @@ def cmd_create_cell(args: argparse.Namespace) -> None:
         book=book,
         idempotency_key=idempotency_key,
         funding_account_id=args.funding_account,
+        displacer=displacement.ObjectiveDisplacer() if args.displace else None,
     )
 
     print(f"Created cell {cell.cell_id}")
@@ -317,6 +340,7 @@ def cmd_create_cell(args: argparse.Namespace) -> None:
     print(f"  book:   {cell.book.value}")
     print(f"  budget: {args.budget} ({budget_minor_units} minor units)")
     print(f"  genome: {cell.genome_hash}")
+    _print_displacement(conn, cell.cell_id)
 
     conn.close()
 
@@ -346,6 +370,7 @@ def cmd_reproduce(args: argparse.Namespace) -> None:
         cell_type=CellType(args.type) if args.type else None,
         mutation=mutation,
         mutation_operator=args.mutation_operator,
+        displacer=displacement.ObjectiveDisplacer() if args.displace else None,
     )
 
     print(f"Cell {parent.cell_id} reproduced -> {child.cell_id}")
@@ -359,6 +384,7 @@ def cmd_reproduce(args: argparse.Namespace) -> None:
         print("  (mutated genome — distinct from parent's)")
     else:
         print("  (unmutated — shares the parent's genome, per content addressing)")
+    _print_displacement(conn, child.cell_id)
 
     conn.close()
 
@@ -388,6 +414,36 @@ def cmd_reap(args: argparse.Namespace) -> None:
             print(f"      {key}: {value}")
     if not args.execute:
         print("\nDry run — nothing was killed. Re-run with --execute to act.")
+
+
+def cmd_displacement_candidates(args: argparse.Namespace) -> None:
+    """Which Cells a birth could displace right now (§9.3). Read-only — this
+    is the look-before-you-evict command, the same posture `reap` takes by
+    defaulting to a dry run."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    found = displacement.candidates(
+        conn,
+        require_active=args.require_active,
+        exclude=frozenset({args.exclude}) if args.exclude else frozenset(),
+    )
+    if not found:
+        print("No Cell may currently be displaced (SPEC.md §9.3).")
+        print("A birth at capacity would wait, not evict.")
+        return
+
+    print(f"{len(found)} Cell(s) could be displaced, in the order they would be taken:")
+    for index, (cell, finding) in enumerate(found, start=1):
+        print(f"  {index}. {cell.cell_id} ({cell.cell_type.value}, {cell.status.value})")
+        print(f"     criterion: {finding.criterion.value}")
+        for key, value in sorted(finding.evidence.items()):
+            print(f"       {key}: {value}")
+    print("\nOrder is birth order, not a ranking — §10.2 forbids collapsing")
+    print("fitness into one scalar, and 'pick the worst' would be exactly that.")
+    print("At most one Cell is displaced per birth.")
+
+    conn.close()
 
 
 def cmd_cell_fitness(args: argparse.Namespace) -> None:
@@ -953,6 +1009,13 @@ def build_parser() -> argparse.ArgumentParser:
     create_cell_parser.add_argument(
         "--idempotency-key", default=None, help="explicit idempotency key, for safe script retries"
     )
+    create_cell_parser.add_argument(
+        "--displace",
+        action="store_true",
+        help="if the colony is at carrying capacity, evict one objectively-failing "
+        "Cell to make room instead of being denied (SPEC.md §9.3). This kills a "
+        "Cell; run `displacement-candidates` first to see which.",
+    )
     create_cell_parser.set_defaults(func=cmd_create_cell)
 
     reproduce_parser = subparsers.add_parser(
@@ -975,7 +1038,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--mutation-operator", default=None, help="name of the mutation operator, recorded on the genome"
     )
     reproduce_parser.add_argument("--idempotency-key", default=None)
+    reproduce_parser.add_argument(
+        "--displace",
+        action="store_true",
+        help="if the colony is at carrying capacity, evict one objectively-failing "
+        "Cell to make room instead of being denied (SPEC.md §9.3). The parent is "
+        "never a candidate. This kills a Cell; run `displacement-candidates` first.",
+    )
     reproduce_parser.set_defaults(func=cmd_reproduce)
+
+    candidates_parser = subparsers.add_parser(
+        "displacement-candidates",
+        help="Cells a birth could displace right now (SPEC.md §9.3) — read-only",
+    )
+    candidates_parser.add_argument(
+        "--require-active",
+        action="store_true",
+        help="only Cells whose death would free an *active* slot (i.e. alive ones)",
+    )
+    candidates_parser.add_argument(
+        "--exclude", default=None, help="cell_id to exclude, e.g. a prospective parent"
+    )
+    candidates_parser.set_defaults(func=cmd_displacement_candidates)
 
     fund_cell_parser = subparsers.add_parser(
         "fund-cell", help="credit an existing Cell in a given book"

@@ -46,9 +46,13 @@ What is implemented, and what is not:
                                   reason would be guessing: `quarantine` takes
                                   free text and is also used for poison events.
                                   §23 governance is where this belongs.
-    displacement                  no — §9.3 is its own slice, but it was blocked
-                                  on this module and is now unblocked: see
-                                  `is_objectively_failing`.
+    displacement                  yes, but not here — §9.3 is a *birth* path,
+                                  not a criterion a Cell meets on its own, so
+                                  it lives in displacement.py and consumes
+                                  `is_objectively_failing`/`findings` as its
+                                  eligibility test. `reap` must never produce
+                                  it: nothing is displaced without a birth
+                                  needing the slot.
 
 Nothing here kills automatically on a schedule. `reap` must be called, and
 `--dry-run` is the default posture in the CLI, because the first time a colony

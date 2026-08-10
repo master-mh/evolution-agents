@@ -488,6 +488,51 @@ Template: **Status** · **Spec ref** · **Context** · **Decision** · **Consequ
 
 ---
 
+## ADR-024: Displacement is opt-in, child-blind, and takes at most one Cell
+
+- **Status:** Accepted
+- **Spec ref:** §9.3 (Amendment A2), §9.4, §10.2, §10.5, Charter C8, C9; builds on ADR-009
+- **Context:** ADR-009 settled *who* may be displaced — only a Cell already failing objective
+  criteria. It did not settle how the mechanism is invoked, how a target is chosen among several,
+  or what stops the child from influencing the choice. `death.is_objectively_failing` supplied the
+  missing predicate, and those four questions all had to be answered to build against it.
+- **Decisions, and the alternatives each displaced:**
+  1. **The seam cannot see the child.** `population.Displacer.displace` takes the connection, which
+     cap binds, and an exclusion set — nothing about the genome, budget or forecast of the birth it
+     is making room for. Rejected: passing the child and *checking* that no forecast is consulted.
+     ADR-009 closes forecast-gaming "by construction", and a construction argument that depends on
+     a reviewer noticing a misuse is not one. The birth records which Cell it displaced, so
+     traceability runs both ways without the selection ever depending on it.
+  2. **Opt-in per birth, never automatic.** A caller with no `displacer` gets the previous
+     behaviour: denial. Rejected: displacing whenever a birth hits a cap, which would silently
+     convert every capacity refusal in the kernel into a death. Same posture as `reap`'s dry-run
+     default, and for the same reason — death is irreversible and Charter C8 makes it permanent.
+  3. **Candidate order is birth order, and is explicitly not a ranking.** Every candidate
+     independently meets an objective criterion, so any is a valid target; the order exists so
+     replay is deterministic (§26). Rejected: taking the *worst* candidate, which reintroduces the
+     scalar collapse §10.2 forbids through the back door of a comparison function.
+  4. **At most one Cell per birth, with the caps re-checked afterwards.** A displacer that frees
+     the wrong kind of slot yields a denied birth, never a second kill chasing the slot it missed.
+     The re-check is what keeps `Displacer` safe to expose as a seam at all.
+  5. **Three exclusions beyond "meets a criterion":** never the parent (it funds the child, so
+     killing it first moves money out of a dead Cell, and a lineage buying room by killing its own
+     root is the incentive §9.4 exists to suppress); never a Cell with committed funds (a
+     reservation is open and `kill()` sweeps nothing); never on estimated negative EV (§10.5 admits
+     that only with a concurring independent Auditor, and displacement must not become the unsigned
+     back door around that signature).
+  6. **The lineage cap is checked after displacement, not before.** Eviction shrinks the living
+     population, which raises every surviving lineage's share — checking first licences a birth
+     against a population that no longer exists, and the resulting colony violates §9.4 having
+     killed a Cell to get there. *(The ordering is load-bearing at realistic numbers, not just in
+     principle: cap 0.5 with three living Cells passes at 2/4 before and fails at 2/3 after.)*
+- **Consequences:** Displacement is strictly more conservative than §9.3 permits — the "bottom
+  quantile of realised stage progression" half of its disjunction needs experiment tracking
+  (Phase 2) and is unimplemented, so only the §10.5 half selects. The golden run does not cover
+  displacement, because reaching carrying capacity inside it would require lowering a population
+  cap and there is no supported path to do that after `init` (logged in FUTURE_BUILD_HOOKS).
+
+---
+
 ## Amendments folded directly into the spec without a standalone ADR
 
 The remaining amendments from `docs/SPEC.md` §"Amendments introduced in v0.2" are feature

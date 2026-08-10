@@ -200,3 +200,30 @@ actually queued for building — this file is memory, not a backlog to work thro
   carry real strategy content, same-hash becomes *much* narrower and domination will fire far less
   often — the criterion silently changes strength as genomes gain content, which is worth knowing
   before tuning anything against its current behaviour.
+
+## §9.3 displacement slice (2026-08-06)
+
+- **There is no supported way to change a population limit after `init`.**
+  `population.set_limits_if_absent` is deliberately write-once and, unlike the real-spend breaker,
+  there is no audited raise/lower verb. This bit twice in one slice: the golden run cannot reach
+  carrying capacity to exercise displacement, and the CLI test has to write `colony_config` with
+  raw SQL. Adding one is not just a setter — lowering a cap below the current population needs a
+  policy (refuse? allow and let attrition catch up? displace immediately?), which is exactly the
+  question that shouldn't be answered in passing.
+- **The golden run does not cover displacement**, for the reason above. It is the only birth path
+  replay does not exercise, so a behaviour change there would not move the hash.
+- **`reap` has no mid-operation guard.** `displacement.py` refuses to evict a Cell with committed
+  funds, because killing it strands an open reservation. `death.reap` has no such check: a Cell
+  meeting `dominated_by_near_duplicate` while a call is in flight can be killed and its reservation
+  left behind. `_budget_exhausted` already reasons this way for itself, so the gap is only in the
+  domination path. Not fixed here because it changes shipped `reap` semantics, which is its own
+  slice.
+- **A displaced Cell's residual cash is still stranded.** Already logged for `kill()` generally,
+  but displacement raises the stakes: the colony now initiates deaths to reclaim *population*
+  slots while leaving the capital where it was, at exactly the moment it is at capacity.
+- **§9.3's other displacement target is unbuilt.** "Bottom quantile of realised stage progression"
+  needs stages (§25) and experiment tracking (Phase 2). Until then displacement selects only on the
+  §10.5 half of §9.3's disjunction — more conservative than the spec allows, which is the right
+  direction for an irreversible operation.
+- **Nothing calls displacement on its own.** Like `reap`, it needs a caller. A colony at capacity
+  with a failing Cell and a queued birth will sit there until a human passes `--displace`.

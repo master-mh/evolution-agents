@@ -8,7 +8,9 @@ recording the genome, in one SQLite write transaction.
 
 Charter C9 ("birth requires carrying-capacity permission") is enforced via
 population.check_birth_licence — see that module for what is and isn't
-covered (only max_living_cells/max_active_cells; no displacement path yet).
+covered (only max_living_cells/max_active_cells). A birth blocked by those
+caps may optionally displace an objectively-failing Cell instead of being
+denied (§9.3); pass a `displacer`, and see displacement.py.
 
 The remaining transitions (`wake`/`sleep`/`quarantine`/`clear_quarantine`/
 `kill`) implement the rest of docs/STATE_MACHINES.md §1.2's adjacency table
@@ -69,6 +71,19 @@ def _check_transition(current: CellStatus, target: CellStatus) -> None:
         raise InvalidTransitionError(
             f"cannot transition cell from {current.value!r} to {target.value!r}"
         )
+
+
+def _displacement_metadata(displaced: population.Displacement | None) -> dict:
+    """Audit metadata linking a birth to the Cell it displaced (§9.3). Empty
+    for the ordinary case, so a birth into a free slot is not annotated with
+    a displacement that never happened."""
+    if displaced is None:
+        return {}
+    return {
+        "displaced_cell_id": displaced.cell_id,
+        "displaced_criterion": displaced.criterion,
+        "displaced_evidence": displaced.evidence,
+    }
 
 
 def _row_to_cell(row: sqlite3.Row) -> Cell:
@@ -179,7 +194,16 @@ def create_cell(
     book: Book,
     idempotency_key: str,
     funding_account_id: str = "seed_bank",
+    displacer: population.Displacer | None = None,
 ) -> Cell:
+    """Seed a founder Cell, funded from a colony account.
+
+    `displacer` opts this birth into §9.3 displacement: if the colony is at
+    carrying capacity, one objectively-failing Cell may be evicted to make
+    room rather than the birth being denied. Omitted, the behaviour is
+    unchanged — denial. See displacement.py for why the displacer cannot see
+    the child it is making room for.
+    """
     existing = get_cell_by_idempotency_key(conn, idempotency_key)
     if existing is not None:
         return existing
@@ -199,8 +223,9 @@ def create_cell(
     try:
         # Checked inside the write-locked transaction, not before it: two
         # concurrent births must not both pass this check before either
-        # commits (Charter C9 under concurrency).
-        population.check_birth_licence(conn)
+        # commits (Charter C9 under concurrency). Any displacement happens
+        # under this same lock, so eviction and birth are one atomic step.
+        displaced = population.check_birth_licence(conn, displacer=displacer)
 
         genome_hash = _get_or_create_genome(conn, cell_type)
 
@@ -238,12 +263,21 @@ def create_cell(
             ),
         )
 
+        # The displaced Cell is recorded on the *birth* side, never passed to
+        # the displacer: §9.3 forbids the child influencing the selection, but
+        # once a target has been chosen on its own merits, which birth took
+        # its slot is exactly what the audit trail should be able to answer.
         audit.record(
             conn,
             event_type="cell_lifecycle_transition",
             cell_id=cell_id,
             description=f"created -> alive ({cell_type.value}, budget={budget_minor_units} minor units, {book.value})",
-            metadata={"from": "created", "to": "alive", "cell_type": cell_type.value},
+            metadata={
+                "from": "created",
+                "to": "alive",
+                "cell_type": cell_type.value,
+                **_displacement_metadata(displaced),
+            },
         )
 
         conn.execute("COMMIT")
@@ -390,6 +424,60 @@ def clear_quarantine(conn: sqlite3.Connection, cell_id: str, *, to_status: CellS
     )
 
 
+def _kill_locked(
+    conn: sqlite3.Connection,
+    cell: Cell,
+    *,
+    cause_of_death: str,
+    final_hypotheses: list[str] | None = None,
+    experiment_ids: list[str] | None = None,
+    stage_reached: str | None = None,
+    metadata: dict | None = None,
+) -> None:
+    """Apply the kill + its coroner report. Caller must already hold a write
+    transaction (BEGIN IMMEDIATE) and must have re-read `cell` inside it —
+    the `_*_locked` core-plus-wrapper split ADR-022 established, so another
+    module can fold a death into its own atomic operation without nesting
+    BEGIN. §9.3 displacement is the reason this exists: evicting a Cell and
+    birthing the child that displaced it must be one transaction, or a crash
+    between them kills a Cell to free a slot no birth ever fills.
+
+    Validates the transition itself, so no caller can compose a kill that
+    skips Charter C8's terminality check.
+    """
+    _check_transition(cell.status, CellStatus.DEAD)
+
+    # Computed under the caller's lock so the coroner report reflects a
+    # consistent snapshot.
+    spend = ledger.spend_by_book(conn, cell.cell_id)
+
+    _transition_core(
+        conn, cell, CellStatus.DEAD,
+        reason=cause_of_death,
+        metadata={"cause_of_death": cause_of_death, **(metadata or {})},
+    )
+    conn.execute(
+        """
+        INSERT INTO coroner_reports (
+            report_id, cell_id, genome_hash, spend_by_book_json,
+            stage_reached, cause_of_death, final_hypotheses_json,
+            experiment_ids_json, created_at_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            ids.new_id(),
+            cell.cell_id,
+            cell.genome_hash,
+            json.dumps(spend, sort_keys=True, separators=(",", ":")),
+            stage_reached,
+            cause_of_death,
+            json.dumps(list(final_hypotheses or []), separators=(",", ":")),
+            json.dumps(list(experiment_ids or []), separators=(",", ":")),
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+
+
 def kill(
     conn: sqlite3.Connection,
     cell_id: str,
@@ -408,39 +496,18 @@ def kill(
     conn.execute("BEGIN IMMEDIATE")
     try:
         # Fetched and re-validated inside the write lock — same reasoning as
-        # _transition() above. spend_by_book is also computed under the lock
-        # so the coroner report reflects a consistent snapshot.
+        # _transition() above.
         cell = get_cell(conn, cell_id)
         if cell is None:
             raise LifecycleError(f"no such cell: {cell_id}")
-        _check_transition(cell.status, CellStatus.DEAD)
 
-        spend = ledger.spend_by_book(conn, cell_id)
-
-        _transition_core(
-            conn, cell, CellStatus.DEAD,
-            reason=cause_of_death,
-            metadata={"cause_of_death": cause_of_death},
-        )
-        conn.execute(
-            """
-            INSERT INTO coroner_reports (
-                report_id, cell_id, genome_hash, spend_by_book_json,
-                stage_reached, cause_of_death, final_hypotheses_json,
-                experiment_ids_json, created_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                ids.new_id(),
-                cell_id,
-                cell.genome_hash,
-                json.dumps(spend, sort_keys=True, separators=(",", ":")),
-                stage_reached,
-                cause_of_death,
-                json.dumps(list(final_hypotheses or []), separators=(",", ":")),
-                json.dumps(list(experiment_ids or []), separators=(",", ":")),
-                datetime.now(timezone.utc).isoformat(),
-            ),
+        _kill_locked(
+            conn,
+            cell,
+            cause_of_death=cause_of_death,
+            final_hypotheses=final_hypotheses,
+            experiment_ids=experiment_ids,
+            stage_reached=stage_reached,
         )
         conn.execute("COMMIT")
     except Exception:

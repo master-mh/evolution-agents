@@ -41,11 +41,12 @@ SPEC.md §9.3 says a birth that cannot be licensed "waits"; a synchronous
 kernel call cannot wait, so it raises — the same conservative stance
 population.py takes for carrying capacity.
 
-Deliberately out of scope for this slice: **displacement** (§9.3, Amendment
-A2 / ADR-009) still has no implementation — a denied birth is denied, never
-converted into evicting an objectively-failing Cell, because the §10.5 death
-criteria that identify one (stage budgets, validation gates, reproducibility)
-still don't exist in this kernel. Sexual recombination / multi-parent genomes
+**Displacement** (§9.3, Amendment A2 / ADR-009) is available here as of its
+own slice, opt-in via `displacer`: a birth denied at carrying capacity can
+evict one objectively-failing Cell instead of waiting. The parent is never a
+valid target — it funds the child. See displacement.py.
+
+Deliberately out of scope for this slice: sexual recombination / multi-parent genomes
 (§16.5) are out too: `parent_genome_hashes` is a list and the schema takes
 several, but `reproduce()` takes exactly one parent. Inheritance classes
 (§16.3 — inheritable vs. liability-linked vs. non-inheritable assets) are not
@@ -88,6 +89,7 @@ def reproduce(
     cell_type: CellType | None = None,
     mutation: dict | None = None,
     mutation_operator: str | None = None,
+    displacer: population.Displacer | None = None,
 ) -> Cell:
     """Birth a child of `parent_cell_id`, funded from the parent's cash.
 
@@ -98,6 +100,10 @@ def reproduce(
     parent_genome_hashes edge; omitting it means the child shares its
     parent's genome exactly, which under content addressing is the same
     genome row (ADR-018).
+
+    `displacer` opts the birth into §9.3 displacement (see displacement.py).
+    The parent is always excluded from eviction: it funds the child, and
+    killing it first would move money out of a dead Cell.
     """
     existing = lifecycle.get_cell_by_idempotency_key(conn, idempotency_key)
     if existing is not None:
@@ -126,7 +132,15 @@ def reproduce(
             )
 
         limits = population.get_limits(conn)
-        population.check_birth_licence(conn, limits)
+        displaced = population.check_birth_licence(
+            conn, limits, displacer=displacer, exclude=frozenset({parent.cell_id})
+        )
+        # Deliberately after any displacement, not before: evicting a Cell
+        # shrinks the living population, which *raises* every surviving
+        # lineage's share. Checking first would licence a birth against a
+        # population that no longer exists by the time the child is inserted.
+        # A lineage-cap failure here rolls the eviction back with everything
+        # else — the birth waits and the target lives.
         check_lineage_licence(conn, founder_cell_id=parent.founder_cell_id, limits=limits)
 
         child_type = cell_type or parent.cell_type
@@ -190,6 +204,7 @@ def reproduce(
                 "generation": parent.generation + 1,
                 "genome_hash": genome_hash,
                 "mutated": bool(mutation),
+                **lifecycle._displacement_metadata(displaced),
             },
         )
 

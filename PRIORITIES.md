@@ -120,10 +120,24 @@
   selecting for doing nothing.** Fixed and pinned. `reap` is dry-run by default; death is
   irreversible. 501 tests passing (20 new); golden hash unchanged. Hand-verified end to end.
 
+- [x] **§9.3 displacement** — DONE (2026-08-06), ADR-024. A birth denied at carrying capacity can
+  now evict one objectively-failing Cell instead of waiting, opt-in per birth. **The design is
+  mostly what displacement must not be able to do:** `population.Displacer` takes nothing about the
+  child — not its genome, budget, or forecast — so ADR-009's "no forecast-triggered kill" is a
+  property of the signature rather than a rule a reviewer has to notice, and the birth records
+  which Cell it displaced so traceability still runs both ways. Order among candidates is birth
+  order, explicitly *not* a ranking, since "take the worst" is §10.2's forbidden scalar collapse
+  wearing a comparison function. `lifecycle.kill` gained the `_kill_locked` core (ADR-022's shape)
+  so eviction and birth are one transaction. Three exclusions, each load-bearing: never the parent
+  (it funds the child), never a Cell with committed funds (an open reservation would be stranded),
+  never on negative EV (§10.5's twice-signed path must not have a back door). **Caught while
+  building: the lineage cap has to be checked *after* displacement** — eviction shrinks the living
+  population and so *raises* every surviving lineage's share; checking first births into a §9.4
+  violation having killed a Cell to get there. 520 tests passing (19 new); golden hash unchanged,
+  and honestly so — displacement is the one birth path replay cannot reach, since there is no
+  supported way to lower a population cap after `init` (logged).
+
 ## Next
-- [ ] **§9.3 displacement — now unblocked.** `death.is_objectively_failing` is the predicate §9.3
-  was waiting on ("a child may displace only a Cell already failing objective criteria"). A birth
-  denied at capacity can now evict rather than wait. ADR-009/Amendment A2.
 - [ ] **A Cell that acts.** The missing subsystem: an agent loop that reads a genome, calls the
   gateway, and records a deliberable. Keep genome content as *data the loop interprets*, never code
   it executes — Charter C15 holds only while genomes are inert, and the sandbox behind it (C12) is
@@ -133,13 +147,12 @@
 
 - [ ] **Aggregate-invoice reconciliation** — the half ADR-023 provably cannot do. Per-call reconciliation leaves ADR-020's sub-cent rounding overstatement exactly where it was (3.5¢ reconciles back through the same ceiling to the 4¢ already recorded); only an invoice *total* spanning many calls can post the correction. Additive: needs an invoice-level record, reusing all the per-call sign handling and breaker registration.
 - [ ] **Forward recovery for the gateway** — ADR-022's deferred alternative, which belongs with the reconciliation plumbing. Rollback is atomic but loses the provider's reported usage, so a crashed call still needs a human. Recording the response durably before applying the accounting (a `settling` status) would let recovery finish the settlement automatically.
-- [ ] `ledger.spend_by_book` overstates spend for a Cell that received a reconciliation credit; the fix needs a §31 account-level distinction between funding sources and spend destinations. Coroner reports only, never enforcement. See FUTURE_BUILD_HOOKS.
 - [ ] Tighten the pre-call token estimate — `providers._estimate_tokens` is a deliberate over-estimate (2 chars/token). The provider's `count_tokens` endpoint would cut over-reservation sharply and make cost overruns (ADR-021) rarer.
 - [ ] Experiment tracking — the other Phase 2 prerequisite; also unblocks `max_parallel_experiments` and the coroner report's `experiment_ids`/`stage_reached` (currently always empty/None).
 - [ ] §24 gateway features left out of the slice: routing by task type (§24.3), controlled retries (a retry after `execution_unknown` risks double-billing), structured-output validation, model competition, and reacting to provider drift as a §8.4 regime change (drift is *recorded* — `resolved_model`/`api_version` — but nothing consumes it).
 - [ ] Remaining CLI (`list-cells/show-cell/kill-cell/ledger/verify-ledger`) — purely additive, no blockers. (`sweep` landed with ADR-022.)
-- [ ] `kill()` doesn't sweep the dead Cell's open reservations or reclaim its residual cash/committed balance.
-- [ ] Displacement (§9.3, Amendment A2 / ADR-009) — still unimplemented; a birth denied at capacity stays denied rather than evicting an objectively-failing Cell, because §10.5's death criteria don't exist yet.
+- [ ] `kill()` doesn't sweep the dead Cell's open reservations or reclaim its residual cash/committed balance. Displacement raises the stakes: the colony now ends Cells to reclaim population slots while leaving their capital stranded, precisely when it is at capacity.
+- [ ] An audited path to change population limits after `init` (`set_limits_if_absent` is write-once, and lowering a cap below the current population needs a stated policy). Blocks golden-run coverage of displacement. See FUTURE_BUILD_HOOKS.
 - [ ] Wiring the simulated clock into USD_SIM/synthetic timestamps + `max_births_per_epoch` enforcement (clock primitive exists, nothing consumes it yet — now the *only* remaining reason a real colony can't do true byte-identical replay, since ids are seeded but timestamps still aren't).
 - [ ] Wiring event_inbox/outbox into a real producer/consumer (no domain code emits events through it yet).
 - [ ] Model gateway/provider identification (needed before per-provider real-spend caps can be enforced and before resource usage's `minor_units` can be shadow-priced from a raw quantity instead of caller-supplied).

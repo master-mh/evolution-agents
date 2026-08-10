@@ -3,90 +3,94 @@
 Keeps only the current entry so this file stays small enough to read in full every session.
 Earlier slices (1–10, plus CI wiring, seeded ids, reproduction/lineage, the full Phase 4 gateway
 arc, real-spend type registration, the first real paid call, revenue + Ollama, the `spend_by_book`
-account fix, and the prediction register, 2026-07-21 through 2026-08-05):
+account fix, the prediction register, and death criteria, 2026-07-21 through 2026-08-05):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-05 — Death criteria: the evolutionary loop closes
+## 2026-08-06 — §9.3 displacement: a birth at capacity can evict instead of wait
 
-Reproduction has worked since the lineage slice. What was missing was any principled reason for a
-Cell to stop — so a colony could grow but never select. This is the other half, and with it the
-loop is closed: birth, spend, earn, predict, die.
+§9.3 says a birth needs "an available population slot **or a successful displacement**". Only the
+first half existed: a birth denied at carrying capacity stayed denied, because the objective
+criteria that identify a displaceable Cell had not been built. Last slice's
+`death.is_objectively_failing` was the predicate §9.3 was waiting on, and this is the other side
+of that seam.
 
-**Reading §10.5 first changed the design substantially, and the spec forbids what "selection on
-fitness" would naturally mean.**
+**Almost every decision here is about what displacement must not be able to do** (ADR-024).
 
-- **§10.5: "Estimated negative EV *alone* must not kill a Cell"** unless evidence is sufficiently
-  strong *and* an independent Auditor or evaluator concurs. So compute-fitness-and-cull-the-bottom
-  — the obvious implementation, and the one the previous three slices might look like they were
-  building toward — is exactly what the spec prohibits. An estimate is not evidence, and a colony
-  that culls on estimates selects for Cells that look good to the estimator. `reap` therefore kills
-  only on realised facts, and negative EV is a separate entry point that structurally cannot be
-  reached without a concurring Auditor.
-- **§10.2: "Do not collapse all dimensions into one scalar."** So domination is **Pareto**
-  domination — at least as good on every measured dimension, strictly better on one — rather than a
-  ranking on a weighted sum. A Cell that earns more but predicts worse is *not* dominated. That is
-  the constraint doing real work rather than being cited.
-- **§10.3: Explorers "need no immediate revenue."** Handled without a special case: comparisons are
-  restricted to near-duplicates (same genome hash, which in this kernel is effectively same-type per
-  ADR-018/019), so an Explorer is only ever compared with another Explorer.
-- **§9.3: "A proposed child's forecast can never trigger a kill."** Every input to `findings` comes
-  from the ledger or the resolved prediction register. Nothing forecasts.
+- **§9.3 / ADR-009: a proposed child's forecast can never trigger a kill.** So
+  `population.Displacer.displace` takes the connection, which cap binds, and an exclusion set —
+  and nothing whatsoever about the child. There is no forecast in scope to game. ADR-009 claims
+  this surface is closed "by construction"; a construction argument that relies on a reviewer
+  noticing a misuse is not one, so the guarantee is in the signature and pinned by a test that
+  reads the signature. The *link* is not lost: the birth's audit event records which Cell it
+  displaced, so traceability runs both ways while selection depends on none of it.
+- **§10.2 forbids scalar collapse**, which reaches further than it first appears. Choosing among
+  several eligible candidates is where a fitness ranking would sneak back in as "take the worst
+  one". Every candidate already independently meets an objective criterion, so any is a valid
+  target; order is birth order, for deterministic replay (§26), and the CLI says so on screen.
+- **Displacement is opt-in per birth.** Without a `displacer` the behaviour is unchanged: denial.
+  The alternative — displacing whenever a birth hits a cap — silently converts every capacity
+  refusal in the kernel into a death. Same posture `reap` takes by defaulting to a dry run.
+- **At most one Cell, with the caps re-checked afterwards.** A displacer that frees the wrong kind
+  of slot produces a denied birth, never a second kill chasing the slot it missed.
 
 ### What landed
 
-- **`death.py`.** `DeathCriterion` covers all of §10.5's criteria — including the unimplementable
-  ones, so a coroner report's `cause_of_death` uses one vocabulary from the start and the gap is
-  visible in the type rather than only in prose. `findings()` returns the criteria a Cell currently
-  meets *with the realised evidence*, which reaches the coroner report, so a death always carries
-  the numbers that caused it. `reap()` is **dry-run by default**: a death is irreversible, files a
-  coroner report, and Charter C8 makes the Cell permanently inert, so the first time a colony can
-  end its own Cells is not the moment to discover a criterion was too eager.
-- **Two criteria implemented, and the honest list of what is not.** `budget_exhausted` (holds
-  nothing, nothing pending) and `dominated_by_near_duplicate` (Pareto, realised). Not implemented:
-  `failed_validation_gates` and `evidence_not_reproducible` need experiment tracking (Phase 2);
-  `policy_violation` needs §31's `policy_violations` table, and inferring it from a quarantine
-  reason would be guessing, since `quarantine` takes free text and is also used for poison events;
-  `displacement` is §9.3's own slice — **which this unblocks**, via `is_objectively_failing`, the
-  predicate §9.3 was waiting on.
-- **`kill_for_negative_ev` is the guarded path**, and its independence checks are its substance: the
-  auditor cannot be the subject, must be alive, and must be an auditor or immune Cell (§10.4). The
-  concurrence is written to the audit trail and the auditor's id into the coroner report, so a death
-  on an estimate can always be traced to who agreed to it.
-- **A Cell mid-operation is never exhausted.** Zero cash with funds committed means a call is in
-  flight; killing then would strand its reservation.
-- **CLI:** `reap` (dry-run unless `--execute`) and `cell-fitness`, which prints revenue, spend, net
-  contribution and calibration side by side — deliberately not a score, per §10.2.
+- **`displacement.py`** — `ObjectiveDisplacer` plus a read-only `candidates()`. Three exclusions
+  beyond "meets a criterion", each load-bearing: **never the parent** (it funds the child, so
+  killing it first moves money out of a dead Cell, and a lineage buying room by killing its own
+  root is the incentive §9.4 exists to suppress); **never a Cell with committed funds** (a
+  reservation is open and `kill()` sweeps nothing); **never on negative EV** (§10.5 admits that
+  only with a concurring independent Auditor — `DISPLACEABLE_CRITERIA` excludes it explicitly
+  rather than relying on `death.findings` happening not to return it today).
+- **`lifecycle._kill_locked`** — the kill split into ADR-022's core-plus-wrapper shape, so eviction
+  and birth are one `BEGIN IMMEDIATE`. A crash between them would otherwise leave a Cell dead and
+  its slot unfilled: a death that bought nothing, and one no invariant would report, since
+  conservation and the hash chain stay green through it.
+- **Which cap binds decides what a target must be.** Only killing an `alive` Cell frees an *active*
+  slot; any living Cell frees a *living* one. Evicting a dormant Cell to relieve an active-cap
+  breach is a death that buys nothing, so `require_active` is derived from the actual breach.
+- **CLI** — `--displace` on `create-cell` and `reproduce`, and `displacement-candidates`, which is
+  read-only and is the look-before-you-evict command.
+- The coroner report's cause of death carries **both** the displacement and the objective criterion
+  the Cell already met, with its evidence — a death is never traceable only to "something needed
+  the slot".
 
-### A trap caught while writing it
+### The trap caught while building it
 
-Domination on net contribution alone makes an **idle** Cell — spent nothing, earned nothing, net
-zero — dominate one that invested and has not yet returned. That selects for doing nothing, which in
-an evolutionary colony is the failure mode that quietly ends the experiment while every invariant
-stays green. Fixed with `_has_realised_record`: a Cell with no realised record is not superior, it
-is unmeasured. Pinned by `test_an_idle_cell_does_not_dominate_one_that_invested`, and the teeth
-check confirms removing the gate fails it.
+**The lineage cap has to be checked *after* displacement.** Eviction shrinks the living population,
+which *raises* every surviving lineage's share — so checking first licences the birth against a
+population that no longer exists by the time the child is inserted, and the colony ends up
+violating §9.4 having killed a Cell to get there. The ordering is load-bearing at ordinary numbers,
+not just in principle: with cap 0.5 and three living Cells, the projection is 2/4 = 0.50 before and
+2/3 = 0.67 after. Pinned by
+`test_the_lineage_cap_is_checked_against_the_population_displacement_leaves`, which also asserts
+the eviction rolls back with the failed birth.
 
 ### Verification
 
-- **501 tests passing** (20 new, 0 removed; up from 481). Golden-run hash unchanged — correct, since
-  the golden scenario contains no Cell meeting an objective criterion and `reap` is never called;
-  a changed hash would have meant death criteria firing somewhere they should not.
-- **Teeth-checked four ways**, one per constitutional constraint: making negative EV automatic fails
-  `test_negative_ev_is_never_reachable_from_reap`; removing the idle gate fails the idle-domination
-  test; collapsing calibration out of the comparison (a scalar collapse, §10.2) fails
-  `test_domination_requires_being_better_on_every_dimension`; allowing self-concurrence fails the
-  own-death test.
-- **The most important test is `test_losing_money_is_not_a_death_criterion`.** A Cell that spent 600
-  and earned 100 survives, because §10.5 does not make that fatal. Breaking it would cull on
-  estimates and nothing would report it — the colony would simply stop exploring.
-- **Hand-verified end to end** on a scratch colony: drained a Cell, `reap` reported it without
-  killing, `reap --execute` killed it, and the coroner report recorded both the criterion and its
-  evidence (`budget_exhausted: {'book': 'USD_SIM', 'cash': 0, 'committed': 0}`) with
-  `spend_by_book` reading `{"USD_SIM": 500}` — the function fixed two slices ago now feeding a real
-  death. On the live colony, `cell-fitness` reads 75 revenue / 0 spend / mean Brier 0.0563 and
-  `reap` correctly finds nothing.
-- Not yet committed — reporting for review first.
-- Next: §9.3 displacement is now unblocked and is the natural follow-on — a birth denied at capacity
-  can evict an objectively-failing Cell rather than simply waiting. Beyond that the agent loop is
-  still the missing subsystem, and it is worth being plain that **nothing here selects on its own**:
-  `reap` must be called, and no Cell yet acts, predicts, or earns without a human driving it.
+- **520 tests passing** (19 new, 0 removed; up from 501). Golden-run hash unchanged.
+- **Teeth-checked seven ways**, one per guarantee: removing the parent exclusion, the
+  committed-funds guard, the `require_active` derivation, the negative-EV exclusion, or the
+  post-displacement cap re-check each fails its named test; adding a `child_forecast` parameter to
+  the seam fails the structural test; swapping the lineage-cap ordering fails the test above.
+- **One test was passing for the wrong reason and the teeth check caught it.** The mid-operation
+  test originally used a Cell at zero cash with funds committed — but `_budget_exhausted` already
+  refuses to fire while funds are committed, so `death` was doing the work and the new guard could
+  be deleted with everything still green. Rebuilt around a Cell that is genuinely failing
+  (dominated by a near-duplicate) *and* mid-call, which is the only shape where the guard is load-
+  bearing.
+- **A methodology note worth keeping:** the first teeth run reported a false result and then left a
+  restored-but-failing tree. Cause was Python bytecode caching, not the code — the lineage
+  reordering is size-preserving, and the mutate/restore cycle completed inside one second, so the
+  `(mtime, size)` pyc check accepted bytecode compiled from the *broken* source. Teeth checks that
+  edit source in place must run with `PYTHONDONTWRITEBYTECODE=1` or clear `__pycache__`.
+- **Hand-verified end to end** on a file-backed colony: `displacement-candidates` named the drained
+  Cell with its evidence, a birth without `--displace` was refused (`2/2 living, 2/2 active`), the
+  same birth with `--displace` succeeded and printed what it displaced, and the coroner report
+  recorded `displacement: ... while already meeting budget_exhausted: {'cash': 0, 'committed': 0}`
+  with `spend_by_book {'USD_SIM': 500}`. Hash chain and conservation green throughout; the dead
+  Cell reports no findings (Charter C8 inert).
+- Not committed — reporting for review first.
+- Next: the agent loop is still the missing subsystem. Worth being plain that **displacement
+  selects nothing on its own either** — it fires only when a caller passes `--displace`, and no
+  Cell yet acts, earns, or reproduces without a human driving it.
