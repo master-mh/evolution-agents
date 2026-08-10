@@ -90,7 +90,7 @@ the eviction rolls back with the failed birth.
   recorded `displacement: ... while already meeting budget_exhausted: {'cash': 0, 'committed': 0}`
   with `spend_by_book {'USD_SIM': 500}`. Hash chain and conservation green throughout; the dead
   Cell reports no findings (Charter C8 inert).
-- Not committed — reporting for review first.
+- Committed as `d779e18` and pushed.
 - Next: the agent loop is still the missing subsystem. Worth being plain that **displacement
   selects nothing on its own either** — it fires only when a caller passes `--displace`, and no
   Cell yet acts, earns, or reproduces without a human driving it.
