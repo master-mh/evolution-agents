@@ -164,9 +164,15 @@
   RESOURCE was the only bound (20000 → 19982), and context grew 336 → 414 tokens across nine wakes
   then plateaued under the `RECENT_PROPOSALS` cap — §15.1 holding on real data. Golden expectation
   5 → 6 (prompt text only; no balances moved).
-- [ ] **The paid half of the same check.** One `claude-haiku-4-5` deliberation, to compare schema
-  compliance and proposal quality between a 3B local model and a frontier one. Colony is staged and
-  the key is validated; it needs an explicit spend. Expect ~0.17¢ true cost recorded as 1¢.
+- [x] **The paid half — DONE** (2026-08-06). One `claude-haiku-4-5` deliberation: 909 in / 199 out,
+  3.8s, true cost **0.19¢ recorded as 1¢** (ADR-020 ceiling, 5× overstatement at this size; the
+  pre-call estimate over-reserved 2.8×). USD_REAL 5 → 4, `external_expense` 1, nothing committed,
+  no stranded reservations, breaker at 1¢ against a 5¢/request cap, all chains and conservation
+  green, A6 linkage complete. **It abstained** — citing its 9 unresolved predictions and absent
+  resolved track record, which it knew only because §15 context assembly shows a Cell its own
+  record. First live evidence that the context design feeds a real decision, and that `ABSTAIN`
+  earns its place as a first-class outcome rather than a Cell inventing work. Caveat: n=1, and it
+  read a history `llama3.2` created on the same Cell, so this is not a clean head-to-head.
 - [ ] **Something that wakes a Cell.** `enqueue-wake` is manual, the same gap `reap` has. §17.2's
   "scheduled research cycle" implies a scheduler and §6's clock is the natural driver, but the
   cadence policy is unspecified. Until then no Cell thinks without a human asking it to.

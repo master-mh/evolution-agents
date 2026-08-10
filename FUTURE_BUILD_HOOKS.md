@@ -281,3 +281,23 @@ actually queued for building — this file is memory, not a backlog to work thro
   by Anthropic's free `count_tokens`), which is the documented conservative direction but means
   every paid wake over-reserves ~2x. The already-logged `count_tokens` integration would fix it and
   now has a measured figure to justify it.
+
+## First paid deliberation (2026-08-06, claude-haiku-4-5)
+
+- **Thinking costs money and abstaining produces nothing to offset it.** Nine wakes on this Cell
+  produced zero experiments, zero spend beyond the calls themselves, and one reasoned refusal to
+  act. That is defensible behaviour, but the dynamic is worth naming: a Cell that abstains
+  indefinitely drains its budget through deliberation alone and eventually meets §10.5's
+  `budget_exhausted`. Whether that is correct selection (it did nothing, so it dies) or a trap (it
+  was being epistemically responsible and starved for it) is a real question the colony will face
+  as soon as anything wakes Cells on a schedule.
+- **Context carries across providers on one Cell, which makes model comparison muddy.** The paid
+  model abstained *because of* nine unresolved predictions the local model had registered on the
+  same Cell. That is the loop working as designed — history is history regardless of who wrote it
+  — but it means "compare model A against model B" needs separate Cells with separate histories,
+  or the second model is really being tested on the first one's mess.
+- **`estimated_cost_minor_units` was 0 on all eight proposals**, from both models, including for
+  proposed experiments. Either the field is being treated as optional-in-spirit despite being
+  REQUIRED, or the models genuinely cannot price work in a unit they have no reference for. The
+  §15 context shows balances but never shows what anything has historically cost — worth adding
+  before treating this field as signal.
