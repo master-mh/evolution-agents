@@ -227,3 +227,34 @@ actually queued for building — this file is memory, not a backlog to work thro
   direction for an irreversible operation.
 - **Nothing calls displacement on its own.** Like `reap`, it needs a caller. A colony at capacity
   with a failing Cell and a queued birth will sit there until a human passes `--displace`.
+
+## Agent loop slice (2026-08-06)
+
+- **The loop has never been driven by a real model.** Every deliberation so far has run against
+  `MockProvider`, whose reply is an input to the test. Nothing here shows that a real model
+  returns schema-valid JSON at a useful rate, and the unparseable path exists precisely because it
+  will not always. Ollama was not reachable on this machine when the slice landed; the first real
+  run should be a local (free) model, not a paid one, and should measure the parse-failure rate
+  before anything is concluded about the loop working.
+- **The §15 context budget bounds assembled context, not the whole prompt.** The fixed instruction
+  block (mostly the generated schema hint) is ~1,100 tokens against ~280 of assembled context.
+  Bounding the growing part is right, but a caller reading `budget_tokens` as a cost ceiling is
+  wrong by ~5x. Either fold the system prompt into the budget or rename the parameter.
+- **Nothing consumes a proposal, by design — but nothing *reviews* one either.** §23's approval
+  queue (risk tiers, SLAs, expiry, cumulative-exposure anti-gaming) does not exist. `risk_tier` is
+  recorded and inert. Until there is a queue, "the operator reads it" means `mitosis proposals`.
+- **Nothing wakes a Cell on its own.** `enqueue-wake` is manual, the same gap `reap` has. §17.2's
+  "scheduled research cycle" implies a scheduler, and the simulated clock (§6) is the natural
+  driver — but wiring it needs a cadence policy (per epoch? per Cell? funded how?) that §17 does
+  not specify.
+- **A proposal's `estimated_cost_minor_units` is never compared with what actually happened.**
+  §25.2 wants predicted-vs-observed at each rung; the estimate is stored and nothing scores it.
+  Prediction claims are scored (§8.5), the cost estimate is not — an obvious asymmetry to close
+  once proposals lead to anything.
+- **Context has no memory tiers or compaction (§15.2/§15.3).** Selection is recency-capped and
+  budget-bounded, which satisfies "do not load the entire Cell history", but there is no episodic
+  summarisation, relevance scoring, or age decay. A long-lived Cell's context does not get *better*
+  as it ages, only truncated.
+- **Deliberations are not linked to experiments.** `experiment_id` is None everywhere, as it is
+  throughout the kernel — experiment tracking is still the Phase 2 prerequisite that also blocks
+  two §10.5 death criteria and `max_parallel_experiments`.

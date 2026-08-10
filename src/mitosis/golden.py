@@ -59,6 +59,7 @@ from pathlib import Path
 
 from . import (
     clock,
+    deliberation,
     db,
     events,
     gateway,
@@ -99,7 +100,20 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           section. Predictions move no money, so `balances`,
 #           `transaction_types` and `reservations` are all unchanged; the
 #           diff is confined to `predictions` and two new audit event types.
-EXPECTATION_VERSION = 4
+#   4 -> 5: the scenario gained the agent loop (§15/§17.2) — a wake event
+#           enqueued and drained, one deliberation, one proposal, one
+#           prediction — plus `deliberations` and `proposals` snapshot
+#           sections. Reviewed diff, every part traceable to that one wake:
+#           +1 mock model call (cost 0), so +1 USD_REAL reserve and +1
+#           USD_REAL *release* (a zero-cost call releases rather than
+#           settles), +1 RESOURCE reserve/settle pair and +2 resource_usage
+#           rows, RESOURCE cell#1 cash -2 with infrastructure_reserve +2,
+#           +1 unresolved prediction, +1 processed cell_wake event, and the
+#           new `cell_deliberated` audit type. **No USD_REAL balance moves**,
+#           which is the property a golden replay has to keep (§26): the mock
+#           provider is priced at zero, and a run that started spending real
+#           money would be the single worst regression this file could miss.
+EXPECTATION_VERSION = 5
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -109,6 +123,27 @@ SCENARIO_RESERVATION_EXPIRY = datetime(2030, 1, 1, tzinfo=timezone.utc)
 # Fixed seed for ids.py (see module docstring) — every raw uuid the scenario
 # generates, not just its semantic snapshot, is reproducible run to run.
 GOLDEN_RUN_ID_SEED = 20260101
+
+# The mock provider's reply for the scenario's deliberation (step 13). A fixed
+# input, not a model's choice: what the golden run pins is the loop's handling
+# of a reply, not a model's ability to produce one.
+GOLDEN_PROPOSAL_REPLY = json.dumps(
+    {
+        "kind": "experiment",
+        "summary": "golden-run probe of the synthetic market",
+        "rationale": "fixed scenario proposal; exists to pin the loop, not to be clever",
+        "risk_tier": "LOW",
+        "estimated_cost_minor_units": 25,
+        "predictions": [
+            {
+                "claim": "golden-run probe returns a measurable signal",
+                "probability": 0.55,
+                "horizon_days": 30,
+            }
+        ],
+    },
+    sort_keys=True,
+)
 
 
 class GoldenRunError(Exception):
@@ -483,7 +518,31 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         idempotency_key="golden:prediction:open",
     )
 
-    # 12. Simulated clock.
+    # 13. The agent loop (§15, §17.2, §25.1). A wake event is enqueued and
+    #     drained, so this covers the event path end to end as well — the
+    #     inbox's first real producer *and* consumer.
+    #
+    #     The mock provider returns a fixed, valid proposal, which is what
+    #     makes this deterministic: the reply is an input to the scenario, not
+    #     a model's choice. What the run actually pins is everything around it
+    #     — context assembly staying inside its budget, strict parsing, the
+    #     proposal and its prediction committing together, and the wake event
+    #     ending up processed.
+    deliberation.enqueue_wake(
+        conn,
+        cell_id=explorer.cell_id,
+        wake_reason=deliberation.WAKE_SCHEDULED_RESEARCH,
+        dedupe_key="golden:wake:1",
+        available_at=SCENARIO_EPOCH,
+    )
+    deliberation.run_ready_wakes(
+        conn,
+        provider=providers.MockProvider(reply=GOLDEN_PROPOSAL_REPLY),
+        model="mock-1",
+        now=SCENARIO_RESERVATION_EXPIRY,
+    )
+
+    # 14. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
 
@@ -637,6 +696,36 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         for row in conn.execute("SELECT * FROM prediction_register ORDER BY rowid").fetchall()
     ]
 
+    # The agent loop (§15/§17.2). Deliberately records `context_tokens` and the
+    # dropped-section list: §15.1's "do not load the entire Cell history" is a
+    # behavioural claim, and a snapshot that captured only the proposal would
+    # let context assembly silently start loading everything without the hash
+    # moving. Proposal *text* is included because it is the model's output for
+    # a fixed mock reply — if it ever varies, parsing has changed.
+    deliberation_rows = [
+        {
+            "cell": aliases.get(row["cell_id"], "cell#?"),
+            "wake_reason": row["wake_reason"],
+            "status": row["status"],
+            "failure_reason": row["failure_reason"],
+            "context_tokens": row["context_tokens"],
+            "context_dropped": json.loads(row["context_dropped_json"]),
+            "made_model_call": row["model_call_id"] is not None,
+        }
+        for row in conn.execute("SELECT * FROM deliberations ORDER BY rowid").fetchall()
+    ]
+
+    proposal_rows = [
+        {
+            "cell": aliases.get(row["cell_id"], "cell#?"),
+            "kind": row["kind"],
+            "summary": row["summary"],
+            "risk_tier": row["risk_tier"],
+            "estimated_cost_minor_units": row["estimated_cost_minor_units"],
+        }
+        for row in conn.execute("SELECT * FROM proposals ORDER BY rowid").fetchall()
+    ]
+
     model_call_rows = [
         {
             "cell": aliases.get(row["cell_id"], "cell#?"),
@@ -672,6 +761,8 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "model_calls": model_call_rows,
         "coroner_reports": coroner_rows,
         "predictions": prediction_rows,
+        "deliberations": deliberation_rows,
+        "proposals": proposal_rows,
         "audit_event_types": audit_event_types,
         "event_inbox": inbox,
         "event_outbox": outbox,

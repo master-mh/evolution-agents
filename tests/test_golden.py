@@ -295,12 +295,16 @@ def test_snapshot_pins_the_model_gateway():
     golden.run_scenario(conn)
     calls = golden.semantic_snapshot(conn)["model_calls"]
 
-    assert len(calls) == 1
-    call = calls[0]
-    assert call["provider"] == "mock"
-    assert call["status"] == "succeeded"
-    assert call["input_tokens"] > 0 and call["output_tokens"] > 0
-    assert call["pricing_table_version"] == pricing.PRICING_TABLE_VERSION
+    # Asserted over every call rather than pinned at a count: the scenario
+    # gains calls as subsystems land (the agent loop added the second), and a
+    # count assertion would fail for that instead of for gateway drift, which
+    # is what this test is actually about.
+    assert calls
+    for call in calls:
+        assert call["provider"] == "mock"
+        assert call["status"] == "succeeded"
+        assert call["input_tokens"] > 0 and call["output_tokens"] > 0
+        assert call["pricing_table_version"] == pricing.PRICING_TABLE_VERSION
 
 
 def test_golden_run_never_spends_real_money():

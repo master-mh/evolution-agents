@@ -533,6 +533,56 @@ Template: **Status** · **Spec ref** · **Context** · **Decision** · **Consequ
 
 ---
 
+## ADR-025: The agent loop proposes; it does not act, and it cannot grade itself
+
+- **Status:** Accepted
+- **Spec ref:** §0.3, §0.4, §15, §17.2, §19.4, §23.1, §25.1; Charter C6, C8, C15
+- **Context:** Every subsystem before this one is machinery *for* a Cell. The agent loop is the
+  Cell. The obvious implementation — wake it, let the model decide what to do, do it, record how
+  it went — violates four separate normative sections, and each violation is easy to miss because
+  the result still looks like a working agent.
+- **Decisions, and the alternatives each displaced:**
+  1. **The loop lands at rung 5 of §25.1's ladder — "shadow prediction with no action".** A wake
+     produces a recorded proposal and registered predictions, and nothing else. No kernel path
+     consumes a proposal. Rejected: letting a proposal trigger a reservation, a reproduction, or
+     an external call, which is rung 9 reached by skipping eight. The ladder is not advice; §25.1
+     opens "No strategy moves directly from synthetic success to autonomous commerce."
+  2. **No self-reported outcome, enforced in the schema.** §0.3 — "A Cell may explain a result; it
+     may never define the canonical result" — means the proposal type carries intentions only.
+     Revenue still comes from `revenue.record_revenue`, spend from ledger entries, calibration from
+     the hash-chained register. Rejected: an `outcome` or `result` field "for the Cell's own
+     notes", which is one join away from becoming a fitness input. `proposal.FORBIDDEN_FIELD_SENSE`
+     plus its test is a tripwire on the schema itself, so widening it toward self-reporting has to
+     be an argued change rather than a plausible-looking commit.
+  3. **Strict parsing; unknown fields rejected, not ignored.** §19.4 treats model output as
+     untrusted content, never a trusted command, so a reply inventing `"authorised": true` fails
+     validation loudly. An unparseable reply is recorded as a failed deliberation with the
+     validation error, and **the raw prose is not stored** — a text blob in the database is what a
+     later reader mistakes for a result. The Cell still pays for the call: rolling it back would
+     make a non-compliant Cell cheaper to run than a compliant one.
+  4. **Genome content is data the loop interprets, never code it executes.** It is rendered into
+     the prompt as JSON; nothing is `exec`'d, `eval`'d, or used to select a code path, and an AST
+     test enforces that. Charter C15 holds only while genomes are inert; C12's sandbox is Phase 5.
+  5. **A wake cannot run inside `events.process_event`'s handler transaction.** That contract
+     requires the handler not to commit; ADR-022 requires the gateway's reservation to commit
+     *before* the external call. The two cannot both hold, so `run_wake_event` deliberates first
+     and marks the event processed after. Idempotency on a wake key derived from the event id is
+     what makes this safe — and is what Charter C6 actually asks for ("handlers must be idempotent
+     under at-least-once redelivery"), rather than transactional atomicity. Rejected: making the
+     model call inside the handler (breaks reserve-before-execute) and dropping the event path
+     (leaves §17.2's wake events with no consumer, as they had been since slice 6).
+  6. **The §15 context budget bounds assembled context, not the whole prompt.** The fixed
+     instruction block is ~1,100 tokens against ~280 of assembled context in the golden run.
+     Bounding the part that *grows* is the right call — a Cell's accumulating history is what runs
+     away — but the budget is not a cost ceiling, and reading it as one is wrong by roughly 5x.
+     Stated in `context.py` and logged rather than left for someone to discover from an invoice.
+- **Consequences:** A colony can now wake Cells that think, propose, and commit to forecasts, with
+  every canonical metric still sourced independently. What it cannot do is act on any of it: a
+  proposal needs an operator, and §23's approval queue does not exist. The loop is also still
+  unvalidated against a real model — everything here has run against the deterministic mock.
+
+---
+
 ## Amendments folded directly into the spec without a standalone ADR
 
 The remaining amendments from `docs/SPEC.md` §"Amendments introduced in v0.2" are feature

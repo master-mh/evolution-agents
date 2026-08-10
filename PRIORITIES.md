@@ -137,13 +137,32 @@
   and honestly so — displacement is the one birth path replay cannot reach, since there is no
   supported way to lower a population cap after `init` (logged).
 
+- [x] **A Cell that acts** — DONE (2026-08-06), ADR-025. `deliberation.py` + `context.py` +
+  `proposal.py` + migration 0013. One wake is: assemble bounded context (§15) → one gateway call →
+  parse a strict structured proposal → record it with its predictions registered before their
+  outcomes (§8.5). **Structured proposals landed with it** (the separate Next item below), because
+  prose output and §0.3 are incompatible: `extra="forbid"`, no field for a self-reported outcome,
+  and `FORBIDDEN_FIELD_SENSE` as a tripwire on the schema itself. **The loop lands at rung 5 of
+  §25.1's ladder — "shadow prediction with no action" — not rung 9:** a proposal is inert, no
+  kernel path consumes it, and `risk_tier` grants nothing. Genome content is data rendered into a
+  prompt, never executed (Charter C15, enforced by an AST test). **Found while building: a wake
+  cannot run inside `events.process_event`'s transaction** — that contract forbids the handler
+  committing, ADR-022 requires the reservation to commit before the external call — so idempotency
+  on a wake key carries Charter C6 instead, which is what C6 actually asks for. Closes the
+  long-standing "no producer or consumer on the event path" gap. 549 tests passing (29 new);
+  golden expectation version 4 → 5 via a reviewed migration (**no USD_REAL moves**).
+
 ## Next
-- [ ] **A Cell that acts.** The missing subsystem: an agent loop that reads a genome, calls the
-  gateway, and records a deliberable. Keep genome content as *data the loop interprets*, never code
-  it executes — Charter C15 holds only while genomes are inert, and the sandbox behind it (C12) is
-  Phase 5.
-- [ ] **Structured proposals** — a Cell proposing strategy needs validated fields back, not prose.
-  Logged as out-of-scope in the gateway slice; now on the critical path for self-direction.
+- [ ] **Drive the loop with a real model.** Everything so far has run against the deterministic
+  mock, whose reply is an input. Nothing yet shows a real model returns schema-valid JSON at a
+  useful rate. Start local and free (Ollama was not reachable when the slice landed), and measure
+  the parse-failure rate before concluding the loop works.
+- [ ] **Something that wakes a Cell.** `enqueue-wake` is manual, the same gap `reap` has. §17.2's
+  "scheduled research cycle" implies a scheduler and §6's clock is the natural driver, but the
+  cadence policy is unspecified. Until then no Cell thinks without a human asking it to.
+- [ ] **§23 approval queue** — risk tiers, SLAs, expiry, cumulative-exposure anti-gaming (A11/A19).
+  Proposals are recorded and inert; `risk_tier` is stored and nothing reads it. This is what turns
+  a proposal into something an operator can act on without reading raw rows.
 
 - [ ] **Aggregate-invoice reconciliation** — the half ADR-023 provably cannot do. Per-call reconciliation leaves ADR-020's sub-cent rounding overstatement exactly where it was (3.5¢ reconciles back through the same ceiling to the 4¢ already recorded); only an invoice *total* spanning many calls can post the correction. Additive: needs an invoice-level record, reusing all the per-call sign handling and breaker registration.
 - [ ] **Forward recovery for the gateway** — ADR-022's deferred alternative, which belongs with the reconciliation plumbing. Rollback is atomic but loses the provider's reported usage, so a crashed call still needs a human. Recording the response durably before applying the accounting (a `settling` status) would let recovery finish the settlement automatically.
@@ -154,7 +173,9 @@
 - [ ] `kill()` doesn't sweep the dead Cell's open reservations or reclaim its residual cash/committed balance. Displacement raises the stakes: the colony now ends Cells to reclaim population slots while leaving their capital stranded, precisely when it is at capacity.
 - [ ] An audited path to change population limits after `init` (`set_limits_if_absent` is write-once, and lowering a cap below the current population needs a stated policy). Blocks golden-run coverage of displacement. See FUTURE_BUILD_HOOKS.
 - [ ] Wiring the simulated clock into USD_SIM/synthetic timestamps + `max_births_per_epoch` enforcement (clock primitive exists, nothing consumes it yet — now the *only* remaining reason a real colony can't do true byte-identical replay, since ids are seeded but timestamps still aren't).
-- [ ] Wiring event_inbox/outbox into a real producer/consumer (no domain code emits events through it yet).
+- [ ] Wiring the event *outbox* into a real dispatcher. The inbox got its first producer and
+  consumer with the agent loop (`enqueue_wake` / `run_ready_wakes`); nothing yet publishes staged
+  outbox events anywhere.
 - [ ] Model gateway/provider identification (needed before per-provider real-spend caps can be enforced and before resource usage's `minor_units` can be shadow-priced from a raw quantity instead of caller-supplied).
 - [ ] Reconciling resource_usage against actual sandbox/model-gateway logs (Amendment A6's other half — no such logs exist until Phase 4/5).
 

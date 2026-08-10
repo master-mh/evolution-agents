@@ -179,6 +179,47 @@ def register(
             "-inf permanently and destroy the ordering selection depends on"
         )
 
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        result = _register_locked(
+            conn,
+            cell_id=cell_id,
+            claim=claim,
+            probability=probability,
+            resolves_by=resolves_by,
+            experiment_id=experiment_id,
+            idempotency_key=idempotency_key,
+        )
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    conn.commit()
+    return result
+
+
+def _register_locked(
+    conn: sqlite3.Connection,
+    *,
+    cell_id: str,
+    claim: str,
+    probability: float,
+    resolves_by: datetime,
+    experiment_id: str | None = None,
+    idempotency_key: str | None = None,
+) -> Prediction:
+    """Append one prediction. Caller must already hold a write transaction
+    (BEGIN IMMEDIATE) — the `_*_locked` core-plus-wrapper split ADR-022
+    established, so another module can fold a registration into its own atomic
+    operation without nesting BEGIN.
+
+    The agent loop is why this exists: a proposal and the predictions it states
+    must commit together, or a Cell can end up with a recorded forecast the
+    register has no row for — the exact gap §8.5's register-before-outcome rule
+    exists to close. Note the hash chain makes ordering matter here in a way it
+    does not for most `_*_locked` cores: two registrations inside one
+    transaction chain to each other, which is correct, but only because the
+    caller holds the write lock for both.
+    """
     now = datetime.now(timezone.utc)
     if resolves_by <= now:
         raise PredictionError(
@@ -186,65 +227,59 @@ def register(
             "a prediction registered after its own deadline is not a prediction"
         )
 
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        cell = lifecycle.get_cell(conn, cell_id)
-        if cell is None:
-            raise PredictionError(f"no such cell: {cell_id}")
+    cell = lifecycle.get_cell(conn, cell_id)
+    if cell is None:
+        raise PredictionError(f"no such cell: {cell_id}")
 
-        prediction_id = ids.new_id()
-        key = idempotency_key or f"prediction:{prediction_id}"
-        created_at = now.isoformat()
-        resolves_at = resolves_by.astimezone(timezone.utc).isoformat()
-        previous = _last_hash(conn)
-        prediction_hash = _compute_hash(
-            prediction_id=prediction_id,
-            cell_id=cell_id,
-            experiment_id=experiment_id,
-            claim=claim.strip(),
-            probability=probability,
-            resolves_by_utc=resolves_at,
-            created_at_utc=created_at,
-            idempotency_key=key,
-            previous_hash=previous,
-        )
-        conn.execute(
-            """
-            INSERT INTO prediction_register (
-                prediction_id, cell_id, experiment_id, claim, probability,
-                resolves_by_utc, created_at_utc, previous_hash, prediction_hash,
-                idempotency_key
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                prediction_id,
-                cell_id,
-                experiment_id,
-                claim.strip(),
-                probability,
-                resolves_at,
-                created_at,
-                previous,
-                prediction_hash,
-                key,
-            ),
-        )
-        audit.record(
-            conn,
-            event_type="prediction_registered",
-            cell_id=cell_id,
-            description=claim.strip(),
-            metadata={
-                "prediction_id": prediction_id,
-                "probability": probability,
-                "resolves_by_utc": resolves_at,
-                "prediction_hash": prediction_hash,
-            },
-        )
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
-    conn.commit()
+    prediction_id = ids.new_id()
+    key = idempotency_key or f"prediction:{prediction_id}"
+    created_at = now.isoformat()
+    resolves_at = resolves_by.astimezone(timezone.utc).isoformat()
+    previous = _last_hash(conn)
+    prediction_hash = _compute_hash(
+        prediction_id=prediction_id,
+        cell_id=cell_id,
+        experiment_id=experiment_id,
+        claim=claim.strip(),
+        probability=probability,
+        resolves_by_utc=resolves_at,
+        created_at_utc=created_at,
+        idempotency_key=key,
+        previous_hash=previous,
+    )
+    conn.execute(
+        """
+        INSERT INTO prediction_register (
+            prediction_id, cell_id, experiment_id, claim, probability,
+            resolves_by_utc, created_at_utc, previous_hash, prediction_hash,
+            idempotency_key
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            prediction_id,
+            cell_id,
+            experiment_id,
+            claim.strip(),
+            probability,
+            resolves_at,
+            created_at,
+            previous,
+            prediction_hash,
+            key,
+        ),
+    )
+    audit.record(
+        conn,
+        event_type="prediction_registered",
+        cell_id=cell_id,
+        description=claim.strip(),
+        metadata={
+            "prediction_id": prediction_id,
+            "probability": probability,
+            "resolves_by_utc": resolves_at,
+            "prediction_hash": prediction_hash,
+        },
+    )
     return get(conn, prediction_id)  # type: ignore[return-value]
 
 

@@ -18,8 +18,10 @@ from pathlib import Path
 
 from . import (
     clock,
+    context,
     db,
     death,
+    deliberation,
     displacement,
     events,
     gateway,
@@ -648,6 +650,143 @@ def cmd_fund_cell(args: argparse.Namespace) -> None:
     conn.close()
 
 
+def _build_provider(args: argparse.Namespace) -> providers.ModelProvider:
+    """Shared by every verb that can drive a model call, so the paid-provider
+    confirmation is enforced in exactly one place. A second copy of this
+    `if` is how one verb eventually ships without the gate."""
+    if args.provider == providers.ANTHROPIC_PROVIDER:
+        if not args.yes_spend_real_money:
+            raise CliError(
+                "provider 'anthropic' makes a paid API call that spends real "
+                "money — re-run with --yes-spend-real-money to confirm"
+            )
+        return providers.AnthropicProvider()
+    if args.provider == providers.OLLAMA_PROVIDER:
+        # Local inference: no credential, no invoice, no --yes-spend-real-money
+        # gate. Its models are priced at zero (see pricing.PRICING_TABLE), so
+        # the USD_REAL path settles at 0 while RESOURCE metering still applies.
+        return providers.OllamaProvider()
+    if args.provider == providers.MOCK_PROVIDER:
+        return providers.MockProvider()
+    raise CliError(
+        f"unknown provider: {args.provider!r} (known: "
+        f"{providers.MOCK_PROVIDER}, {providers.ANTHROPIC_PROVIDER}, "
+        f"{providers.OLLAMA_PROVIDER})"
+    )
+
+
+def cmd_wake(args: argparse.Namespace) -> None:
+    """Wake one Cell and let it deliberate (SPEC.md §17.2).
+
+    The Cell thinks and proposes. It does not act — §25.1's ladder puts this
+    at rung 5, "shadow prediction with no action", so the output is a recorded
+    proposal for the operator to read.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    cell = lifecycle.get_cell(conn, args.cell)
+    if cell is None:
+        raise CliError(f"unknown cell: {args.cell}")
+
+    result = deliberation.deliberate(
+        conn,
+        cell_id=cell.cell_id,
+        provider=_build_provider(args),
+        wake_key=args.wake_key or f"cli_wake:{ids.new_id()}",
+        wake_reason=args.reason,
+        model=args.model,
+        context_budget_tokens=args.context_budget,
+        max_tokens=args.max_tokens,
+    )
+    _print_deliberation(conn, result)
+    conn.close()
+
+
+def cmd_run_wakes(args: argparse.Namespace) -> None:
+    """Drain ready wake events from the inbox (§17.1's deterministic order)."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    results = deliberation.run_ready_wakes(
+        conn,
+        provider=_build_provider(args),
+        model=args.model,
+        limit=args.limit,
+        context_budget_tokens=args.context_budget,
+        max_tokens=args.max_tokens,
+    )
+    if not results:
+        print("No wake events are ready.")
+        return
+    print(f"Ran {len(results)} wake(s):")
+    for result in results:
+        print()
+        _print_deliberation(conn, result)
+    conn.close()
+
+
+def cmd_enqueue_wake(args: argparse.Namespace) -> None:
+    """Schedule a wake without running it."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    cell = lifecycle.get_cell(conn, args.cell)
+    if cell is None:
+        raise CliError(f"unknown cell: {args.cell}")
+
+    event = deliberation.enqueue_wake(
+        conn,
+        cell_id=cell.cell_id,
+        wake_reason=args.reason,
+        dedupe_key=args.dedupe_key or f"cli_wake:{ids.new_id()}",
+    )
+    print(f"Queued wake {event.event_id} for cell {cell.cell_id}")
+    print(f"  reason: {args.reason}")
+    print("Run it with `mitosis run-wakes`.")
+    conn.close()
+
+
+def _print_deliberation(conn, result) -> None:
+    print(f"Deliberation {result.deliberation_id} ({result.status})")
+    print(f"  cell:    {result.cell_id}")
+    print(f"  woken:   {result.wake_reason}")
+    print(f"  context: {result.context_tokens} tokens")
+    if result.failure_reason:
+        print(f"  reason:  {result.failure_reason}")
+    if result.proposal_id:
+        stored = deliberation.get_proposal(conn, result.proposal_id)
+        print(f"  proposal [{stored['kind']}] risk={stored['risk_tier']}")
+        print(f"    {stored['summary']}")
+        print(f"    rationale: {stored['rationale']}")
+        print(f"    estimated cost: {stored['estimated_cost_minor_units']} minor units")
+    for prediction_id in result.prediction_ids:
+        registered = prediction.get(conn, prediction_id)
+        if registered is not None:
+            print(
+                f"  predicted p={registered.probability}: {registered.claim} "
+                f"(by {registered.resolves_by_utc.date()})"
+            )
+    if result.proposal_id:
+        print("\n  Nothing here executes. A proposal is a record for you to read (SPEC.md §25.1).")
+
+
+def cmd_proposals(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    found = deliberation.list_proposals(conn, cell_id=args.cell)
+    if not found:
+        print("No proposals recorded.")
+        return
+    print(f"{len(found)} proposal(s):")
+    for stored in found:
+        print(f"  {stored['proposal_id']}  [{stored['kind']}] risk={stored['risk_tier']}")
+        print(f"    cell: {stored['cell_id']}")
+        print(f"    {stored['summary']}")
+    conn.close()
+
+
 def cmd_call_model(args: argparse.Namespace) -> None:
     """The one CLI verb that can spend real money.
 
@@ -664,26 +803,7 @@ def cmd_call_model(args: argparse.Namespace) -> None:
     if cell is None:
         raise CliError(f"unknown cell: {args.cell}")
 
-    if args.provider == providers.ANTHROPIC_PROVIDER:
-        if not args.yes_spend_real_money:
-            raise CliError(
-                "provider 'anthropic' makes a paid API call that spends real "
-                "money — re-run with --yes-spend-real-money to confirm"
-            )
-        provider: providers.ModelProvider = providers.AnthropicProvider()
-    elif args.provider == providers.OLLAMA_PROVIDER:
-        # Local inference: no credential, no invoice, no --yes-spend-real-money
-        # gate. Its models are priced at zero (see pricing.PRICING_TABLE), so
-        # the USD_REAL path settles at 0 while RESOURCE metering still applies.
-        provider = providers.OllamaProvider()
-    elif args.provider == providers.MOCK_PROVIDER:
-        provider = providers.MockProvider()
-    else:
-        raise CliError(
-            f"unknown provider: {args.provider!r} (known: "
-            f"{providers.MOCK_PROVIDER}, {providers.ANTHROPIC_PROVIDER}, "
-            f"{providers.OLLAMA_PROVIDER})"
-        )
+    provider = _build_provider(args)
 
     request = providers.ModelRequest(
         model=args.model,
@@ -1155,6 +1275,63 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fitness_parser.add_argument("--cell", required=True)
     fitness_parser.set_defaults(func=cmd_cell_fitness)
+
+    def _add_model_args(parser, *, default_max_tokens: int) -> None:
+        """Shared by every verb that drives a model call, so a new verb cannot
+        acquire a provider without also acquiring the paid-provider gate."""
+        parser.add_argument(
+            "--provider", default=providers.MOCK_PROVIDER,
+            choices=[providers.MOCK_PROVIDER, providers.ANTHROPIC_PROVIDER, providers.OLLAMA_PROVIDER],
+        )
+        parser.add_argument("--model", default="mock-1", help="model id to request")
+        parser.add_argument("--max-tokens", type=int, default=default_max_tokens)
+        parser.add_argument(
+            "--yes-spend-real-money", action="store_true",
+            help="required for a paid provider; every other provider is free",
+        )
+        parser.add_argument(
+            "--context-budget", type=int,
+            default=context.DEFAULT_CONTEXT_TOKEN_BUDGET,
+            help="per-wake context token budget (SPEC.md §15.1)",
+        )
+
+    wake_parser = subparsers.add_parser(
+        "wake", help="wake one Cell to deliberate and propose (SPEC.md §17.2)"
+    )
+    wake_parser.add_argument("--cell", required=True, help="cell_id to wake")
+    wake_parser.add_argument(
+        "--reason", default=deliberation.WAKE_SCHEDULED_RESEARCH,
+        help="why it was woken (§17.2's wake events)",
+    )
+    wake_parser.add_argument(
+        "--wake-key", default=None,
+        help="idempotency key for this wake; a repeat returns the existing deliberation",
+    )
+    _add_model_args(wake_parser, default_max_tokens=deliberation.DEFAULT_MAX_TOKENS)
+    wake_parser.set_defaults(func=cmd_wake)
+
+    enqueue_wake_parser = subparsers.add_parser(
+        "enqueue-wake", help="schedule a wake event without running it"
+    )
+    enqueue_wake_parser.add_argument("--cell", required=True)
+    enqueue_wake_parser.add_argument(
+        "--reason", default=deliberation.WAKE_SCHEDULED_RESEARCH
+    )
+    enqueue_wake_parser.add_argument("--dedupe-key", default=None)
+    enqueue_wake_parser.set_defaults(func=cmd_enqueue_wake)
+
+    run_wakes_parser = subparsers.add_parser(
+        "run-wakes", help="drain ready wake events from the inbox"
+    )
+    run_wakes_parser.add_argument("--limit", type=int, default=None)
+    _add_model_args(run_wakes_parser, default_max_tokens=deliberation.DEFAULT_MAX_TOKENS)
+    run_wakes_parser.set_defaults(func=cmd_run_wakes)
+
+    proposals_parser = subparsers.add_parser(
+        "proposals", help="list recorded proposals (inert — nothing consumes them)"
+    )
+    proposals_parser.add_argument("--cell", default=None, help="scope to one cell_id")
+    proposals_parser.set_defaults(func=cmd_proposals)
 
     call_model_parser = subparsers.add_parser(
         "call-model",
