@@ -153,10 +153,20 @@
   golden expectation version 4 → 5 via a reviewed migration (**no USD_REAL moves**).
 
 ## Next
-- [ ] **Drive the loop with a real model.** Everything so far has run against the deterministic
-  mock, whose reply is an input. Nothing yet shows a real model returns schema-valid JSON at a
-  useful rate. Start local and free (Ollama was not reachable when the slice landed), and measure
-  the parse-failure rate before concluding the loop works.
+- [x] **Drive the loop with a real model — local half DONE** (2026-08-06). Ollama installed,
+  `llama3.2` (3B), nine live wakes. **The first one failed to parse, and the bug was the prompt's,
+  not the model's:** the schema hint rendered enum choices as JSON arrays, so the model returned
+  `"risk_tier": ["MEDIUM"]` — a correct choice in the wrong shape. A mock provider structurally
+  cannot find this, because its reply is an input rather than a response to the prompt's wording.
+  Fixed to `exactly one of: A | B | C`; compliance went **0/1 → 7/8**, the remaining failure being
+  malformed JSON from the model itself (170 output tokens against a 700 budget, and `max_tokens` is
+  correctly wired to Ollama's `num_predict`, so not a cap). Confirmed live: USD_REAL never moved,
+  RESOURCE was the only bound (20000 → 19982), and context grew 336 → 414 tokens across nine wakes
+  then plateaued under the `RECENT_PROPOSALS` cap — §15.1 holding on real data. Golden expectation
+  5 → 6 (prompt text only; no balances moved).
+- [ ] **The paid half of the same check.** One `claude-haiku-4-5` deliberation, to compare schema
+  compliance and proposal quality between a 3B local model and a frontier one. Colony is staged and
+  the key is validated; it needs an explicit spend. Expect ~0.17¢ true cost recorded as 1¢.
 - [ ] **Something that wakes a Cell.** `enqueue-wake` is manual, the same gap `reap` has. §17.2's
   "scheduled research cycle" implies a scheduler and §6's clock is the natural driver, but the
   cadence policy is unspecified. Until then no Cell thinks without a human asking it to.

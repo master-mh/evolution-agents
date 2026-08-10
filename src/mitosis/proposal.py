@@ -230,17 +230,30 @@ def response_schema_hint() -> str:
 
 
 def _prompt_schema() -> dict[str, Any]:
+    """The schema as the prompt shows it.
+
+    **Enum choices are rendered as a string, never as a JSON array**, and that
+    is not cosmetic. Rendering `"risk_tier": ["LOW", "MEDIUM", ...]` reads to a
+    model as "this field holds a list of these values", and the first real
+    model run returned exactly that — `"risk_tier": ["MEDIUM"]` — failing
+    validation on a field it had actually chosen correctly. The ambiguity was
+    the prompt's, not the model's. A mock provider could never surface this,
+    because its reply is an input rather than a response to these words.
+
+    Only `predictions` stays an array, because it genuinely is one.
+    """
     return {
-        "kind": [k.value for k in ProposalKind],
-        "summary": f"string, 1-{MAX_SUMMARY_CHARS} chars",
-        "rationale": f"string, 1-{MAX_RATIONALE_CHARS} chars",
-        "risk_tier": [t.value for t in RiskTier],
-        "estimated_cost_minor_units": "integer >= 0",
+        "kind": _one_of(ProposalKind),
+        "summary": f"REQUIRED string, 1-{MAX_SUMMARY_CHARS} chars",
+        "rationale": f"REQUIRED string, 1-{MAX_RATIONALE_CHARS} chars",
+        "risk_tier": _one_of(RiskTier),
+        "estimated_cost_minor_units": "REQUIRED integer >= 0 (use 0 if nothing would be spent)",
         "predictions": [
             {
                 "claim": (
                     "string, a claim that is unambiguously true or false once "
-                    "resolved (state a threshold, e.g. 'revenue >= 50 minor units')"
+                    "resolved (state a threshold, e.g. 'revenue >= 50 minor units'); "
+                    "each claim must be distinct"
                 ),
                 "probability": "number strictly between 0 and 1 (never 0 or 1)",
                 "horizon_days": (
@@ -249,3 +262,8 @@ def _prompt_schema() -> dict[str, Any]:
             }
         ],
     }
+
+
+def _one_of(enum_type) -> str:
+    """A single-choice field, rendered so it cannot be mistaken for a list."""
+    return "REQUIRED, exactly one of: " + " | ".join(m.value for m in enum_type)

@@ -802,9 +802,8 @@ def test_ollama_provider_needs_no_spend_confirmation(tmp_path, capsys):
     capsys.readouterr()
 
     # Reaches the provider rather than being refused for want of a confirmation
-    # flag. With no server running the call is *recorded as failed* and exits 0
-    # — a provider that is down is an outcome the gateway handles, not a CLI
-    # usage error, the same shape the live 401 took.
+    # flag, and exits 0 either way — a provider that is down is an outcome the
+    # gateway records, not a CLI usage error (the shape the live 401 took).
     assert cli.main([
         "--db", db_path, "call-model", "--cell", cell_id,
         "--provider", "ollama", "--model", "llama3.2", "--prompt", "hi",
@@ -812,8 +811,19 @@ def test_ollama_provider_needs_no_spend_confirmation(tmp_path, capsys):
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert "yes-spend-real-money" not in combined
-    assert "status:    failed" in captured.out
-    assert "ollama serve" in captured.out, "the error names the fix"
+
+    # Deliberately tolerant of BOTH outcomes. This originally asserted
+    # `status: failed` and "ollama serve", which was only ever true because no
+    # Ollama server happened to be running on the dev machine — installing one
+    # turned it red. Whether a local daemon is up is not what this test is
+    # about; what it is about is that local inference needs no spend
+    # confirmation and moves no real money. Asserting the environment instead
+    # of the property is how a test starts reporting on the machine it runs on.
+    if "status:    failed" in captured.out:
+        assert "ollama serve" in captured.out, "a down provider names the fix"
+    else:
+        assert "status:    succeeded" in captured.out
+    assert "settled 0.00 USD_REAL" in captured.out, "local inference is free in money"
 
 
 def test_unknown_provider_lists_all_three(tmp_path, capsys):

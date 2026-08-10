@@ -113,7 +113,16 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           which is the property a golden replay has to keep (§26): the mock
 #           provider is priced at zero, and a run that started spending real
 #           money would be the single worst regression this file could miss.
-EXPECTATION_VERSION = 5
+#   5 -> 6: the proposal schema hint stopped rendering enum choices as JSON
+#           arrays. The first real-model run (llama3.2, local) returned
+#           `"risk_tier": ["MEDIUM"]` — a correct choice in the wrong shape,
+#           because the prompt showed the field as a list. Prompt text only:
+#           the deliberation's `input_tokens` goes 1383 -> 1450 and its metered
+#           `resource_usage.quantity` follows. **No balance, reservation, or
+#           transaction type changes**, which is what a pure prompt edit should
+#           look like — anything else in this diff would have meant the loop's
+#           economics moved, not just its wording.
+EXPECTATION_VERSION = 6
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

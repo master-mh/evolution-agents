@@ -1,5 +1,5 @@
 {
-  "expectation_version": 5,
+  "expectation_version": 6,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "06a3b18fdf62fc39429cb4d15bb4e917ded7bd9317659d50ed789d4b924da031",
+  "semantic_hash": "9403c1efbbbe98c55b811d07b76b90a65ba6f23bcc515e558df5270276df584d",
   "snapshot": {
     "audit_event_types": {
       "cell_deliberated": 1,
@@ -193,7 +193,7 @@
       {
         "cell": "cell#1",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 1383,
+        "input_tokens": 1450,
         "mirror_minor_units": 0,
         "output_tokens": 181,
         "pricing_table_version": "2026-07-27",
@@ -388,7 +388,7 @@
       {
         "cell": "cell#1",
         "minor_units": 1,
-        "quantity": 1383,
+        "quantity": 1450,
         "resource_type": "input_tokens"
       },
       {

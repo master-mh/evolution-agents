@@ -258,3 +258,26 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **Deliberations are not linked to experiments.** `experiment_id` is None everywhere, as it is
   throughout the kernel — experiment tracking is still the Phase 2 prerequisite that also blocks
   two §10.5 death criteria and `max_parallel_experiments`.
+
+## First real-model run (2026-08-06, Ollama/llama3.2)
+
+- **Nothing checks that a prediction's claim is resolvable.** `llama3.2` registered "demand for
+  small software automation jobs increases by 20% within 30 days" — a well-formed binary claim that
+  no ledger query can settle. §8.5's scoring assumes claims resolve; the schema enforces bounded
+  probability and distinct claims but has no notion of *decidability*. A Cell can therefore
+  accumulate unresolvable predictions that inflate its `unresolved` count without ever being wrong.
+  Related to the already-logged idea of auto-resolving ledger-decidable claims: both want a claim
+  grammar rather than free text.
+- **The models predict optimistically and nothing yet penalises it.** p=0.7 on "revenue >= 100
+  minor units within 30 days" from a Cell with zero revenue and no customers, p=0.8 on a market
+  claim. The register will record the miss once resolved, but nothing resolves predictions
+  automatically, so the calibration signal only exists if an operator does the resolving.
+- **A prompt change silently reprices every wake.** The schema-hint fix moved the golden run's
+  deliberation from 1383 to 1450 input tokens. On a paid provider that is a real cost change
+  applied colony-wide by editing a string, with no review gate distinguishing it from a typo fix.
+  Worth considering whether prompt text belongs under the same versioned-migration discipline as
+  the pricing table.
+- **`providers._estimate_tokens` over-estimates ~2x on this prompt** (1781 estimated vs 909 actual
+  by Anthropic's free `count_tokens`), which is the documented conservative direction but means
+  every paid wake over-reserves ~2x. The already-logged `count_tokens` integration would fix it and
+  now has a measured figure to justify it.
