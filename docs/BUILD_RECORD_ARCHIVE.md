@@ -6,6 +6,237 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-08-22 — The estate: a dead Cell stops taking the colony's money with it
+
+`kill()` marked a Cell dead, filed its coroner report, and left its money where it was. Open
+reservations stayed open; residual cash sat on an account nothing could ever spend from again.
+ADR-028, in `lifecycle.py`.
+
+**The golden run had been losing 3450 USD_SIM per replay since expectation version 1**, and the
+expectation diff is the whole bug report: `cell:cell#0:cash` 3450 → 0, `colony_treasury` 300 →
+3750. Displacement made this worse by design — evicting Cells to reclaim population slots exactly
+when the colony is at capacity — and the scheduler made it compound with nobody watching.
+
+### What the spec gave, given it has no "estate" concept
+
+Charter C8 turned out to be the load-bearing clause, and not for the reason it looks like. "Dead
+Cells cannot act" reads as being about behaviour, but **an open reservation *is* standing
+authorisation to spend**, whatever the status column says — so a dead Cell holding one is the
+plainest possible instance of what C8 forbids. That is why the estate runs inside `_kill_locked`
+rather than as a follow-up sweep: a crash between the death and the release must not be able to
+leave that state. §9.3 displacement inherits it for free.
+
+`accounts.py` had already decided where the money goes, in a comment written two slices earlier:
+returning surplus to `colony_treasury` is "capital going back, not cost incurred". So the estate is
+capital movement, not spend — and the real-spend registration guard forced that decision explicitly
+rather than letting it pass on a reviewer noticing.
+
+### The tension worth recording
+
+ADR-022 says a reservation with an `external_operation_id` is resolved by finding out what the
+provider did, never by assuming — so death must not release it. But refusing to *kill* a Cell with
+a call in flight would break displacement and, worse, hand every Cell a survival strategy: keep one
+call in flight and never die. So an in-flight operation makes the estate **incomplete, not the
+death impossible**, and `mitosis sweep` finishes it once the sweeper has resolved the reservation.
+
+### Verification
+
+- **621 tests passing** (13 new, 0 removed; up from 608).
+- **Golden expectation 7 → 8** via a reviewed migration. Exactly four values move, all a single
+  transfer: `cell:cell#0:cash` 3450 → 0, `colony_treasury` 300 → 3750, plus one new transaction
+  type and one new audit type. USD_SIM conservation unchanged; **no USD_REAL movement**.
+- **Teeth-checked eight ways**, each failing its named test: not reclaiming cash at all, leaving
+  reservations open, releasing an in-flight external operation, sweeping a negative balance as
+  surplus, posting the estate to a spend destination, sweeping living Cells, keying the estate per
+  cell+book so a second pass collides, and un-exempting it from spend classification.
+- **A test of mine passed for the wrong reason and was rewritten.** `..._predates_the_estate`
+  asserted that ordering keeps the estate out of the coroner report — but the *classification*
+  does that, so the test passed with the estate deliberately moved before the report. The comment
+  in `_kill_locked` claimed the same thing and was corrected: the ordering is defence in depth and
+  is currently unobservable.
+- **An intermittent Charter-property failure was diagnosed and fixed, and it was not this slice's
+  bug.** Two property tests failed once each in full-suite runs, then passed on replay. One of them
+  (`charter_conservation_per_book`) touches no cells and no estate at all, which is what identified
+  it: every property test that builds a migrated database *inside* each example charges schema
+  setup against Hypothesis's 200ms per-example deadline, and at 15 migrations a loaded machine
+  trips it. `test_charter_carrying_capacity_lineage_share` had already been exempted for this
+  reason; that is now generalised, with the reasoning recorded in the file. Reproduced on
+  Hypothesis seeds 20 and 23, both green afterwards.
+- **Hand-verified on a live colony**: two Cells (1000 and 800, one holding a 300 in-flight external
+  reservation) died; the treasury went 0 → 1500 immediately, the in-flight Cell was listed as an
+  outstanding estate, and once its operation resolved the treasury reached 1800 with no outstanding
+  estates left. Conservation and the hash chain green, and the dead Cell's attributed spend stayed
+  empty.
+- Next: nothing still runs the scheduler (`tick` needs a crontab, and there is no alert when ticks
+  stop); `max_births_per_epoch` is checkable and unchecked; and nothing consumes an approval grant,
+  which is §25.1's next rung and its own slice.
+
+---
+
+## 2026-08-22 — The approval queue: a proposal becomes something an operator can act on
+
+The front item, and the thing that turns a colony that thinks into one whose thinking goes
+somewhere. New `approval.py` + migration 0015 (ADR-027), plus six CLI verbs.
+
+**Reading §23 first changed the design, and the clause that did it was the last one in the
+section.** §23.5 is a single sentence — "the approval queue is itself part of the environment and
+will be optimised against by Cells" — and it makes the obvious implementation unusable. The
+obvious queue reads `risk_tier` off the proposal and files accordingly. But `risk_tier` is written
+by the Cell being reviewed, and proposal.py had already written down what happens next: a Cell
+that could set its own tier and be believed "would set it to LOW forever."
+
+### The shape that fell out
+
+`claimed_tier` and `assessed_tier` are separate columns. The kernel derives its own from facts the
+Cell does not control — its book, its status, the request kind, and its lineage's cumulative
+exposure — and the fold is `max`, so **a Cell may raise its own tier and never lower it.** Claiming
+more danger is a Cell flagging itself and is believed; claiming less is recorded as an
+`understated_risk` signal, so the attempt stays visible rather than merely being defeated. This is
+§0.3 ("a Cell may explain a result; it may never define the canonical result") extended from
+outcomes to *requests*.
+
+### The finding worth keeping
+
+**§23.4's aggregation key should be the lineage, not the Cell — and the spec cannot say so.** The
+clause asks for cumulative exposure "keyed by counterparty/domain/channel". None of those exist
+yet; no Cell can take an external action. But its *target* is action-splitting, and the cheapest
+splitting mechanism this colony offers is not one Cell making many requests — it is §9
+reproduction. A Cell can birth children and have each ask for a fraction of one risky thing.
+Keying on `cell_id` would have missed exactly the split this system makes easiest. Verified live:
+a parent and its child now share one exposure total.
+
+### Where the two clocks separate
+
+§23.3 asks for SLAs *and* expiry, and they are not the same mechanism. An SLA breach makes an item
+**overdue** — "overdue items surface distinctly" is a reporting requirement, so overdue is derived
+at read time and the item stays pending and approvable. Expiry is a lifecycle transition, and the
+clause is specific about what follows: "expired actions are **regenerated and re-evaluated** before
+execution." So an expiry enqueues a fresh wake and the Cell re-derives the action, while an expired
+request can no longer be decided. Both halves matter; the second is the easy one to drop.
+
+Expiry itself is derived as a multiple of the tier SLA rather than a fourth unspecified knob, which
+means CRITICAL expires fastest. That reads harsh until you read it as §23.3 does — a critical action
+nobody looked at within the hour should be re-derived, not executed on hour-old reasoning.
+
+### What approval does not do
+
+§25.1 puts the loop at rung 5. This moves it to rung 6, "human-reviewed prototype" — **not** rung 9.
+`approve` writes a scoped, single-use, expiring **grant**, and nothing consumes one.
+`consumed_at_utc` exists and is always NULL, and a structural test forbids any module outside
+`approval.py` writing the table or reading that column, so the first executor has to break a named
+test and edit a migration comment that states the rule.
+
+### Verification
+
+- **608 tests passing** (37 new, 0 removed; up from 571).
+- **Golden run: expectation version 6 → 7**, via a reviewed migration. Exactly three sections
+  differ and the note explains each: a new `approval_requests` row (claimed LOW, **assessed
+  MEDIUM**, one `understated_risk` signal — §23.5's guarantee now pinned in the replay), a new
+  `approval_grants` count pinned at **0**, and `audit_event_types` gaining `approval_requested`.
+  **No balance, reservation, transaction-type or conservation change** — the balances section is
+  byte-identical to version 6.
+- **Teeth-checked thirteen ways**, one per guarantee, each failing its named test: letting the
+  Cell's claimed tier win, keying aggregation on the Cell instead of the lineage, dropping the
+  signal clause from batching, removing signal escalation, treating real-money spends as
+  reversible, dropping the action instead of regenerating it, approving an expired request,
+  counting rejected asks toward exposure, allowing a blank reason, backfilling the Auditor summary
+  from the Cell, queueing abstentions, widening the seam signature, and deciding one request twice.
+- **Two tests initially passed for the wrong reason** and were rewritten. The batching test is the
+  interesting one: four of the five signals escalate the tier, so a signalled item never reaches
+  `batchable` still LOW — meaning the explicit `not self.signals` clause is currently unreachable
+  through the real path. It is kept as the lock that becomes load-bearing if the escalation rules
+  are ever loosened, and the test now asserts both mechanisms *separately* rather than letting
+  escalation quietly answer for the clause.
+- **Hand-verified end to end on a live colony**: six proposals, five queued (the abstention
+  correctly skipped); four 12-unit spend requests all claimed LOW escalated LOW → MEDIUM → HIGH as
+  the aggregate crossed thresholds, with `action_splitting` firing on the third; batch approval
+  took only the one trivial reversible item and left the rest for individual review; a blank reason
+  was refused; a rephrased repeat of a rejected ask ("Buy sample D!!" against "buy sample D") was
+  caught by `repeat_after_rejection`; and five days on, four requests expired, regenerated four
+  wakes, and refused a late approval. All three conservation checks, both hash chains and resource
+  linkage green afterwards, **USD_REAL untouched**.
+- Next: nothing still runs the scheduler (`tick` needs a crontab); `max_births_per_epoch` remains
+  checkable and unchecked; and the queue's two honest gaps — no Auditor Cell to write §23.2's
+  independent summary, and no liability reserve to populate its liability line.
+
+---
+
+## 2026-08-06 — The scheduler: the colony runs unattended, and refuses to run away
+
+The last piece between a colony that must be driven by hand and one that runs from cron. New
+`scheduler.py` + migration 0014 (ADR-026).
+
+**Most of this slice is refusals, and that is what the spec spends its words on.** §23.3 exists
+because the failure mode of automation is not a bad decision, it is four hundred quiet ones
+overnight — the clause names that scenario directly. Reading §23.3 and §27.1 before designing
+changed the shape substantially, and §27.1 turned out to specify more than I expected: it ships
+the `operator:` block *and* `autonomy.real_spending: false` as defaults.
+
+### The cadence question answered itself
+
+I had flagged cadence as needing a decision from the user. It didn't: **the cadence policy is a
+dedupe key.** Each wake is `epoch:{n}:cell:{id}`, and `events.enqueue` is already idempotent on
+dedupe keys, so "one wake per Cell per epoch" is structural rather than arithmetic. Re-ticking
+inside an epoch enqueues nothing, a crashed tick resumes cleanly, and running from cron every
+minute costs nothing until the epoch turns over. No counter, no `last_woken_at` column that could
+disagree with the event log.
+
+### The finding worth keeping
+
+**§6.3's "explicit conversion metadata" is load-bearing, not ceremony.** §23.3 wants real cents
+per *sim*-epoch; every ledger row is stamped in *wall* time, because the clock still isn't wired
+into ledger timestamps. Attributing spend to an epoch is therefore impossible unless the wall
+anchor is recorded as each epoch is crossed — which is exactly what `epoch_log` does. The clause
+that reads like bookkeeping is the thing that makes the alarm computable at all.
+
+### Three guards, each from a normative clause
+
+- **`autonomy.real_spending` (§27.1), shipping false.** Two independent confirmations are needed
+  to spend real money on a schedule: the CLI's `--yes-spend-real-money` ("I meant to type this")
+  and the stored autonomy flag ("the colony may do this without me"). An unconfigured operator row
+  reads as *never seen*, so a colony with no operator config is in vacation mode with spending off.
+- **Vacation mode (§23.3)** maps onto the provider split with no new concept: a paid provider is
+  external-facing, mock and Ollama are not. An absent operator stops the colony **spending**, not
+  thinking — which is precisely what "external-facing phases auto-pause while sim-only work may
+  continue" asks for.
+- **The metabolic alarm (§23.3) watches the derivative, not another ceiling.** "An acceleration in
+  the burn rate raises an alarm **even if every individual cap is satisfied**" — so a second
+  absolute cap would duplicate the breaker and catch nothing new. It compares an epoch's burn
+  against a short baseline of recent *spending* epochs; zero-spend epochs are excluded, because a
+  colony going from idle to spending is starting rather than accelerating, and a zero baseline
+  makes every first spend an infinite acceleration.
+
+A fired alarm **halts the scheduler and persists until acknowledged with a stated reason**. §23.3
+says "alarm", not "halt" — but this is the module that runs while nobody watches, and an alarm
+nothing acts on is a log line. It halts *scheduling* only: no Cell dies, no reservation moves, the
+breaker is untouched, `mitosis wake` still works by hand. A heartbeat deliberately does not clear
+it — being back at the keyboard is not the same as having looked at why money was burning.
+
+### Verification
+
+- **571 tests passing** (22 new, 0 removed; up from 549). Golden-run hash **unchanged** — correct,
+  since the scenario never ticks; a changed hash would have meant the scheduler firing somewhere
+  it shouldn't.
+- **Teeth-checked nine ways**, one per guarantee: defaulting `real_spending` on, skipping the
+  autonomy check, skipping vacation mode, dropping the acceleration half of the alarm, letting a
+  fired alarm not halt, letting a heartbeat clear the alarm, allowing an unexplained
+  acknowledgement, breaking the per-epoch dedupe key, and widening eligibility past `alive` — each
+  fails its named test.
+- **Hand-verified end to end** on a live colony: two ticks in one epoch woke 2 Cells then 0; a
+  paid tick was refused first by the CLI flag and then, with the flag passed, by
+  `halted_autonomy`; with autonomy enabled and the operator 7 days absent it read
+  `halted_vacation` while a free tick still ran. Then the acceleration case — four epochs at 2
+  minor units, one at 30, **all under the 50-unit cap** — fired on `15.0x the recent baseline`,
+  halted the next tick even on a free provider, survived a heartbeat, refused a blank
+  acknowledgement, and resumed after an explained one.
+- Not committed — reporting for review first.
+- Next: `max_births_per_epoch` is finally checkable (the epoch primitive was its missing
+  prerequisite) but belongs with the birth paths; §23's approval queue still does not exist, which
+  matters more now that proposals are generated unattended; and **nothing runs the scheduler** —
+  `tick` is a command, so a colony still needs someone to install the crontab.
+
+---
+
 ## 2026-07-26 — Seeded id generation (second and final Phase 1 gating item closed)
 
 `golden.py`'s docstring named the gap: the kernel had no seeded id generation, so a golden run's
@@ -1218,3 +1449,90 @@ the eviction rolls back with the failed birth.
 - Next: the agent loop is still the missing subsystem. Worth being plain that **displacement
   selects nothing on its own either** — it fires only when a caller passes `--displace`, and no
   Cell yet acts, earns, or reproduces without a human driving it.
+
+## 2026-08-06 — The agent loop: a Cell that thinks
+
+Everything built until now was machinery *for* a Cell. This is the Cell. A wake is: assemble
+bounded context (§15) → one gateway call → parse a strict structured proposal → record it with
+its predictions registered before their outcomes (§8.5). Then it sleeps.
+
+**Reading the normative sections first changed the design more here than in any previous slice,
+because the obvious agent loop violates four of them at once and still looks like it works.**
+
+- **§25.1's promotion ladder puts this at rung 5 — "shadow prediction with no action" — not rung
+  9.** "No strategy moves directly from synthetic success to autonomous commerce" is the section's
+  opening line. So a proposal is a row in a table that no kernel path consumes. The natural loop
+  ("let the model decide, then do it") skips eight rungs, and would have felt like progress.
+- **§0.3: "A Cell may explain a result; it may never define the canonical result."** This is the
+  one that shapes the schema. The proposal type carries intentions and explanations only — there
+  is no field for what a Cell earned, achieved, or how well it did. Revenue still comes from the
+  ledger, calibration from the hash-chained register. A Cell under selection pressure that can
+  grade itself is a colony grading Cells on testimony.
+- **§19.4: model output is untrusted content, never a trusted command.** Unknown fields are
+  rejected rather than ignored, so a reply inventing `"authorised": true` fails loudly.
+- **Charter C15 holds only while genomes are inert.** Genome content is rendered into the prompt
+  as JSON and interpreted; nothing is `exec`'d or selects a code path. C12's sandbox is Phase 5.
+
+### What landed
+
+- **`proposal.py`** — the only shape a deliberation may return. `extra="forbid"`, bounded text,
+  binary threshold predictions with probabilities strictly inside (0,1), and
+  `FORBIDDEN_FIELD_SENSE`: a named list of fields that must never exist, with a test that fails if
+  any becomes real. It is not a blocklist the parser consults (nothing unknown gets through
+  anyway) — it is a tripwire on the *schema*, so drifting toward self-reporting has to be an
+  argued change rather than a plausible-looking commit.
+- **`context.py`** — §15.1's per-wake budget, taken literally. Sections are priority-ordered,
+  required ones (policy, genome, wake reason) are reserved up front and never dropped, and what
+  did not fit is **recorded by name**: "do not load the entire Cell history" is only a checkable
+  claim if the selection says what it left out.
+- **`deliberation.py`** — the loop, plus the wake-event path. Refusals are *recorded, not raised*:
+  a dead Cell woken, or one that cannot afford to think, is a fact about the colony that should
+  appear in a query rather than only in a traceback.
+- **The event inbox got its first real producer and consumer**, closing a gap open since slice 6.
+- **CLI:** `wake`, `enqueue-wake`, `run-wakes`, `proposals`. Provider selection was extracted into
+  one helper so the paid-provider confirmation lives in exactly one place — a second copy of that
+  `if` is how a verb eventually ships without the gate.
+
+### The architectural surprise
+
+**A wake cannot run inside `events.process_event`'s handler transaction.** That contract requires
+the handler not to commit; ADR-022 requires the gateway's reservation to commit *before* the
+external call, or reserve-before-execute means nothing. Both cannot hold. So `run_wake_event`
+deliberates first and marks the event processed after, and idempotency on a wake key derived from
+the event id carries the guarantee instead — which is what Charter C6 actually asks for
+("handlers must be idempotent under at-least-once redelivery"), not transactional atomicity. A
+crash in the window leaves the event pending and the deliberation done; redelivery finds it and
+completes the bookkeeping. Pinned by a test that simulates exactly that window.
+
+### Verification
+
+- **549 tests passing** (29 new, 0 removed; up from 520).
+- **Golden run extended** via a reviewed A12 migration (expectation version 4 → 5): a wake event
+  enqueued and drained, one deliberation, one proposal, one prediction, plus `deliberations` and
+  `proposals` snapshot sections. Every part of the diff traces to that one wake, and **no USD_REAL
+  balance moves** — the mock is priced at zero, and a golden run that started spending real money
+  would be the single worst regression this file could miss. The snapshot deliberately captures
+  `context_tokens` and the dropped-section list, so context assembly cannot quietly start loading
+  everything without the hash moving.
+- **Teeth-checked eight ways**, one per guarantee: adding a self-reported outcome field, ignoring
+  unknown fields, letting a dead Cell deliberate, breaking wake-key idempotency, raising the
+  history cap, disabling the token budget, allowing duplicate claims, and storing the raw prose
+  each fail their named test.
+- **One test was passing for the wrong reason and the teeth check caught it** — the history-bound
+  assertion was written as `<= context.RECENT_PROPOSALS`, i.e. against the constant, so raising
+  the constant to 1000 satisfied it while loading exactly the history §15.1 forbids. Rewritten to
+  an absolute bound. (This is the second slice running where the teeth check found a tautological
+  test; the pattern is asserting against the thing under test.)
+- **Hand-verified on a live colony**, both paths: the mock's default prose reply produced a
+  recorded `unparseable` deliberation naming the parse error and storing none of the text, and a
+  compliant reply produced a `proposed` deliberation with two unresolved predictions dated 14 and
+  30 days out. The Cell's contribution afterwards reads **revenue 0, spend 0, mean Brier None** —
+  it proposed and claimed nothing that moved a canonical metric, which is §0.3 working. Ledger and
+  prediction chains valid, conservation green in all three books, A6 linkage complete, wake event
+  processed, RESOURCE balance down 4 units: the Cell paid for its own thinking.
+- Committed as `e7b1f69` and pushed; CI green.
+- **What this does not show:** the loop has never been driven by a real model. Ollama was not
+  reachable on this machine, and the paid path needs an explicit decision to spend. So there is no
+  evidence yet about how often a real model returns schema-valid JSON — the unparseable path
+  exists because it will not always. That, and something that wakes a Cell without a human asking,
+  are the top two Next items.

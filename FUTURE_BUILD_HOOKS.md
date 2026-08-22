@@ -301,3 +301,108 @@ actually queued for building — this file is memory, not a backlog to work thro
   REQUIRED, or the models genuinely cannot price work in a unit they have no reference for. The
   §15 context shows balances but never shows what anything has historically cost — worth adding
   before treating this field as signal.
+
+## Scheduler slice (2026-08-06)
+
+- **`max_births_per_epoch` is finally checkable and still unchecked.** The epoch primitive was the
+  missing prerequisite (§9.2); enforcing it belongs with `lifecycle.create_cell` / `reproduce`
+  rather than the scheduler, and needs a decision about what a denied birth does at the epoch
+  boundary — wait for the next epoch, or fail like the other population caps?
+- **§23's approval queue still does not exist**, so `operator.approval_sla_seconds` (§27.1) times
+  nothing and proposals have no review path. The scheduler now generates proposals unattended,
+  which makes the missing queue matter more than it did when a human ran every wake.
+- **The metabolic alarm only sees spend the scheduler observed.** `epoch_spend_minor_units`
+  returns 0 for any epoch no tick ran in, deliberately — but that means real spend a human causes
+  by hand between ticks is invisible to the alarm, and could reset a baseline. Acceptable while
+  the alarm guards automation specifically; revisit if it is ever presented as a colony-wide
+  burn-rate monitor.
+- **The baseline is naive.** Mean of up to five recent spending epochs, no seasonality, no
+  variance, no minimum sample. Two epochs at 1 and 2 minor units give a baseline of 1.5, so 5
+  units is a 3.3x "acceleration" — noisy at small numbers, which is exactly where a new colony
+  lives. A median plus a minimum-absolute-delta floor would be a cheap improvement.
+- **Nothing runs the scheduler.** `tick` is a command, composable with cron, per §30.1's
+  "avoid unnecessary frameworks". A colony still needs someone to install the crontab, and there
+  is no supervision, no restart-on-failure, and no alerting when ticks stop happening.
+- **Vacation mode has no notification path.** §23.3's "overdue items surface distinctly" has
+  nowhere to surface to. The colony pauses external work silently and waits.
+
+## From the §23 approval-queue slice (2026-08-22, ADR-027)
+
+- **`batchable`'s `not self.signals` clause is currently unreachable through the real path.** Four
+  of the five §23.4 signals escalate the assessed tier, and the fifth (`understated_risk`) can only
+  fire in situations where the kernel tier is already above LOW — so a signalled item never arrives
+  at `batchable` still LOW. Kept as the lock that becomes load-bearing if the escalation rules are
+  ever loosened, and `test_a_gaming_signal_forces_individual_review` now asserts both mechanisms
+  separately so neither can quietly answer for the other. Revisit if the escalation set changes.
+- **Exposure is summed from the Cell's own `estimated_cost_minor_units`**, which is a claim. The
+  aggregate defeats *splitting* but not systematic under-estimation; only a zero on a spend request
+  is currently caught. A cross-check against what similar approved requests actually cost would
+  need realised spend attributable to a proposal, which nothing produces yet.
+- **A Cell quarantined *after* enqueue does not re-escalate its pending requests.** The assessment
+  is made at enqueue time. Mitigated by the payload showing the Cell's *current* status, so the
+  operator sees it — but a sweep that re-assessed pending items on a status change would be
+  stricter.
+- **`repeat_after_rejection` matches on an exactly-normalised summary.** Casefold, strip
+  punctuation, collapse whitespace — enough to defeat re-punctuation, and deliberately no more,
+  because a fuzzy matcher would start flagging genuinely new requests and a false positive is a
+  signal operators learn to ignore. Semantic similarity is a real improvement and a real risk.
+- **The rolling exposure window is wall time, not simulated time.** Correct here — every clock in
+  the queue measures a *human* (SLA, vacation, staleness) — but it means an accelerated colony
+  generates proposals far faster than the window ages, so exposure could accumulate across what the
+  colony experiences as a very long period. Worth revisiting when the flight simulator runs at
+  speed.
+- **Nothing expires approvals automatically.** `mitosis expire-approvals` is a command, like
+  `sweep` and `reap`. The scheduler's tick is the obvious place to call it, and deliberately did
+  not this slice — expiry regenerates wakes, and a tick that both expires and wakes needs a stated
+  ordering policy.
+- **`events._enqueue_locked` now exists** (extracted so an expiry and its regeneration wake commit
+  together). Second caller welcome; the wrapper's dedupe pre-check and IntegrityError translation
+  deliberately stay in `enqueue`, since a ROLLBACK inside a caller's transaction would discard
+  their work.
+
+## From the estate slice (2026-08-22, ADR-028)
+
+- **An estate is only as complete as the sweeper is timely.** A dead Cell with an in-flight
+  external operation holds committed funds until `mitosis sweep` runs, and nothing runs sweep on a
+  schedule — same gap `tick` has. `lifecycle.outstanding_estates()` makes the backlog visible; an
+  alert when it stops shrinking would make it actionable.
+- **`_open_reservations` treats `requested` as open, but `request()` goes straight to `reserved`,**
+  so that status is currently unreachable. If it ever becomes reachable, note that
+  `reservations._release_locked` does not accept `requested -> released` and the estate would raise
+  rather than skip. Worth a decision then, not now.
+- **A dead Cell's negative cash balance is left permanently negative** (ADR-021 overruns). It is
+  honest — the debt happened — but it means colony-wide cash totals carry the shortfall of every
+  Cell that ever overran, with no write-off path. §13's liability reserve is the natural home.
+- **The estate has no per-book policy.** Everything goes to `colony_treasury`, including RESOURCE.
+  Returning RESOURCE to a treasury is defensible (it is the colony's compute allowance coming back)
+  but it is not the same act as returning USD_SIM, and a future `infrastructure_reserve` return
+  path may want to distinguish them.
+- **Hypothesis deadlines and migration count are now coupled.** Every property test that calls
+  `db.connect_and_migrate()` inside an example pays the full schema cost per example. `deadline=None`
+  is applied across `test_charter_properties.py`, but the underlying cost keeps growing — a
+  session-scoped migrated template database that tests copy would fix the cause rather than the
+  symptom.
+
+## From the rung-7 promotion slice (2026-08-22, ADR-029)
+
+- **Nothing closes the loop back onto rung 8.** `promotions` records the reality gap and prediction
+  counts *at* allocation; the outcome arrives later through the hash-chained register and nothing
+  reads it. Until something does, "we are climbing §25.1's ladder" is an assertion rather than a
+  measurement, and `transfer_degradation` will stay NULL for every Cell forever because it needs a
+  second promotion that no criterion triggers.
+- **The promotion pool has no refill policy and no low-balance warning.** It silently stops
+  allocating when empty, which reads identically to "no grants were approved". `mitosis allocations`
+  prints the balance; an alert when it cannot cover the pending approved grants would be better.
+- **An allocation cannot be reversed.** If an operator allocates by mistake, the capital is on the
+  Cell and the only paths back are the Cell spending it or dying (ADR-028's estate). A clawback
+  would need §3.6-shaped handling — a new signed transaction, never an edit — and a policy on
+  whether a Cell can be left with negative cash.
+- **`promotion.allocate` reads `estimated_cost_minor_units` from the proposal, not from the grant
+  row.** Equivalent today because a proposal is immutable, and the grant does freeze the exposure
+  figure — but if proposals ever become editable the two diverge and the grant is the one the
+  operator saw. Worth moving the amount onto the grant at that point.
+- **Rung 7 is recorded but never checked as a precondition.** Nothing verifies a Cell passed rungs
+  1–6 before being allocated at 7; the ladder is documented in the `rung` column rather than
+  enforced by it. §25.1 describes a sequence, and a real gate would refuse a rung-7 promotion for a
+  Cell with no rung-6 history.
+

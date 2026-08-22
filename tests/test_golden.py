@@ -55,10 +55,22 @@ def test_scenario_exercises_every_reservation_terminal_shape():
 
 def test_scenario_pins_charter_c6_idempotent_redelivery():
     """Every event is processed twice; the side effect must land once.
-    colony_treasury == 300 (3 events x 100), not 600."""
+
+    Counts the handler's own transactions rather than `colony_treasury`'s
+    balance. The balance was the original proxy and it stopped being a safe
+    one: a dead Cell's estate now returns residual capital to the same account
+    (ADR-028), so a total of 300 there is no longer evidence about redelivery.
+    Three `event_side_effect` transactions is the property itself — six would
+    mean the second delivery landed.
+    """
     conn = _fresh_run()
     try:
-        assert ledger.get_balance(conn, "colony_treasury", Book.USD_SIM) == 300
+        rows = conn.execute(
+            "SELECT COUNT(*) AS n FROM ledger_transactions "
+            "WHERE transaction_type = 'event_side_effect' AND book = ?",
+            (Book.USD_SIM.value,),
+        ).fetchone()
+        assert rows["n"] == 3, "3 events processed twice must post 3 side effects, not 6"
     finally:
         conn.close()
 

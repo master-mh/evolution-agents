@@ -13,10 +13,12 @@ import argparse
 import json
 import os
 import sys
+import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (
+    approval,
     clock,
     context,
     db,
@@ -35,12 +37,14 @@ from . import (
     population,
     prediction,
     pricing,
+    promotion,
     providers,
     real_spend_breaker,
     reconciliation,
     reservations,
     resource_metering,
     revenue,
+    scheduler,
     sweeper,
 )
 from .accounts import cell_cash
@@ -169,6 +173,21 @@ def cmd_init(args: argparse.Namespace) -> None:
             f"rate={baseline_clock.simulated_seconds_per_wall_second} sim-sec/wall-sec, "
             f"at {baseline_clock.checkpoint_simulated_at_utc.isoformat()}"
         )
+
+    scheduler.configure_epochs_if_absent(conn, duration_seconds=args.epoch_seconds)
+    operator = scheduler.initialize_operator_if_absent(conn)
+    conn.commit()
+    genesis, epoch_seconds = scheduler.epoch_settings(conn)
+    print(
+        f"Epochs: {epoch_seconds}s of simulated time each, genesis "
+        f"{genesis.isoformat()} (currently epoch {scheduler.current_epoch(conn)})"
+    )
+    print(
+        f"Operator (§23.3): real_spending={'on' if operator.real_spending_enabled else 'off'}, "
+        f"vacation_pause_after={operator.vacation_pause_after_seconds}s, "
+        f"metabolic_alarm={operator.metabolic_alarm_cents_per_epoch} cents/epoch, "
+        f"acceleration_factor={operator.metabolic_acceleration_factor}x"
+    )
 
     if already_existed:
         print(f"MITOSIS database already existed at {path}")
@@ -698,6 +717,7 @@ def cmd_wake(args: argparse.Namespace) -> None:
         model=args.model,
         context_budget_tokens=args.context_budget,
         max_tokens=args.max_tokens,
+        proposal_sink=approval.QueueSink(),
     )
     _print_deliberation(conn, result)
     conn.close()
@@ -715,6 +735,7 @@ def cmd_run_wakes(args: argparse.Namespace) -> None:
         limit=args.limit,
         context_budget_tokens=args.context_budget,
         max_tokens=args.max_tokens,
+        proposal_sink=approval.QueueSink(),
     )
     if not results:
         print("No wake events are ready.")
@@ -771,6 +792,110 @@ def _print_deliberation(conn, result) -> None:
         print("\n  Nothing here executes. A proposal is a record for you to read (SPEC.md §25.1).")
 
 
+def cmd_tick(args: argparse.Namespace) -> None:
+    """Run one epoch's scheduled wakes (SPEC.md §17.2, §23.3).
+
+    Idempotent per epoch — safe to run from cron as often as you like, since a
+    second tick inside the same epoch enqueues nothing.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    result = scheduler.tick(
+        conn, provider=_build_provider(args), model=args.model, max_cells=args.max_cells
+    )
+
+    print(f"Tick {result.tick_id} — epoch {result.epoch_number} — {result.outcome}")
+    if result.detail:
+        print(f"  {result.detail}")
+    if result.halted:
+        print("\n  Nothing was woken. Run `mitosis scheduler-status` for the guard state.")
+    for deliberated in result.deliberations:
+        print()
+        _print_deliberation(conn, deliberated)
+    conn.close()
+
+
+def cmd_scheduler_status(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    genesis, epoch_seconds = scheduler.epoch_settings(conn)
+    epoch = scheduler.current_epoch(conn)
+    state = scheduler.operator_state(conn)
+    metabolic = scheduler.metabolic_status(conn)
+
+    print(f"Epoch {epoch}  ({epoch_seconds}s simulated each, genesis {genesis.isoformat()})")
+    print(f"  eligible cells now: {len(scheduler.eligible_cells(conn, epoch))}")
+    print("\nGuards (SPEC.md §23.3, §27.1):")
+    print(f"  real_spending:   {'ENABLED' if state.real_spending_enabled else 'disabled'}")
+    on_vacation = scheduler.is_on_vacation(conn)
+    print(
+        f"  vacation mode:   {'ACTIVE' if on_vacation else 'inactive'} "
+        f"(operator last seen {state.last_heartbeat_utc.isoformat()})"
+    )
+    print(
+        f"  metabolic alarm: {'RAISED' if state.alarm_active else 'clear'}"
+        + (f" — {state.metabolic_alarm_reason}" if state.alarm_active else "")
+    )
+    print("\nMetabolic rate:")
+    print(f"  this epoch:      {metabolic['spend_this_epoch_minor_units']} minor units "
+          f"(alarm at {state.metabolic_alarm_cents_per_epoch})")
+    print(f"  last wall hour:  {metabolic['spend_last_wall_hour_minor_units']} minor units")
+    baseline = metabolic["baseline_minor_units"]
+    accel = metabolic["acceleration"]
+    print(f"  baseline:        {'n/a' if baseline is None else f'{baseline:.1f}'}")
+    print(f"  acceleration:    {'n/a' if accel is None else f'{accel:.1f}x'} "
+          f"(alarm above {state.metabolic_acceleration_factor}x)")
+    for breach in metabolic["breached"]:
+        print(f"  ! {breach}")
+
+    ticks = scheduler.recent_ticks(conn, limit=args.limit)
+    if ticks:
+        print(f"\nLast {len(ticks)} tick(s):")
+        for t in ticks:
+            print(f"  epoch {t['epoch_number']:<4} {t['outcome']:<18} "
+                  f"{t['provider']:<10} woke {t['cells_woken']}  {t['detail'] or ''}")
+    conn.close()
+
+
+def cmd_heartbeat(args: argparse.Namespace) -> None:
+    """Tell the colony the operator is present (§23.3 vacation mode)."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    state = scheduler.heartbeat(conn)
+    print(f"Operator present as of {state.last_heartbeat_utc.isoformat()}")
+    if state.alarm_active:
+        print("  Note: a metabolic alarm is still raised — a heartbeat does not clear it.")
+        print("  Use `mitosis ack-alarm --note '...'` once you know why it fired.")
+    conn.close()
+
+
+def cmd_set_autonomy(args: argparse.Namespace) -> None:
+    """§27.1 `autonomy.real_spending`. The single most consequential switch here:
+    it is what lets an unattended scheduler spend real money."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    enabled = args.real_spending == "on"
+    if enabled and not args.yes_spend_real_money:
+        raise CliError(
+            "enabling real_spending lets the scheduler spend real money with no "
+            "human in the loop — re-run with --yes-spend-real-money to confirm"
+        )
+    state = scheduler.set_real_spending(conn, enabled)
+    print(f"autonomy.real_spending = {'ENABLED' if state.real_spending_enabled else 'disabled'}")
+    conn.close()
+
+
+def cmd_ack_alarm(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    state = scheduler.acknowledge_metabolic_alarm(conn, note=args.note)
+    print("Metabolic alarm acknowledged and cleared.")
+    print(f"  real_spending remains {'ENABLED' if state.real_spending_enabled else 'disabled'}")
+    conn.close()
+
+
 def cmd_proposals(args: argparse.Namespace) -> None:
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
@@ -784,6 +909,315 @@ def cmd_proposals(args: argparse.Namespace) -> None:
         print(f"  {stored['proposal_id']}  [{stored['kind']}] risk={stored['risk_tier']}")
         print(f"    cell: {stored['cell_id']}")
         print(f"    {stored['summary']}")
+    conn.close()
+
+
+def _tier_marker(request) -> str:
+    """Overdue items surface distinctly (§23.3) — in a terminal that means a
+    marker in the left margin, not a colour, because the operator may well be
+    reading this over ssh or out of a cron mail."""
+    return "!" if request.is_overdue() else " "
+
+
+def cmd_approvals(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    if args.queue_missing:
+        queued = approval.enqueue_missing(conn)
+        if queued:
+            print(f"Queued {len(queued)} previously unqueued proposal(s).")
+
+    pending = approval.queue(conn, status=args.status)
+    if not pending:
+        print(f"No {args.status} approval requests.")
+        conn.close()
+        return
+
+    overdue = [r for r in pending if r.is_overdue()]
+    header = f"{len(pending)} {args.status} request(s)"
+    if overdue:
+        header += f", {len(overdue)} overdue"
+    print(header + ":")
+    for request in pending:
+        flags = []
+        if not request.reversible:
+            flags.append("irreversible")
+        if request.batchable:
+            flags.append("batchable")
+        for signal in request.signals:
+            flags.append(signal.signal)
+        suffix = f"  [{', '.join(flags)}]" if flags else ""
+        print(
+            f" {_tier_marker(request)} {request.request_id}  {request.assessed_tier.value:<8}"
+            f" exposure={request.exposure_minor_units}{suffix}"
+        )
+        print(f"     cell {request.cell_id}  claimed {request.claimed_tier.value}")
+        if request.is_overdue():
+            print(f"     OVERDUE since {request.sla_due_at_utc.isoformat()}")
+        print(f"     expires {request.expires_at_utc.isoformat()}")
+    conn.close()
+
+
+def cmd_approval_show(args: argparse.Namespace) -> None:
+    """§23.2's payload, in full. Everything the clause requires an operator be
+    shown before deciding — including the two elements that cannot honestly be
+    produced yet, which print as unavailable rather than being omitted."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    detail = approval.payload(conn, args.request_id)
+    request = detail.request
+    proposal = detail.proposal
+
+    print(f"Request {request.request_id}   [{request.status}]")
+    if detail.overdue:
+        print("  ** OVERDUE — past its SLA and still unreviewed **")
+    print()
+    print("  Proposed action (§23.2)")
+    print(f"    kind:        {proposal['kind']}")
+    print(f"    summary:     {proposal['summary']}")
+    print(f"    cell:        {request.cell_id}  (currently {detail.current_cell_status.value})")
+    print(f"    book:        {detail.book.value}")
+    print()
+    print("  Risk classification")
+    print(f"    cell claimed:    {request.claimed_tier.value}")
+    print(f"    kernel assessed: {request.assessed_tier.value}")
+    print(f"    reversible:      {'yes' if request.reversible else 'NO'}")
+    print(f"    batchable:       {'yes' if request.batchable else 'no (individual review)'}")
+    print()
+    print("  Cost and exposure (§23.2)")
+    print(f"    cell's estimate:      {detail.estimated_cost_minor_units} minor units")
+    if detail.deliberation_cost_micro_usd is not None:
+        print(f"    this deliberation:    {detail.deliberation_cost_micro_usd} micro-USD (actual)")
+    print(
+        f"    cumulative exposure:  {detail.exposure_minor_units} minor units "
+        f"across {detail.related_request_count} request(s) on {request.aggregation_key}"
+    )
+    liability = (
+        "not modelled (no liability reserve exists yet — §13 is Phase 6+)"
+        if detail.liability_minor_units is None
+        else str(detail.liability_minor_units)
+    )
+    print(f"    liability:            {liability}")
+    print()
+    print("  Evidence — from the hash-chained register, not from the Cell (§23.2, §8.5)")
+    print(f"    resolved predictions:   {detail.resolved_prediction_count}")
+    print(f"    unresolved:             {detail.unresolved_prediction_count}")
+    print(f"    overdue past horizon:   {detail.overdue_prediction_count}")
+    brier = (
+        "n/a (nothing resolved yet)"
+        if detail.mean_brier_score is None
+        else f"{detail.mean_brier_score:.4f}"
+    )
+    print(f"    mean Brier score:       {brier}")
+    print()
+    print("  Cell explanation (§23.2)")
+    for line in textwrap.wrap(detail.cell_explanation, width=76):
+        print(f"    {line}")
+    print()
+    print("  Independent Auditor summary (§23.2)")
+    if detail.auditor_summary is None:
+        print("    UNAVAILABLE — no Auditor Cell has reviewed this.")
+        print("    The clause requires an *independent* summary, so this can never")
+        print("    be filled by the proposing Cell (§0.3). Absent is the honest value.")
+    else:
+        for line in textwrap.wrap(detail.auditor_summary, width=76):
+            print(f"    {line}")
+    print()
+    print("  Policy classification (§23.4)")
+    if not detail.signals:
+        print("    no anti-gaming signals")
+    for signal in detail.signals:
+        print(f"    {signal.signal}: {signal.detail}")
+    print()
+    print("  Timing (§23.3)")
+    print(f"    created:  {request.created_at_utc.isoformat()}")
+    print(f"    SLA due:  {request.sla_due_at_utc.isoformat()}  ({request.sla_seconds}s)")
+    print(f"    expires:  {request.expires_at_utc.isoformat()}")
+    if request.status == approval.RequestStatus.EXPIRED:
+        print(f"    regenerated as wake: {request.regenerated_wake_key or 'none (cell unwakeable)'}")
+    conn.close()
+
+
+def cmd_approve(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    grant = approval.approve(
+        conn,
+        request_id=args.request_id,
+        decided_by=args.by,
+        reason=args.reason,
+    )
+    print(f"Approved. Grant {grant.grant_id}")
+    print(f"  tier:     {grant.tier.value}")
+    print(f"  exposure: {grant.exposure_at_grant_minor_units} minor units")
+    print(f"  expires:  {grant.expires_at_utc.isoformat()}")
+    print()
+    print("  Nothing acts on this automatically. §25.1 rung 7 requires a human to")
+    print("  run the allocation as well as the approval:")
+    print(f"    mitosis allocate {grant.grant_id} --by <you> --reason <why>")
+    conn.close()
+
+
+def cmd_reject(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    request = approval.reject(
+        conn,
+        request_id=args.request_id,
+        decided_by=args.by,
+        reason=args.reason,
+    )
+    print(f"Rejected {request.request_id}: {request.decision_reason}")
+    conn.close()
+
+
+def cmd_approve_batch(args: argparse.Namespace) -> None:
+    """§23.1's batch path. Only LOW, reversible, signal-free, low-exposure items
+    qualify — everything else stays queued for individual review."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    batch_id, grants = approval.approve_batch(
+        conn, decided_by=args.by, reason=args.reason, limit=args.limit
+    )
+    if not grants:
+        print("Nothing is batchable. §23.1 permits batching only low-risk")
+        print("reversible actions, and any anti-gaming signal forces individual review.")
+        conn.close()
+        return
+    print(f"Batch {batch_id}: approved {len(grants)} request(s).")
+    for grant in grants:
+        print(f"  {grant.request_id} -> grant {grant.grant_id}")
+    conn.close()
+
+
+def cmd_expire_approvals(args: argparse.Namespace) -> None:
+    """§23.3's sweep: expire, then regenerate."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    expired = approval.expire_due(conn)
+    if not expired:
+        print("No approval requests are past their expiry.")
+        conn.close()
+        return
+    print(f"Expired {len(expired)} request(s):")
+    for request in expired:
+        regenerated = (
+            f"regenerated as {request.regenerated_wake_key}"
+            if request.regenerated_wake_key
+            else "not regenerated (cell is not wakeable)"
+        )
+        print(f"  {request.request_id}  [{request.assessed_tier.value}]  {regenerated}")
+    print()
+    print("§23.3: expired actions are regenerated and re-evaluated, never")
+    print("executed on stale terms. Run `mitosis run-wakes` to re-derive them.")
+    conn.close()
+
+
+def cmd_fund_pool(args: argparse.Namespace) -> None:
+    """Stage capital for §25 promotion. Always an operator action.
+
+    The pool's balance is the ceiling on everything the promotion path can ever
+    allocate — no Cell can raise it, and nothing scheduled draws on it without a
+    human running `allocate`.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    book = Book(args.book)
+    amount = money.parse_minor_units(args.amount, book.value)
+    balance = promotion.fund_pool(
+        conn,
+        book=book,
+        amount_minor_units=amount,
+        funding_account=args.funding_account,
+        idempotency_key=args.idempotency_key or f"fund_pool:{ids.new_id()}",
+    )
+    print(f"Promotion pool funded: +{amount} {book.value}")
+    print(f"  balance: {balance} minor units")
+    print(f"  source:  {args.funding_account}")
+    conn.close()
+
+
+def cmd_allocations(args: argparse.Namespace) -> None:
+    """Approved grants that could be allocated right now."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    ready = promotion.allocatable_grants(conn)
+    for book in Book:
+        balance = promotion.pool_balance(conn, book)
+        if balance:
+            print(f"Promotion pool ({book.value}): {balance} minor units")
+    if not ready:
+        print("No grants are ready to allocate.")
+        conn.close()
+        return
+    print(f"{len(ready)} grant(s) ready:")
+    for grant in ready:
+        print(f"  {grant.grant_id}  {grant.tier.value:<8} cell {grant.cell_id}")
+        print(f"    expires {grant.expires_at_utc.isoformat()}")
+    conn.close()
+
+
+def cmd_allocate(args: argparse.Namespace) -> None:
+    """§25.1 rung 7: consume an approved grant and fund the Cell."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    result = promotion.allocate(
+        conn, grant_id=args.grant_id, allocated_by=args.by, reason=args.reason
+    )
+    print(f"Allocated {result.allocated_minor_units} {result.book.value} to {result.cell_id}")
+    print(f"  promotion: {result.promotion_id}  (§25.1 rung {result.rung})")
+    print(f"  approved by {result.approved_by}, allocated by {result.allocated_by}")
+    print(f"  pool now:  {promotion.pool_balance(conn, result.book)} minor units")
+    print()
+    print("  §25.2 promotion evidence recorded:")
+    gap = (
+        "n/a (nothing resolved yet)"
+        if result.reality_gap_mean_brier is None
+        else f"{result.reality_gap_mean_brier:.4f}"
+    )
+    print(f"    reality gap (mean Brier):  {gap}")
+    print(f"    predictions:               {result.resolved_predictions} resolved, "
+          f"{result.unresolved_predictions} unresolved")
+    print("    liability:                 not modelled (§13 is Phase 6+)")
+    degradation = (
+        "n/a (no earlier promotion to degrade from)"
+        if result.transfer_degradation is None
+        else f"{result.transfer_degradation:+.4f}"
+    )
+    print(f"    transfer degradation:      {degradation}")
+    if result.wake_key:
+        print()
+        print(f"  Cell woken: {deliberation.WAKE_CAPITAL_ALLOCATION} ({result.wake_key})")
+        print("  Run `mitosis run-wakes` to let it deliberate on its new balance.")
+    conn.close()
+
+
+def cmd_promotions(args: argparse.Namespace) -> None:
+    """§25.2's promotion record."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    found = promotion.list_promotions(conn, cell_id=args.cell)
+    if not found:
+        print("No promotions recorded.")
+        conn.close()
+        return
+    print(f"{len(found)} promotion(s):")
+    for item in found:
+        print(f"  {item.promotion_id}  rung {item.rung}  "
+              f"{item.allocated_minor_units} {item.book.value}")
+        print(f"    cell {item.cell_id}")
+        print(f"    approved by {item.approved_by}, allocated by {item.allocated_by}")
+        print(f"    {item.reason}")
     conn.close()
 
 
@@ -860,12 +1294,14 @@ def cmd_advance_time(args: argparse.Namespace) -> None:
 
 
 def cmd_sweep(args: argparse.Namespace) -> None:
-    """SPEC.md §4.4 / Charter C7. Resolve expired reservations, then bring
-    any `model_calls` row stranded by a crash back into agreement with them.
+    """SPEC.md §4.4 / Charter C7. Resolve expired reservations, bring any
+    `model_calls` row stranded by a crash back into agreement with them, then
+    finish the estate of any Cell that died while one was in flight.
 
-    Two steps in this order because the second reads the first's output: the
-    sweeper decides what an expired reservation meant, and only then can a
-    stranded call be resolved from it.
+    Three steps in this order because each reads the last one's output: the
+    sweeper decides what an expired reservation meant, only then can a stranded
+    call be resolved from it, and only then is a dead Cell's residual capital
+    genuinely free to return to the colony.
     """
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
@@ -882,6 +1318,26 @@ def cmd_sweep(args: argparse.Namespace) -> None:
     print(f"Stranded model calls resolved: {len(resolved)}")
     for call in resolved:
         print(f"  {call.model_call_id}  {call.provider} -> {call.status.value}")
+
+    estates = lifecycle.reclaim_settled_estates(conn)
+    print(f"Dead-Cell estates settled: {len(estates)}")
+    for estate in estates:
+        reclaimed = ", ".join(
+            f"{book} {amount}" for book, amount in sorted(estate.reclaimed_by_book.items())
+        )
+        print(f"  {estate.cell_id}  reclaimed {reclaimed or 'nothing'}")
+
+    still_open = lifecycle.outstanding_estates(conn)
+    if still_open:
+        print()
+        print(
+            f"{len(still_open)} dead Cell(s) still hold capital or open reservations — "
+            "their external operations are unresolved, so the estate stays incomplete "
+            "rather than assuming what a provider did (ADR-022)."
+        )
+        for entry in still_open:
+            print(f"  {entry['cell_id']}  cash={entry['residual_cash']} "
+                  f"reservations={len(entry['open_reservations'])}")
 
     unknown = reservations.count_by_status(conn).get("execution_unknown", 0)
     if unknown:
@@ -1110,6 +1566,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"simulated seconds per wall second, used in accelerated mode "
         f"(default: {clock.DEFAULT_ACCELERATED_RATE})",
     )
+    init_parser.add_argument(
+        "--epoch-seconds",
+        type=int,
+        default=scheduler.DEFAULT_EPOCH_DURATION_SECONDS,
+        help=f"length of one epoch in simulated seconds — the unit §9.2's "
+        f"max_births_per_epoch and §23.3's metabolic alarm are measured in "
+        f"(default: {scheduler.DEFAULT_EPOCH_DURATION_SECONDS})",
+    )
     init_parser.set_defaults(func=cmd_init)
 
     status_parser = subparsers.add_parser("status", help="show colony status")
@@ -1327,11 +1791,131 @@ def build_parser() -> argparse.ArgumentParser:
     _add_model_args(run_wakes_parser, default_max_tokens=deliberation.DEFAULT_MAX_TOKENS)
     run_wakes_parser.set_defaults(func=cmd_run_wakes)
 
+    tick_parser = subparsers.add_parser(
+        "tick", help="run one epoch's scheduled wakes (SPEC.md §17.2; idempotent per epoch)"
+    )
+    tick_parser.add_argument(
+        "--max-cells", type=int, default=None, help="cap how many Cells this tick wakes"
+    )
+    _add_model_args(tick_parser, default_max_tokens=deliberation.DEFAULT_MAX_TOKENS)
+    tick_parser.set_defaults(func=cmd_tick)
+
+    sched_status_parser = subparsers.add_parser(
+        "scheduler-status", help="epoch, guards, metabolic rate, recent ticks (§23.3)"
+    )
+    sched_status_parser.add_argument("--limit", type=int, default=10)
+    sched_status_parser.set_defaults(func=cmd_scheduler_status)
+
+    heartbeat_parser = subparsers.add_parser(
+        "heartbeat", help="record that the operator is present (§23.3 vacation mode)"
+    )
+    heartbeat_parser.set_defaults(func=cmd_heartbeat)
+
+    autonomy_parser = subparsers.add_parser(
+        "set-autonomy", help="enable/disable unattended real spending (§27.1)"
+    )
+    autonomy_parser.add_argument("--real-spending", required=True, choices=["on", "off"])
+    autonomy_parser.add_argument(
+        "--yes-spend-real-money", action="store_true",
+        help="required to turn real_spending on — this removes the human from the loop",
+    )
+    autonomy_parser.set_defaults(func=cmd_set_autonomy)
+
+    ack_parser = subparsers.add_parser(
+        "ack-alarm", help="acknowledge and clear a raised metabolic alarm (§23.3)"
+    )
+    ack_parser.add_argument(
+        "--note", required=True, help="why it was safe to clear; recorded in the audit trail"
+    )
+    ack_parser.set_defaults(func=cmd_ack_alarm)
+
     proposals_parser = subparsers.add_parser(
         "proposals", help="list recorded proposals (inert — nothing consumes them)"
     )
     proposals_parser.add_argument("--cell", default=None, help="scope to one cell_id")
     proposals_parser.set_defaults(func=cmd_proposals)
+
+    approvals_parser = subparsers.add_parser(
+        "approvals", help="the §23 review queue, most urgent first"
+    )
+    approvals_parser.add_argument(
+        "--status",
+        default=approval.RequestStatus.PENDING,
+        choices=[
+            approval.RequestStatus.PENDING,
+            approval.RequestStatus.APPROVED,
+            approval.RequestStatus.REJECTED,
+            approval.RequestStatus.EXPIRED,
+        ],
+    )
+    approvals_parser.add_argument(
+        "--queue-missing",
+        action="store_true",
+        help="first queue any proposal that has no review entry",
+    )
+    approvals_parser.set_defaults(func=cmd_approvals)
+
+    approval_show_parser = subparsers.add_parser(
+        "approval", help="show one request's full §23.2 payload"
+    )
+    approval_show_parser.add_argument("request_id")
+    approval_show_parser.set_defaults(func=cmd_approval_show)
+
+    approve_parser = subparsers.add_parser("approve", help="approve one request individually")
+    approve_parser.add_argument("request_id")
+    approve_parser.add_argument("--by", required=True, help="who is deciding")
+    approve_parser.add_argument("--reason", required=True, help="why (§25.2 requires it)")
+    approve_parser.set_defaults(func=cmd_approve)
+
+    reject_parser = subparsers.add_parser("reject", help="reject one request")
+    reject_parser.add_argument("request_id")
+    reject_parser.add_argument("--by", required=True, help="who is deciding")
+    reject_parser.add_argument("--reason", required=True, help="why (§25.2 requires it)")
+    reject_parser.set_defaults(func=cmd_reject)
+
+    batch_parser = subparsers.add_parser(
+        "approve-batch", help="§23.1 batch approval of low-risk reversible requests"
+    )
+    batch_parser.add_argument("--by", required=True, help="who is deciding")
+    batch_parser.add_argument("--reason", required=True, help="why (§25.2 requires it)")
+    batch_parser.add_argument("--limit", type=int, default=None)
+    batch_parser.set_defaults(func=cmd_approve_batch)
+
+    expire_parser = subparsers.add_parser(
+        "expire-approvals",
+        help="§23.3: expire overdue requests and regenerate their actions",
+    )
+    expire_parser.set_defaults(func=cmd_expire_approvals)
+
+    fund_pool_parser = subparsers.add_parser(
+        "fund-pool", help="stage capital for §25 promotion (the allocation ceiling)"
+    )
+    fund_pool_parser.add_argument("--amount", required=True, help="decimal amount, e.g. 5.00")
+    fund_pool_parser.add_argument(
+        "--book", default=Book.USD_SIM.value, choices=[b.value for b in Book]
+    )
+    fund_pool_parser.add_argument("--funding-account", default="colony_treasury")
+    fund_pool_parser.add_argument("--idempotency-key", default=None)
+    fund_pool_parser.set_defaults(func=cmd_fund_pool)
+
+    allocations_parser = subparsers.add_parser(
+        "allocations", help="approved grants ready to allocate, and the pool balance"
+    )
+    allocations_parser.set_defaults(func=cmd_allocations)
+
+    allocate_parser = subparsers.add_parser(
+        "allocate", help="§25.1 rung 7: consume an approved grant and fund the Cell"
+    )
+    allocate_parser.add_argument("grant_id")
+    allocate_parser.add_argument("--by", required=True, help="who is allocating")
+    allocate_parser.add_argument("--reason", required=True, help="why (§25.2 requires it)")
+    allocate_parser.set_defaults(func=cmd_allocate)
+
+    promotions_parser = subparsers.add_parser(
+        "promotions", help="§25.2's promotion record"
+    )
+    promotions_parser.add_argument("--cell", default=None)
+    promotions_parser.set_defaults(func=cmd_promotions)
 
     call_model_parser = subparsers.add_parser(
         "call-model",
@@ -1445,6 +2029,8 @@ def main(argv: list[str] | None = None) -> int:
         resource_metering.ResourceMeteringError,
         reconciliation.ReconciliationError,
         pricing.PricingError,
+        approval.ApprovalError,
+        promotion.PromotionError,
         golden.GoldenRunError,
         ValueError,
     ) as exc:

@@ -173,20 +173,86 @@
   record. First live evidence that the context design feeds a real decision, and that `ABSTAIN`
   earns its place as a first-class outcome rather than a Cell inventing work. Caveat: n=1, and it
   read a history `llama3.2` created on the same Cell, so this is not a clean head-to-head.
-- [ ] **Something that wakes a Cell.** `enqueue-wake` is manual, the same gap `reap` has. §17.2's
-  "scheduled research cycle" implies a scheduler and §6's clock is the natural driver, but the
-  cadence policy is unspecified. Until then no Cell thinks without a human asking it to.
-- [ ] **§23 approval queue** — risk tiers, SLAs, expiry, cumulative-exposure anti-gaming (A11/A19).
-  Proposals are recorded and inert; `risk_tier` is stored and nothing reads it. This is what turns
-  a proposal into something an operator can act on without reading raw rows.
+- [x] **Something that wakes a Cell — DONE** (2026-08-06), ADR-026. `scheduler.py` + migration
+  0014: epochs derived from §6's simulated clock, `mitosis tick` running one epoch's wakes, and
+  the §23.3 guards that make unattended running survivable. **The cadence policy I had flagged as
+  needing a decision answered itself: it is a dedupe key.** Wakes are `epoch:{n}:cell:{id}` and
+  `events.enqueue` is already idempotent on dedupe keys, so one-wake-per-Cell-per-epoch is
+  structural — cron every minute costs nothing until the epoch turns. **Three guards, each
+  normative:** `autonomy.real_spending` (§27.1 ships it false, and needs two independent
+  confirmations to enable), vacation mode (§23.3 — maps onto the paid/free provider split, so an
+  absent operator stops the colony *spending*, not thinking), and the metabolic alarm (§23.3 —
+  watches the **derivative**, firing "even if every individual cap is satisfied", and halting
+  until acknowledged with a stated reason). **Found while building: §6.3's "explicit conversion
+  metadata" is load-bearing** — ledger rows are wall-stamped while epochs are simulated, so
+  `epoch_log`'s per-epoch wall anchor is the only thing that makes per-epoch spend computable at
+  all. 571 tests (22 new); golden hash unchanged. Teeth-checked nine ways.
+- [ ] **Nothing runs the scheduler.** `tick` is a command, composable with cron per §30.1's
+  "avoid unnecessary frameworks" — but a colony still needs someone to install the crontab, and
+  there is no supervision, no restart-on-failure, and no alert when ticks simply stop.
+- [ ] **`max_births_per_epoch` (§9.2) is finally checkable and still unchecked.** The epoch
+  primitive was its missing prerequisite. Belongs with the birth paths rather than the scheduler,
+  and needs a call on what a denied birth does at an epoch boundary — wait, or fail like the other
+  population caps?
+- [x] **§23 approval queue — DONE** (2026-08-22), ADR-027. `approval.py` + migration 0015 + six
+  CLI verbs. **§23.5 — "the approval queue is itself part of the environment and will be optimised
+  against by Cells" — made the obvious design unusable**, because the obvious queue files by the
+  `risk_tier` the reviewed Cell wrote itself. So `claimed_tier` and `assessed_tier` are separate:
+  the kernel derives its own from book, status, kind and lineage exposure, and the fold is `max`,
+  so **a Cell may raise its own tier and never lower it** — §0.3 extended from outcomes to
+  requests. **Found while building: §23.4's aggregation key should be the lineage, not the Cell,
+  and the spec cannot say so** — it names counterparty/domain/channel, none of which exist yet,
+  but its target is action-splitting and the cheapest splitter here is §9 reproduction. **SLA and
+  expiry are two clocks**: overdue is derived and stays approvable, expiry is a transition that
+  *regenerates* the action (§23.3's easy-to-drop second half) and locks out a late decision.
+  Approval writes a scoped, expiring **grant that nothing consumes** — rung 6 of §25.1, not rung 9,
+  enforced structurally. 608 tests (37 new); golden expectation 6 → 7 via a reviewed migration
+  (**no USD_REAL moves**). Teeth-checked thirteen ways; two tests initially passed for the wrong
+  reason and were rewritten.
 
+- [ ] **No Auditor Cell exists, so §23.2's payload has a permanent hole.** The clause requires an
+  *independent* Auditor summary on every approval, and §0.3 forbids the proposing Cell filling it —
+  so it correctly reports as unavailable, and will until the Auditor type in §7's taxonomy is real.
+  This is the largest remaining gap in the review path.
+- [ ] **§23.2's liability figure is unmodelled.** No liability reserve exists (§13 is Phase 6+), so
+  the payload prints "not modelled" rather than a fabricated zero. Lands with the reserve.
+- [x] **The grant consumer — DONE** (2026-08-22), ADR-029. `promotion.py` + migration 0016. §31's
+  core loop ("... -> allocate capital -> ...") finally closes: an approved `spend_request` grant
+  allocates from `promotion_pool` and wakes the Cell under §17.2's "capital allocation" reason —
+  **two sockets the spec reserved in Phase 1 and nothing had ever used**. Rung 7, not rung 9: two
+  humans stand in every allocation and a structural test forbids the scheduler importing the
+  module. The pool is a human-filled ceiling no Cell can raise; USD_REAL additionally needs §27.1's
+  autonomy flag. ADR-027's rung-6 test was deliberately loosened to land this — that friction was
+  its purpose. 636 tests (15 new); golden expectation 8 → 9 now covers the whole loop (**no
+  USD_REAL movement**). Teeth-checked nine ways.
+- [ ] **Nothing about this repo is shippable as an artifact yet.** Surfaced at the top of the
+  2026-08-22 session and then deprioritised in favour of the kernel work: the GitHub repo is
+  **private**, there is **no README**, and there is **no LICENSE** (public without one means
+  all-rights-reserved). Secrets audit came back clean — no `.env`, `.db` or key file was ever
+  committed, and the `sk-ant-…` strings in history are synthetic canaries in the redaction tests.
+  Hours of work, not days, whenever "out there" becomes the priority again.
+- [ ] **Nothing measures whether an allocation worked.** A promotion records §25.2 evidence at the
+  moment of funding, and the predictions it cites resolve later through the register — but no path
+  reads that back to decide whether the Cell earned its rung. Rung 8 ("expanded pilot") needs it,
+  and so does any honest claim that the ladder is being climbed rather than walked up.
 - [ ] **Aggregate-invoice reconciliation** — the half ADR-023 provably cannot do. Per-call reconciliation leaves ADR-020's sub-cent rounding overstatement exactly where it was (3.5¢ reconciles back through the same ceiling to the 4¢ already recorded); only an invoice *total* spanning many calls can post the correction. Additive: needs an invoice-level record, reusing all the per-call sign handling and breaker registration.
 - [ ] **Forward recovery for the gateway** — ADR-022's deferred alternative, which belongs with the reconciliation plumbing. Rollback is atomic but loses the provider's reported usage, so a crashed call still needs a human. Recording the response durably before applying the accounting (a `settling` status) would let recovery finish the settlement automatically.
 - [ ] Tighten the pre-call token estimate — `providers._estimate_tokens` is a deliberate over-estimate (2 chars/token). The provider's `count_tokens` endpoint would cut over-reservation sharply and make cost overruns (ADR-021) rarer.
 - [ ] Experiment tracking — the other Phase 2 prerequisite; also unblocks `max_parallel_experiments` and the coroner report's `experiment_ids`/`stage_reached` (currently always empty/None).
 - [ ] §24 gateway features left out of the slice: routing by task type (§24.3), controlled retries (a retry after `execution_unknown` risks double-billing), structured-output validation, model competition, and reacting to provider drift as a §8.4 regime change (drift is *recorded* — `resolved_model`/`api_version` — but nothing consumes it).
 - [ ] Remaining CLI (`list-cells/show-cell/kill-cell/ledger/verify-ledger`) — purely additive, no blockers. (`sweep` landed with ADR-022.)
-- [ ] `kill()` doesn't sweep the dead Cell's open reservations or reclaim its residual cash/committed balance. Displacement raises the stakes: the colony now ends Cells to reclaim population slots while leaving their capital stranded, precisely when it is at capacity.
+- [x] **A dead Cell's estate — DONE** (2026-08-22), ADR-028. `kill()` now releases the dead Cell's
+  open reservations and returns its residual cash to `colony_treasury`, inside the same transaction
+  as the death. **Charter C8 is the load-bearing clause and not for the obvious reason: an open
+  reservation *is* standing authorisation to spend**, so a dead Cell holding one is the plainest
+  instance of "dead Cells cannot act". The money is capital movement, never spend (`accounts.py`
+  had already decided this). A reservation with an `external_operation_id` is deferred to the
+  sweeper per ADR-022 — but **death is never blocked by it**, or a Cell could survive by keeping a
+  call in flight. Golden expectation 7 → 8, and the diff is the bug report: the scenario had been
+  stranding **3450 USD_SIM per replay since version 1**. 621 tests (13 new); teeth-checked eight
+  ways. Also fixed an intermittent Charter-property failure this surfaced but did not cause —
+  property tests that build a database per example were charging migration time against
+  Hypothesis's 200ms deadline.
 - [ ] An audited path to change population limits after `init` (`set_limits_if_absent` is write-once, and lowering a cap below the current population needs a stated policy). Blocks golden-run coverage of displacement. See FUTURE_BUILD_HOOKS.
 - [ ] Wiring the simulated clock into USD_SIM/synthetic timestamps + `max_births_per_epoch` enforcement (clock primitive exists, nothing consumes it yet — now the *only* remaining reason a real colony can't do true byte-identical replay, since ids are seeded but timestamps still aren't).
 - [ ] Wiring the event *outbox* into a real dispatcher. The inbox got its first producer and

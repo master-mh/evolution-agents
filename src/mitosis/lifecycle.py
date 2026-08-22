@@ -40,11 +40,21 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import accounts, audit, genome, ids, ledger, population
+from . import accounts, audit, genome, ids, ledger, population, reservations
 from .accounts import cell_cash
-from .models import Book, Cell, CellGenome, CellStatus, CellType, CoronerReport, EntrySpec
+from .models import (
+    Book,
+    Cell,
+    CellGenome,
+    CellStatus,
+    CellType,
+    CoronerReport,
+    EntrySpec,
+    ReservationStatus,
+)
 
 
 class LifecycleError(Exception):
@@ -477,6 +487,33 @@ def _kill_locked(
         ),
     )
 
+    # The estate, in the same transaction as the death. See `_reclaim_locked`:
+    # an open reservation is standing authorisation to spend, so a dead Cell
+    # still holding one is exactly what Charter C8 forbids — and capital left
+    # on a dead Cell's account is capital the colony has silently lost, which
+    # compounds every death once the scheduler is running unattended.
+    #
+    # Ordered after the coroner report, though today that ordering is
+    # unobservable and the honest note is why: §10.5 wants spend by book as it
+    # stood at death, and the estate cannot disturb that figure because
+    # `cell_estate_reclaim` and `reservation_release` are both capital
+    # movements rather than consumption, so `spend_by_book` ignores them either
+    # way. The classification is what protects the report; this ordering is
+    # defence in depth for the day some estate movement is spend-shaped.
+    reclamation = _reclaim_locked(conn, cell)
+    if reclamation.released_reservation_ids or reclamation.reclaimed_by_book:
+        audit.record(
+            conn,
+            event_type="cell_estate_reclaimed",
+            cell_id=cell.cell_id,
+            description=f"estate of {cell.cell_id} returned to {ESTATE_ACCOUNT}",
+            metadata={
+                "reclaimed_by_book": reclamation.reclaimed_by_book,
+                "released_reservations": list(reclamation.released_reservation_ids),
+                "still_deferred": list(reclamation.deferred_reservation_ids),
+            },
+        )
+
 
 def kill(
     conn: sqlite3.Connection,
@@ -517,6 +554,214 @@ def kill(
     result = get_cell(conn, cell_id)
     assert result is not None
     return result
+
+
+# --- estate: what happens to a dead Cell's money (Charter C1, C3, C8; §3.6) --
+
+#: Where a dead Cell's residual capital goes. `accounts.py` already settled the
+#: classification this needs: returning surplus to `colony_treasury` is
+#: "capital going back, not cost incurred", which is why this must never be
+#: counted as spend — a Cell that died holding money did not consume it, and
+#: booking the return as consumption would make every death look like a final
+#: burst of spending in the fitness numbers.
+ESTATE_ACCOUNT = "colony_treasury"
+
+#: The transaction type the estate posts. Registered as exempt in
+#: `tests/test_real_spend_registration.py`: it moves capital *back*, never
+#: touches `external_expense`, and so cannot be real spend the breaker needs
+#: to see.
+ESTATE_TRANSACTION_TYPE = "cell_estate_reclaim"
+
+
+@dataclass(frozen=True)
+class Reclamation:
+    """What an estate pass recovered, and what it could not."""
+
+    cell_id: str
+    released_reservation_ids: tuple[str, ...]
+    reclaimed_by_book: dict[str, int]
+    #: Open reservations left alone because an external operation may still
+    #: bill against them. Non-empty means the estate is *incomplete* and a
+    #: later `reclaim_settled_estates` pass will finish it.
+    deferred_reservation_ids: tuple[str, ...]
+
+    @property
+    def complete(self) -> bool:
+        return not self.deferred_reservation_ids
+
+
+def _open_reservations(conn: sqlite3.Connection, cell_id: str) -> list:
+    rows = conn.execute(
+        "SELECT reservation_id FROM reservations WHERE cell_id = ? AND status NOT IN (?, ?)"
+        " ORDER BY rowid",
+        (cell_id, ReservationStatus.SETTLED.value, ReservationStatus.RELEASED.value),
+    ).fetchall()
+    return [reservations.get_reservation(conn, r["reservation_id"]) for r in rows]
+
+
+def _reclaim_locked(conn: sqlite3.Connection, cell: Cell) -> Reclamation:
+    """Release a dead Cell's open reservations and return its residual cash.
+
+    Caller holds the write lock; this is folded into `_kill_locked` so a death
+    and its estate commit together. A crash between them would leave a dead
+    Cell holding standing spend authorisation, which is the thing Charter C8
+    ("dead Cells cannot act") is least willing to tolerate — an open
+    reservation *is* authorisation to spend, whatever the Cell's status says.
+
+    **One reservation is deliberately not released: one carrying an
+    `external_operation_id`.** That marks an operation that may already have
+    happened outside the colony, and ADR-022's whole argument is that such a
+    reservation is resolved by finding out what the provider did, never by
+    assuming. Releasing it here would hand the money back and then let the
+    invoice arrive against a Cell with no committed funds. The sweeper owns
+    that resolution; `reclaim_settled_estates` finishes the estate afterwards.
+
+    **Death is never blocked by this.** An in-flight external call makes the
+    estate incomplete, not the death impossible — a kill that could be refused
+    would break §9.3 displacement, and worse, would hand a Cell a survival
+    strategy: keep one call in flight and never die.
+    """
+    released, deferred = [], []
+    for reservation in _open_reservations(conn, cell.cell_id):
+        if reservation.external_operation_id is not None:
+            deferred.append(reservation.reservation_id)
+            continue
+        reservations._release_locked(conn, reservation.reservation_id)
+        released.append(reservation.reservation_id)
+
+    reclaimed: dict[str, int] = {}
+    for book in Book:
+        balance = ledger.get_balance(conn, cell_cash(cell.cell_id), book=book)
+        if balance <= 0:
+            # Negative is possible and left alone: ADR-021 lets a cost overrun
+            # drive a Cell's cash below zero, and "reclaiming" a debt would be
+            # inventing money. The shortfall stays visible on the dead Cell's
+            # account rather than being quietly absorbed by the treasury.
+            continue
+        # Keyed by *pass*, not just by cell and book: an estate legitimately
+        # runs more than once — a partial sweep at death, then the remainder
+        # once an in-flight external operation resolves — so a key naming only
+        # the cell and book would make the second pass collide with the first.
+        # Retry-safety comes from the transaction itself: a crash rolls the
+        # whole pass back, leaving both the balance and this count unchanged,
+        # so the retry recomputes the identical key.
+        pass_number = conn.execute(
+            "SELECT COUNT(*) AS n FROM ledger_transactions "
+            "WHERE transaction_type = ? AND book = ? AND idempotency_key LIKE ?",
+            (ESTATE_TRANSACTION_TYPE, book.value, f"%:{cell.cell_id}:{book.value}:%"),
+        ).fetchone()["n"]
+        ledger._write_transaction(
+            conn,
+            book=book,
+            currency="USD" if book != Book.RESOURCE else "RESOURCE",
+            transaction_type=ESTATE_TRANSACTION_TYPE,
+            idempotency_key=(
+                f"{ESTATE_TRANSACTION_TYPE}:{cell.cell_id}:{book.value}:{pass_number}"
+            ),
+            description=f"estate of dead cell {cell.cell_id}",
+            entries=[
+                EntrySpec(
+                    account_id=cell_cash(cell.cell_id),
+                    amount_minor_units=-balance,
+                    cell_id=cell.cell_id,
+                ),
+                EntrySpec(
+                    account_id=ESTATE_ACCOUNT,
+                    amount_minor_units=balance,
+                    cell_id=cell.cell_id,
+                ),
+            ],
+        )
+        reclaimed[book.value] = balance
+
+    return Reclamation(
+        cell_id=cell.cell_id,
+        released_reservation_ids=tuple(released),
+        reclaimed_by_book=reclaimed,
+        deferred_reservation_ids=tuple(deferred),
+    )
+
+
+def reclaim_settled_estates(conn: sqlite3.Connection) -> list[Reclamation]:
+    """Finish the estates of dead Cells whose external operations have resolved.
+
+    The second half of the story `_reclaim_locked` starts. A Cell that died with
+    a model call in flight left committed funds behind on purpose; once the
+    sweeper has settled or released that reservation, the residual is free and
+    belongs to the colony. Run by `mitosis sweep`, after the sweep itself.
+
+    Idempotent twice over: Cells with nothing left produce no transaction, and
+    the estate's idempotency key is per cell and book, so a second pass over an
+    already-emptied account is a no-op rather than a double credit.
+    """
+    dead = conn.execute(
+        "SELECT cell_id FROM cells WHERE status = ? ORDER BY rowid",
+        (CellStatus.DEAD.value,),
+    ).fetchall()
+
+    finished = []
+    for row in dead:
+        cell = get_cell(conn, row["cell_id"])
+        if cell is None:
+            continue
+        if not _open_reservations(conn, cell.cell_id) and not _residual_cash(conn, cell.cell_id):
+            continue
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            result = _reclaim_locked(conn, cell)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        if result.released_reservation_ids or result.reclaimed_by_book:
+            audit.record(
+                conn,
+                event_type="cell_estate_reclaimed",
+                cell_id=cell.cell_id,
+                description="estate settled after external operations resolved",
+                metadata={
+                    "reclaimed_by_book": result.reclaimed_by_book,
+                    "released_reservations": list(result.released_reservation_ids),
+                    "still_deferred": list(result.deferred_reservation_ids),
+                },
+            )
+            finished.append(result)
+    return finished
+
+
+def _residual_cash(conn: sqlite3.Connection, cell_id: str) -> dict[str, int]:
+    balances = {}
+    for book in Book:
+        balance = ledger.get_balance(conn, cell_cash(cell_id), book=book)
+        if balance > 0:
+            balances[book.value] = balance
+    return balances
+
+
+def outstanding_estates(conn: sqlite3.Connection) -> list[dict]:
+    """Dead Cells still holding money or open reservations.
+
+    A reporting surface rather than an invariant: with the estate folded into
+    every kill, a non-empty result means an external operation is unresolved
+    (or a death predates this behaviour), both of which an operator should be
+    able to see rather than infer.
+    """
+    outstanding = []
+    for row in conn.execute(
+        "SELECT cell_id FROM cells WHERE status = ? ORDER BY rowid",
+        (CellStatus.DEAD.value,),
+    ).fetchall():
+        open_reservations = _open_reservations(conn, row["cell_id"])
+        residual = _residual_cash(conn, row["cell_id"])
+        if open_reservations or residual:
+            outstanding.append(
+                {
+                    "cell_id": row["cell_id"],
+                    "residual_cash": residual,
+                    "open_reservations": [r.reservation_id for r in open_reservations],
+                }
+            )
+    return outstanding
 
 
 def _row_to_coroner_report(row: sqlite3.Row) -> CoronerReport:

@@ -48,6 +48,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Protocol
 
 from . import (
     audit,
@@ -99,6 +100,29 @@ class DeliberationStatus:
 #: Dormant is allowed on purpose: §17.2's whole point is that a wake event
 #: brings a dormant Cell back, and `lifecycle.wake` is how it becomes alive.
 _CAN_DELIBERATE = frozenset({CellStatus.ALIVE, CellStatus.DORMANT})
+
+
+class ProposalSink(Protocol):
+    """The §23 seam: where a recorded proposal goes for review.
+
+    `approval` reads proposals and regenerates wakes, so it sits *above* this
+    module and cannot be imported from it. This inverts that edge in the shape
+    `population.Displacer` and `sweeper.ExternalOperationChecker` already
+    established, rather than adding a back-edge or a function-local import.
+
+    **Note what the signature cannot accept.** It takes a `proposal_id` and
+    nothing else — no tier, no cost, no exposure. Like `Displacer`'s inability
+    to see the child being born, that is a constraint expressed as a signature:
+    §23.5 warns the approval queue "will be optimised against by Cells", so
+    every input to a review decision must be one the queue reads for itself.
+    A parameter here through which a caller could pass a pre-computed risk tier
+    would be the hole that clause describes.
+
+    Called *inside* the caller's transaction: a proposal recorded without its
+    queue entry is a proposal no operator sees.
+    """
+
+    def enqueue_locked(self, conn: sqlite3.Connection, *, proposal_id: str) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -265,6 +289,7 @@ def deliberate(
     model: str,
     context_budget_tokens: int = context.DEFAULT_CONTEXT_TOKEN_BUDGET,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    proposal_sink: ProposalSink | None = None,
 ) -> Deliberation:
     """Wake one Cell, think once, record what it proposed.
 
@@ -356,6 +381,7 @@ def deliberate(
         assembled=assembled,
         model_call_id=call.model_call_id,
         parsed=parsed,
+        proposal_sink=proposal_sink,
     )
 
 
@@ -484,12 +510,17 @@ def _record_proposal(
     assembled: context.AssembledContext,
     model_call_id: str,
     parsed: proposal_module.Proposal,
+    proposal_sink: ProposalSink | None,
 ) -> Deliberation:
-    """Record the proposal and register its predictions in one transaction.
+    """Record the proposal, register its predictions, and queue it for review
+    — one transaction.
 
     Atomic on purpose: a proposal whose predictions failed to register would
     be a Cell that stated a forecast the register has no record of, which is
-    precisely the gap §8.5's register-before-outcome rule exists to close.
+    precisely the gap §8.5's register-before-outcome rule exists to close. The
+    §23 queue entry joins the same transaction for the analogous reason — a
+    proposal that exists but reached no review path is one the operator has no
+    way to know about.
     """
     now = datetime.now(timezone.utc)
 
@@ -544,6 +575,9 @@ def _record_proposal(
                 (deliberation_id, registered.prediction_id),
             )
 
+        if proposal_sink is not None:
+            proposal_sink.enqueue_locked(conn, proposal_id=proposal_id)
+
         audit.record(
             conn,
             event_type="cell_deliberated",
@@ -593,6 +627,36 @@ def enqueue_wake(
     )
 
 
+def _enqueue_wake_locked(
+    conn: sqlite3.Connection,
+    *,
+    cell_id: str,
+    wake_reason: str,
+    dedupe_key: str,
+    priority: int = 100,
+) -> str | None:
+    """Schedule a wake inside the caller's transaction; returns the event id.
+
+    §23.3's approval expiry needs the expiry and the wake that regenerates the
+    action to commit together — an expiry that committed alone would be an
+    action silently dropped. Returns None if this wake is already queued, since
+    the dedupe pre-check cannot be delegated to the wrapper's IntegrityError
+    handling here: a ROLLBACK inside someone else's transaction would discard
+    their work.
+    """
+    if events.get_by_dedupe_key(conn, dedupe_key) is not None:
+        return None
+    return events._enqueue_locked(
+        conn,
+        event_type=WAKE_EVENT_TYPE,
+        source="colony",
+        priority=priority,
+        dedupe_key=dedupe_key,
+        target=cell_id,
+        payload={"cell_id": cell_id, "wake_reason": wake_reason},
+    )
+
+
 def run_wake_event(
     conn: sqlite3.Connection,
     event,
@@ -601,6 +665,7 @@ def run_wake_event(
     model: str,
     context_budget_tokens: int = context.DEFAULT_CONTEXT_TOKEN_BUDGET,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    proposal_sink: ProposalSink | None = None,
 ) -> Deliberation:
     """Consume one wake event: deliberate, then mark the event processed.
 
@@ -628,6 +693,7 @@ def run_wake_event(
         model=model,
         context_budget_tokens=context_budget_tokens,
         max_tokens=max_tokens,
+        proposal_sink=proposal_sink,
     )
 
     events.process_event(conn, event.event_id, lambda _conn, _event: [], cell_id=cell_id)
@@ -643,6 +709,7 @@ def run_ready_wakes(
     limit: int | None = None,
     context_budget_tokens: int = context.DEFAULT_CONTEXT_TOKEN_BUDGET,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    proposal_sink: ProposalSink | None = None,
 ) -> list[Deliberation]:
     """Drain ready wake events in Amendment A5's deterministic order.
 
@@ -663,6 +730,7 @@ def run_ready_wakes(
                 model=model,
                 context_budget_tokens=context_budget_tokens,
                 max_tokens=max_tokens,
+                proposal_sink=proposal_sink,
             )
         )
     return results

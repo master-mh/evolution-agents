@@ -140,39 +140,20 @@ def enqueue(
     if existing is not None:
         return existing
 
-    now = datetime.now(timezone.utc)
-    available = available_at or now
-    if available.tzinfo is None:
-        raise EventError("available_at must be timezone-aware UTC (Charter C11)")
-    if simulated_at is not None and simulated_at.tzinfo is None:
-        raise EventError("simulated_at must be timezone-aware UTC (Charter C11)")
-
-    event_id = ids.new_id()
-
     conn.execute("BEGIN IMMEDIATE")
     try:
-        conn.execute(
-            """
-            INSERT INTO event_inbox (
-                event_id, dedupe_key, attempt_number, event_type, source, target,
-                priority, created_at_utc, available_at, simulated_at, payload_json,
-                status, causation_id, correlation_id
-            ) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-            """,
-            (
-                event_id,
-                dedupe_key,
-                event_type,
-                source,
-                target,
-                priority,
-                now.isoformat(),
-                available.astimezone(timezone.utc).isoformat(),
-                simulated_at.astimezone(timezone.utc).isoformat() if simulated_at else None,
-                _canonical_json(payload or {}),
-                causation_id,
-                correlation_id,
-            ),
+        event_id = _enqueue_locked(
+            conn,
+            event_type=event_type,
+            source=source,
+            priority=priority,
+            dedupe_key=dedupe_key,
+            target=target,
+            payload=payload,
+            available_at=available_at,
+            simulated_at=simulated_at,
+            causation_id=causation_id,
+            correlation_id=correlation_id,
         )
         conn.execute("COMMIT")
     except sqlite3.IntegrityError as exc:
@@ -189,6 +170,67 @@ def enqueue(
     result = get_event(conn, event_id)
     assert result is not None
     return result
+
+
+def _enqueue_locked(
+    conn: sqlite3.Connection,
+    *,
+    event_type: str,
+    source: str,
+    priority: int,
+    dedupe_key: str,
+    target: str | None = None,
+    payload: dict | None = None,
+    available_at: datetime | None = None,
+    simulated_at: datetime | None = None,
+    causation_id: str | None = None,
+    correlation_id: str | None = None,
+) -> str:
+    """Insert one inbox event. Caller holds the transaction; returns the event id.
+
+    Exists so another module can fold an enqueue into its own atomic step —
+    §23.3's approval expiry is the first caller, and it needs the expiry and the
+    wake that regenerates the action to commit together. An expiry that
+    committed without its regeneration would be an action silently dropped,
+    which is the half of that clause easiest to lose.
+
+    Unlike the wrapper, this does **not** pre-check the dedupe key or translate
+    an IntegrityError: inside someone else's transaction a ROLLBACK here would
+    discard their work, so the caller owns that decision.
+    """
+    now = datetime.now(timezone.utc)
+    available = available_at or now
+    if available.tzinfo is None:
+        raise EventError("available_at must be timezone-aware UTC (Charter C11)")
+    if simulated_at is not None and simulated_at.tzinfo is None:
+        raise EventError("simulated_at must be timezone-aware UTC (Charter C11)")
+
+    event_id = ids.new_id()
+
+    conn.execute(
+        """
+        INSERT INTO event_inbox (
+            event_id, dedupe_key, attempt_number, event_type, source, target,
+            priority, created_at_utc, available_at, simulated_at, payload_json,
+            status, causation_id, correlation_id
+        ) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        """,
+        (
+            event_id,
+            dedupe_key,
+            event_type,
+            source,
+            target,
+            priority,
+            now.isoformat(),
+            available.astimezone(timezone.utc).isoformat(),
+            simulated_at.astimezone(timezone.utc).isoformat() if simulated_at else None,
+            _canonical_json(payload or {}),
+            causation_id,
+            correlation_id,
+        ),
+    )
+    return event_id
 
 
 def next_ready(

@@ -71,6 +71,25 @@ _EXEMPT_TRANSACTION_TYPES = {
         "separately by _concurrent_reserved rather than as settled spend"
     ),
     "reservation_release": "cell committed -> cell cash: returns money, never spends it",
+    "capital_allocation": (
+        "promotion_pool -> cell cash: an internal capital transfer against an approved "
+        "§25 grant. USD_REAL-capable and it does raise the Cell's spending power via "
+        "Charter C4's balance check — exactly as cell_funding does — but it never "
+        "touches external_expense, and C5's caps bound gross spend rather than how much "
+        "capital a Cell holds"
+    ),
+    "promotion_pool_funding": (
+        "colony_treasury -> promotion_pool: staging capital for §25 promotion, an "
+        "operator action that moves nothing outside the colony"
+    ),
+    "cell_estate_reclaim": (
+        "cell cash -> colony_treasury: a dead Cell's residual capital returning to the "
+        "colony. USD_REAL-capable, but it flows *inward* and never touches "
+        "external_expense — accounts.py already classifies colony_treasury as a capital "
+        "account precisely because a return of surplus is capital movement, not "
+        "consumption. Counting it as spend would also make every death look like a final "
+        "burst of spending in the fitness numbers"
+    ),
     "model_call_sim_mirror": "Book.USD_SIM only (§2.4): a synthetic mirror is never real spend",
     "event_side_effect": "Book.USD_SIM only: golden-run scenario handler",
 }

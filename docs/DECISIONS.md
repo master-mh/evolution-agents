@@ -583,6 +583,227 @@ Template: **Status** · **Spec ref** · **Context** · **Decision** · **Consequ
 
 ---
 
+## ADR-026: The scheduler's cadence is a dedupe key, and its guards fail safe
+
+- **Status:** Accepted
+- **Spec ref:** §6.3, §9.2, §17.2, §23.3, §27.1 (`operator:`, `autonomy:`); Amendment A19
+- **Context:** The scheduler is what makes the colony run unattended, which makes it the first
+  component whose failure mode is *volume* rather than a single bad decision. §23.3 says so
+  outright — the metabolic-rate alarm is "the guard against 400 approvals quietly queuing
+  overnight". Cadence itself is unspecified, but the guards around it are specified in detail, and
+  §27.1 even ships their defaults.
+- **Decisions, and the alternatives each displaced:**
+  1. **Cadence is enforced by the wake's dedupe key, not by a counter.** Each wake is
+     `epoch:{n}:cell:{id}`, and `events.enqueue` is idempotent on dedupe keys, so "one wake per
+     Cell per epoch" is structural: re-ticking inside an epoch enqueues nothing, a crashed tick
+     resumes cleanly, and cron-every-minute costs nothing until the epoch turns. Rejected: a
+     `last_woken_at` column, which is a cache that can disagree with the event log.
+  2. **Epochs are derived from the simulated clock, never stored.** Same rule as balances
+     (Charter C3) and for the same reason: a cached counter disagreeing with the clock has no
+     correct resolution. What *is* stored is `epoch_log` — the wall-clock instant each epoch was
+     first observed.
+  3. **`epoch_log` is §6.3's "explicit conversion metadata", and it is load-bearing.** §23.3 wants
+     real cents per *sim*-epoch, but every ledger row is stamped in *wall* time because the clock
+     is still not wired into ledger timestamps. Attributing spend to an epoch is therefore
+     impossible without recording the wall anchor as the epoch is crossed. The clause that reads
+     like bookkeeping ceremony is the thing that makes the alarm computable at all.
+  4. **The metabolic alarm watches the derivative, not another ceiling.** §23.3: an acceleration
+     "raises an alarm **even if every individual cap is satisfied**". So it compares the epoch's
+     burn against a short baseline of recent spending epochs. Rejected: a second absolute cap,
+     which would duplicate the breaker and catch nothing the breaker doesn't. Epochs with zero
+     spend are excluded from the baseline — a colony going from idle to spending is starting, not
+     accelerating, and a zero baseline makes every first spend an infinite acceleration.
+  5. **A fired alarm halts the scheduler and persists until acknowledged with a stated reason.**
+     §23.3 says "raises an alarm", not "halts" — but this is the module that runs while nobody is
+     watching, and an alarm nothing acts on is a log line. It halts *scheduling* only: no Cell
+     dies, no reservation moves, the breaker is untouched, and `mitosis wake` still works by hand.
+     A heartbeat deliberately does **not** clear it: being back at the keyboard is not the same as
+     having looked at why the colony was burning money.
+  6. **Vacation mode maps onto the provider split.** §23.3: external-facing phases auto-pause
+     while "sim-only work may continue". A paid provider is external-facing; mock and Ollama are
+     not. So an absent operator stops the colony *spending*, not thinking — which is the fail-safe
+     reading and needs no new concept.
+  7. **`autonomy.real_spending` gates unattended paid work, and ships false**, as §27.1 does.
+     Two independent confirmations are required to spend real money on a schedule: the CLI's
+     `--yes-spend-real-money` ("I meant to type this") and the stored autonomy flag ("the colony
+     may do this without me"). An unconfigured operator row reads as *never seen*, so a colony
+     with no operator config is in vacation mode with real spending off.
+- **Consequences:** A colony can now run from cron and will refuse to do anything expensive
+  without an explicit, audited decision. The scheduler still does not enforce
+  `max_births_per_epoch` (the epoch primitive finally makes it checkable, but it belongs with the
+  birth paths), and §23's approval queue does not exist, so `approval_sla_seconds` still times
+  nothing.
+
+---
+
+## ADR-027: The kernel classifies risk; the Cell's tier is a claim, and approval grants nothing
+
+- **Status:** Accepted
+- **Spec ref:** §23 (all of), §25.1, §25.2, §27.1 (`operator.approval_sla_seconds`); Amendments A11, A19
+- **Context:** Proposals had been recorded and inert since ADR-025, and the scheduler (ADR-026)
+  began generating them unattended — so the missing review path stopped being a gap and became the
+  thing standing between the colony and any useful work. §23 specifies the queue in detail, and
+  §23.5 specifies its threat model in one sentence: "the approval queue is itself part of the
+  environment and will be optimised against by Cells."
+- **Decisions, and the alternatives each displaced:**
+  1. **The Cell's `risk_tier` is a claim; the kernel assesses its own, and the two are stored
+     separately.** §23.5 makes the obvious design — read the tier off the proposal and queue
+     accordingly — unusable, and proposal.py had already named the exploit: a Cell that could set
+     its own tier and be believed "would set it to LOW forever". So `assessed_tier` is derived
+     from facts the Cell does not control (its book, its status, the request kind, and its
+     lineage's cumulative exposure). This is §0.3's "a Cell may explain a result; it may never
+     define the canonical result" extended from *outcomes* to *requests*.
+  2. **The fold is `max`, so a Cell may raise its own tier but never lower it.** Rejected:
+     ignoring the claim entirely. Claiming *more* danger than the kernel found is not a gaming
+     vector — it is a Cell flagging itself — and discarding it would throw away real information.
+     Understating is the vector, and it is recorded as an `understated_risk` signal rather than
+     silently overwritten, so the *attempt* stays visible rather than merely being defeated.
+  3. **The §23.4 aggregation key is the lineage founder, not the Cell.** The spec names
+     "counterparty/domain/channel"; none exist yet, because no Cell can take an external action.
+     But the clause's target is action-splitting, and the cheapest splitting mechanism this colony
+     offers is §9 reproduction: birth children, have each ask for a fraction. Keying on `cell_id`
+     would miss exactly the split this system makes easiest. Counterparty/domain/channel join the
+     key when external actions land.
+  4. **Signals annotate; they never auto-reject.** Rejected: automatic refusal on a detection.
+     §23.5 cuts both ways — an automatic rejector is simply the next thing to optimise against,
+     and it kills honest work silently on a false positive. A signal escalates the tier and strips
+     batch eligibility, forcing §23.1's individual review. The human still decides.
+  5. **SLA breach and expiry are separate, and only one is a lifecycle state.** §23.3 asks that
+     "overdue items surface distinctly" — a reporting requirement — while expiry is a transition.
+     So `overdue` is derived at read time and an overdue item stays pending and approvable;
+     expiry is stored. Collapsing them would have made "overdue" a second state that can disagree
+     with the clock.
+  6. **Expiry regenerates rather than drops or executes.** §23.3: "expired actions are
+     **regenerated and re-evaluated** before execution." An expiry enqueues a fresh wake so the
+     Cell re-derives the action against a world that has moved, and an expired request can no
+     longer be decided. Rejected: letting a backlog be cleared late, which is approving stale
+     reasoning; and dropping silently, which is how a solo operator loses track of what the colony
+     wanted to do.
+  7. **Expiry is derived as a multiple of the tier SLA rather than a new config knob.** §27.1
+     ships SLAs but no expiry. Deriving it inherits the tier ordering, so CRITICAL expires
+     fastest — harsh-looking, and correct under §23.3: a critical action nobody looked at within
+     the hour should be re-derived, not executed on hour-old reasoning.
+  8. **Exposure thresholds are multiples of `operator.metabolic_alarm_cents_per_epoch`.**
+     Rejected: three fresh constants. The colony already has a stated opinion about what a
+     worrying amount of money is, and a second silent one would drift from it.
+  9. **Approval produces a grant, and nothing consumes a grant.** §25.1 puts this loop at rung 5,
+     "shadow prediction with no action"; a review path moves it to rung 6, "human-reviewed
+     prototype". It does not reach rung 9, "bounded autonomy". So `approve` writes a scoped,
+     single-use, expiring grant with a `consumed_at_utc` that is always NULL, and a structural
+     test forbids any module outside `approval.py` writing the table or reading that column. The
+     first executor therefore has to break a named test and edit a migration comment that states
+     the rule — an argued act rather than a plausible-looking commit.
+  10. **Abstentions are never queued.** There is nothing to approve in "I have nothing to
+      propose" — and a queue padded with abstentions is *useful* to a Cell trying to make a flood
+      look ordinary, which makes this anti-gaming rather than tidiness.
+- **Consequences:** `operator.approval_sla_seconds` finally times something, and a proposal now
+  has a review path an operator can act on. `events` gained an `_enqueue_locked` core so an expiry
+  and the wake that regenerates it commit together. Deliberately still absent: the §23.2 payload's
+  "independent Auditor summary" (no Auditor Cell exists, and §0.3 forbids the proposer filling it,
+  so it reports as unavailable) and its "liability" figure (no liability reserve until Phase 6+).
+  Nothing executes a grant; the ladder's next rung is a separate, deliberate slice.
+
+---
+
+## ADR-028: A dead Cell's estate returns to the colony; an in-flight call defers it, never blocks death
+
+- **Status:** Accepted
+- **Spec ref:** Charter C1, C3, C8; §3.6, §9.3, §10.5; ADR-021, ADR-022
+- **Context:** `kill()` marked a Cell dead and filed its coroner report, and left everything else
+  alone — open reservations stayed open and residual cash stayed on an account nothing could ever
+  spend from again. The golden run quantifies it: its dead Cell had been holding **3450 USD_SIM**
+  since expectation version 1. Displacement (ADR-024) made it worse by design, evicting Cells to
+  reclaim population slots precisely when the colony is at capacity, and the scheduler (ADR-026)
+  made it compound unattended. The spec has no "estate" concept, so this is decided from the
+  clauses that do exist rather than read off one that does.
+- **Decisions, and the alternatives each displaced:**
+  1. **The estate runs inside `_kill_locked`, so death and reclamation commit together.** An open
+     reservation *is* standing authorisation to spend, whatever the status column says — a dead
+     Cell holding one is the plainest form of what Charter C8 forbids, so a crash between the two
+     must not be able to leave that state. Folding it into the `_locked` core also means §9.3
+     displacement gets it for free.
+  2. **Residual cash goes to `colony_treasury` as capital, never as spend.** `accounts.py` had
+     already drawn this distinction and stated the reason: returning surplus is "capital going
+     back, not cost incurred". Rejected: booking it against `external_expense`, which would make
+     every death look like a final burst of spending in the §10 fitness numbers and would put a
+     capital return through Charter C5's real-spend caps.
+  3. **A reservation carrying an `external_operation_id` is never released here.** ADR-022's whole
+     argument is that such a reservation is resolved by finding out what the provider did, never by
+     assuming. Releasing it at death would hand the money back and let the invoice arrive against a
+     Cell with no committed funds.
+  4. **But death is never blocked by an unresolvable estate.** Rejected: refusing to kill a Cell
+     with a call in flight. That would break §9.3 displacement, and worse, it would hand every Cell
+     a survival strategy — keep one call in flight and never die. An in-flight operation makes the
+     estate *incomplete*, not the death impossible, and `reclaim_settled_estates` (run by
+     `mitosis sweep`, after the sweep) finishes it once the sweeper has resolved the reservation.
+  5. **A negative balance is left alone.** ADR-021 lets a cost overrun drive a Cell's cash below
+     zero; "reclaiming" a debt would be inventing money, so the shortfall stays visible on the dead
+     Cell's account rather than being quietly absorbed by the treasury.
+  6. **The estate's idempotency key names the pass, not just the cell and book.** An estate
+     legitimately runs more than once — partial at death, remainder after an external operation
+     resolves — so a key naming only cell and book made the second pass collide with the first.
+     Retry-safety comes from the transaction: a crash rolls the pass back, leaving the balance and
+     the pass count unchanged, so a retry recomputes the same key.
+- **Consequences:** Golden expectation 7 → 8, and the diff *is* the bug report — `cell:cell#0:cash`
+  3450 → 0 against `colony_treasury` 300 → 3750. `test_scenario_pins_charter_c6_idempotent_redelivery`
+  had been using `colony_treasury`'s balance as a proxy for redelivery and now counts the handler's
+  own transactions instead, because the estate legitimately credits that account too. The ordering
+  of estate versus coroner report inside `_kill_locked` is defence in depth and currently
+  unobservable: the capital classification, not the ordering, is what keeps the report clean.
+
+---
+
+## ADR-029: An approved grant allocates capital from a human-filled pool — rung 7, not rung 9
+
+- **Status:** Accepted
+- **Spec ref:** §25.1, §25.2, §17.2, §27.1 (`autonomy.real_spending`), §31; Charter C4, C8; ADR-026, ADR-027
+- **Context:** ADR-027 built the §23 review queue and ended with a grant that nothing consumed — rung
+  5 → 6 of §25.1's ladder, deliberately stopping short. §31 states the colony's core loop as
+  "... -> allocate capital -> scale, mutate, collaborate, sleep, or die", and MITOSIS could do
+  everything on both sides of that arrow and nothing at the arrow itself. This is the argued step
+  that closes it.
+- **Decisions, and the alternatives each displaced:**
+  1. **Allocation draws on `promotion_pool`, not the treasury or `seed_bank`.** §31 has reserved
+     that account since Phase 1 with nothing ever moving through it ("capital held for §25
+     promotion — redistributed, never consumed"). Using it gives the operator a single number that
+     bounds everything this path can ever allocate, set in advance and unaffected by anything the
+     colony decides unattended. Rejected: drawing on `seed_bank`, which would make the ceiling the
+     colony's whole capital.
+  2. **Two humans, and that is what makes this rung 7.** §25.1 puts "tiny capped live experiment"
+     one step past "human-reviewed prototype". One human approves the request under §23.1; a
+     second runs `mitosis allocate`. Nothing fires on a schedule, and a structural test forbids
+     `scheduler.py` importing this module at all — an allocation on a timer is rung 9, and it
+     should cost a named test failure to get there.
+  3. **The amount is the figure frozen at approval**, the one §23.2 actually showed the operator —
+     never re-read from the Cell at allocation time. The Cell is not consulted here at all; it is
+     woken *afterwards* and learns its balance changed through ordinary §15 context. Same asymmetry
+     §0.3 and §23.5 impose everywhere else, applied where the colony finally hands over real
+     spending power.
+  4. **Only a `spend_request` allocates.** Approving an experiment is a human saying "yes, think
+     about that", not a capital decision. Rejected: treating any approved grant as fundable, which
+     would let a Cell obtain money through a proposal never reviewed as a request for it.
+  5. **USD_REAL allocation additionally requires §27.1's `autonomy.real_spending`.** ADR-026
+     established that real money needs two independent confirmations; the §23 approval is
+     "this request is sound", the autonomy flag is "this colony may move real money". An approval
+     alone must not convert the first into the second.
+  6. **The allocation emits §17.2's "capital allocation" wake**, a reason defined in
+     `deliberation.py` and never emitted until now. Folded into the same transaction: a Cell funded
+     without being told holds capital it will not use until something unrelated wakes it, which
+     makes the allocation look inert exactly when it is not.
+  7. **§25.2's evidence is recorded with its gaps visible.** Liability is NULL (no reserve exists
+     until Phase 6+) and transfer degradation is NULL until a Cell has been promoted twice.
+     Rejected: defaulting either to 0 — a 0 liability reads as "no liability" and a 0 degradation
+     reads as "transferred perfectly", both much stronger claims than "not yet knowable".
+- **Consequences:** The core loop closes, and the golden run covers it end to end at expectation
+  version 9 — deliberately on a USD_SIM Cell, because the scenario's explorer is USD_REAL and
+  decision 5 correctly refuses it. `test_no_kernel_path_consumes_a_grant` was renamed and loosened
+  to `test_only_the_promotion_module_consumes_a_grant`; that edit is the friction ADR-027 intended,
+  and the replacement still forbids the next unargued step. Still absent: nothing measures whether
+  an allocation *worked* — the promotion's predicted outcome resolves through the register, but no
+  path closes the loop back onto rung 8.
+
+---
+
 ## Amendments folded directly into the spec without a standalone ADR
 
 The remaining amendments from `docs/SPEC.md` §"Amendments introduced in v0.2" are feature

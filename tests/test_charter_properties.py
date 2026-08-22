@@ -104,7 +104,20 @@ def test_charter_ledger_rejects_unbalanced(a, b):
 
 
 @given(amounts=st.lists(st.integers(min_value=1, max_value=1000), min_size=1, max_size=20))
-@settings(max_examples=50)
+# Every property test below builds a fresh migrated database *inside* each
+# example, so schema setup is charged against Hypothesis's per-example deadline
+# (200ms by default). That cost grows with every migration — it is now 15 files
+# — and under a loaded machine it intermittently tripped the deadline, failing
+# `charter_conservation_per_book` and `charter_no_overspend_...cell_cash` with
+# a timing error dressed up as a Charter violation. Two of these tests are
+# provably time-independent (no clock, no cells), which is what identified it.
+#
+# `deadline=None` is right rather than a larger number: the deadline exists to
+# catch pathological algorithmic blowup in the code under test, and fixture
+# setup is neither. `test_charter_carrying_capacity_lineage_share` was already
+# exempted for this reason; this generalises it before the next migration makes
+# it worse.
+@settings(max_examples=50, deadline=None)
 def test_charter_conservation_per_book_and_charter_balance_matches_ledger(amounts):
     conn = db.connect_and_migrate()
     for i, amount in enumerate(amounts):
@@ -130,7 +143,7 @@ def test_charter_conservation_per_book_and_charter_balance_matches_ledger(amount
 # request / settle / release / crash / reconcile.
 
 
-@settings(max_examples=30, stateful_step_count=25)
+@settings(max_examples=30, stateful_step_count=25, deadline=None)
 class ReservationKernelMachine(RuleBasedStateMachine):
     reservation_ids = Bundle("reservation_ids")
 
@@ -246,7 +259,7 @@ Test_charter_crash_recovery = ReservationKernelMachine.TestCase
     max_living=st.integers(min_value=1, max_value=10),
     attempts=st.integers(min_value=0, max_value=20),
 )
-@settings(max_examples=50)
+@settings(max_examples=50, deadline=None)
 def test_charter_carrying_capacity(max_living, attempts):
     conn = db.connect_and_migrate()
     limits = PopulationLimits(
@@ -361,7 +374,7 @@ def test_charter_carrying_capacity_lineage_share(cap, attempts, founders):
     cap=st.integers(min_value=10, max_value=200),
     amounts=st.lists(st.integers(min_value=1, max_value=100), min_size=0, max_size=15),
 )
-@settings(max_examples=50)
+@settings(max_examples=50, deadline=None)
 def test_charter_realspend_cap(cap, amounts):
     conn = db.connect_and_migrate()
     ledger.post_transaction(
@@ -414,7 +427,7 @@ def test_charter_realspend_cap(cap, amounts):
     redelivery_count=st.integers(min_value=1, max_value=15),
     amount=st.integers(min_value=1, max_value=1000),
 )
-@settings(max_examples=50)
+@settings(max_examples=50, deadline=None)
 def test_charter_idempotent_handlers(redelivery_count, amount):
     conn = db.connect_and_migrate()
     call_count = 0
@@ -451,7 +464,7 @@ def test_charter_idempotent_handlers(redelivery_count, amount):
 # cell_lifecycle_transition audit event for that Cell (C10).
 
 
-@settings(max_examples=30, stateful_step_count=25)
+@settings(max_examples=30, stateful_step_count=25, deadline=None)
 class CellLifecycleMachine(RuleBasedStateMachine):
     cell_ids = Bundle("cell_ids")
 
@@ -546,7 +559,7 @@ Test_charter_dead_cell_inert_charter_audit_complete = CellLifecycleMachine.TestC
     cap=st.integers(min_value=10, max_value=500),
     amounts=st.lists(st.integers(min_value=1, max_value=200), min_size=0, max_size=15),
 )
-@settings(max_examples=50)
+@settings(max_examples=50, deadline=None)
 def test_charter_no_overspend(cap, amounts):
     conn = db.connect_and_migrate()
     cell = lifecycle.create_cell(
@@ -581,7 +594,7 @@ def test_charter_no_overspend(cap, amounts):
     budget=st.integers(min_value=1, max_value=100_000),
     requested=st.integers(min_value=1, max_value=200_000),
 )
-@settings(max_examples=75)
+@settings(max_examples=75, deadline=None)
 def test_charter_no_overspend_reservation_cannot_exceed_cell_cash(budget, requested):
     conn = db.connect_and_migrate()
     ledger.post_transaction(
@@ -624,7 +637,7 @@ def test_charter_no_overspend_reservation_cannot_exceed_cell_cash(budget, reques
     dollars=st.integers(min_value=-1_000_000, max_value=1_000_000),
     cents=st.integers(min_value=0, max_value=99),
 )
-@settings(max_examples=50)
+@settings(max_examples=50, deadline=None)
 def test_charter_canonical_forms_money_round_trips_through_integer_minor_units(dollars, cents):
     sign = "-" if dollars < 0 else ""
     amount_str = f"{sign}{abs(dollars)}.{cents:02d}"

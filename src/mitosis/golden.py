@@ -58,6 +58,7 @@ from importlib import resources
 from pathlib import Path
 
 from . import (
+    approval,
     clock,
     deliberation,
     db,
@@ -69,6 +70,7 @@ from . import (
     lineage,
     population,
     prediction,
+    promotion,
     providers,
     real_spend_breaker,
     reconciliation,
@@ -122,7 +124,68 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           transaction type changes**, which is what a pure prompt edit should
 #           look like — anything else in this diff would have meant the loop's
 #           economics moved, not just its wording.
-EXPECTATION_VERSION = 6
+#   6 -> 7: the scenario's proposal now enters §23's approval queue, because
+#           both the CLI and the scheduler wire that sink — a golden run
+#           without it would pin a path the colony no longer takes. Three
+#           sections differ and nothing else does:
+#           (a) new `approval_requests`: one entry, claimed LOW / **assessed
+#               MEDIUM**, exposure 25, reversible, pending, sla 14400s, one
+#               `understated_risk` signal. That single row is §23.5's central
+#               guarantee made visible in the replay — the scenario's Cell
+#               asked to be reviewed as LOW and the kernel declined, so a
+#               regression that let a Cell set its own tier would show up here
+#               as `assessed_tier: LOW` rather than passing silently.
+#           (b) new `approval_grants`: 0. Pinned as a count precisely because
+#               it must stay 0 — §25.1 puts this loop at rung 6, and a golden
+#               run that began issuing grants to itself would be the drift
+#               this file exists to catch.
+#           (c) `audit_event_types` gains `approval_requested`, and only that.
+#           **No balance, reservation, transaction-type or conservation change**
+#           — queueing a proposal for review moves no money, and the balances
+#           section is byte-identical to version 6.
+#   7 -> 8: a dead Cell's estate is now reclaimed as part of its death — open
+#           reservations released, residual cash returned to `colony_treasury`
+#           (Charter C8, C1; ADR-028). The diff makes the bug it fixes visible
+#           and is the reason to keep this section short: the scenario's dead
+#           Cell had been silently holding **3450 USD_SIM** on
+#           `cell:cell#0:cash` since version 1, and every death before this
+#           lost that capital to a Cell that could never spend it again.
+#           Exactly four values move: `cell:cell#0:cash` 3450 -> 0,
+#           `colony_treasury` 300 -> 3750 (the same 3450, so this is a
+#           transfer and USD_SIM conservation is unchanged), one new
+#           `cell_estate_reclaim` transaction type, and one new
+#           `cell_estate_reclaimed` audit type. **No USD_REAL movement** — the
+#           scenario's dead Cell holds no real money — and no reservation,
+#           prediction, proposal or approval section changes.
+#   8 -> 9: the scenario now runs the colony's **core loop end to end** (§31:
+#           "... -> allocate capital -> ..."), which had never been covered:
+#           the auditor's child deliberates a spend request, it is queued under
+#           §23, approved, and its grant allocated at §25.1 rung 7 (ADR-029).
+#           Every line of the diff traces to that one block:
+#           (a) cell#4 funded 20 USD_REAL and 2000 RESOURCE from `seed_bank` so
+#               it can pay for its own thinking (§15.4). **Transfers, not
+#               spend** — `external_expense` is unchanged in every book.
+#           (b) its deliberation adds one mock model call: +1 RESOURCE
+#               reserve/settle pair, `infrastructure_reserve` +2, cell#4
+#               RESOURCE cash 2000 -> 1998, and a USD_REAL reserve/**release**
+#               pair (a zero-cost call releases rather than settles, which is
+#               the tell that no real money moved).
+#           (c) `promotion_pool` funded 500 from `colony_treasury`
+#               (3750 -> 3250), then 30 allocated to cell#4 (pool -> 470,
+#               cell#4 USD_SIM 500 -> 530).
+#           (d) a new `promotions` section: one row, **rung 7**, 30 USD_SIM,
+#               liability and transfer degradation both null because neither is
+#               knowable at a first promotion, and two named humans.
+#           (e) audit gains `approval_granted`, `capital_allocated` and
+#               `promotion_pool_funded`; `approval_requested` and
+#               `cell_deliberated` each go 1 -> 2.
+#           **The allocation deliberately runs on a USD_SIM Cell.** The
+#           explorer is USD_REAL and `promotion.allocate` refuses it without
+#           §27.1's `autonomy.real_spending`, which this scenario must never
+#           enable — a replay that started moving real money is the worst
+#           regression this file could miss. Conservation holds in all three
+#           books; both hash chains and resource linkage stay green.
+EXPECTATION_VERSION = 9
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -150,6 +213,22 @@ GOLDEN_PROPOSAL_REPLY = json.dumps(
                 "horizon_days": 30,
             }
         ],
+    },
+    sort_keys=True,
+)
+
+
+# The commercial Cell's reply for the §25 promotion step. A spend request,
+# because only a spend request allocates capital — an approved experiment is a
+# human saying "yes, think about that", not a capital decision.
+GOLDEN_SPEND_REQUEST_REPLY = json.dumps(
+    {
+        "kind": "spend_request",
+        "summary": "golden-run capped purchase of a sample dataset",
+        "rationale": "fixed scenario spend request; exists to pin rung 7, not to be clever",
+        "risk_tier": "MEDIUM",
+        "estimated_cost_minor_units": 30,
+        "predictions": [],
     },
     sort_keys=True,
 )
@@ -253,7 +332,7 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     # own cash rather than a colony account, carrying a mutated genome so the
     # run pins a real genome-parentage edge as well as a cell-parentage one
     # (SPEC.md §26 names the "expected lineage tree" as golden-run content).
-    lineage.reproduce(
+    auditor_child = lineage.reproduce(
         conn, parent_cell_id=auditor.cell_id, budget_minor_units=500,
         idempotency_key="golden:birth:auditor-child",
         mutation={"strategy": "golden-child-v2"},
@@ -544,14 +623,97 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         dedupe_key="golden:wake:1",
         available_at=SCENARIO_EPOCH,
     )
+    #     The §23 queue is wired in, because it is now part of what happens
+    #     when a Cell proposes: both the CLI and the scheduler pass this sink,
+    #     so a golden run without it would pin a path the colony no longer
+    #     takes. The scenario's reply claims LOW on a 25-minor-unit experiment,
+    #     which the kernel independently assesses as MEDIUM — so this also pins
+    #     §23.5's central guarantee, that a Cell cannot set the tier it is
+    #     reviewed at.
     deliberation.run_ready_wakes(
         conn,
         provider=providers.MockProvider(reply=GOLDEN_PROPOSAL_REPLY),
         model="mock-1",
         now=SCENARIO_RESERVATION_EXPIRY,
+        proposal_sink=approval.QueueSink(),
     )
 
-    # 14. Simulated clock.
+    # 14. §25.1's ladder, rung 7 — the colony's core loop closing (§31:
+    #     "... -> allocate capital -> scale, mutate, collaborate, sleep, or
+    #     die"). The proposal recorded above is reviewed, approved, and its
+    #     grant allocated, which funds the Cell from the promotion pool and
+    #     wakes it under §17.2's "capital allocation" reason.
+    #
+    #     Pinned here because this is the only path in the kernel where a
+    #     Cell's own output leads, through a human, to money moving into its
+    #     account — and because the pool is a USD_SIM pot: an allocation that
+    #     ever moved USD_REAL in a replay would be the worst regression this
+    #     file could miss.
+    #     Run on the auditor's *child* rather than the explorer, and the reason
+    #     is the guard itself: the explorer is a USD_REAL Cell, and allocating
+    #     to it is refused without §27.1's `autonomy.real_spending` — which the
+    #     scenario must never enable, since a replay that started moving real
+    #     money is the worst regression this file could miss. The refusal is
+    #     asserted below rather than worked around.
+    promotion.fund_pool(
+        conn,
+        book=Book.USD_SIM,
+        amount_minor_units=500,
+        idempotency_key="golden:pool:usd_sim",
+    )
+    #     §15.4: a Cell pays for its own thinking, so the child needs a balance
+    #     in the books the gateway reserves before it can deliberate at all.
+    #     Both are transfers, not spend — the mock provider is priced at zero.
+    for fund_book, fund_currency, fund_amount in (
+        (Book.USD_REAL, "USD", 20),
+        (Book.RESOURCE, "RESOURCE", 2_000),
+    ):
+        ledger.post_transaction(
+            conn,
+            book=fund_book,
+            currency=fund_currency,
+            transaction_type="cell_funding",
+            idempotency_key=f"golden:fund:auditor-child:{fund_book.value}",
+            description="fund the auditor's child so it can deliberate",
+            entries=[
+                EntrySpec(
+                    account_id="seed_bank",
+                    amount_minor_units=-fund_amount,
+                    cell_id=auditor_child.cell_id,
+                ),
+                EntrySpec(
+                    account_id=f"cell:{auditor_child.cell_id}:cash",
+                    amount_minor_units=fund_amount,
+                    cell_id=auditor_child.cell_id,
+                ),
+            ],
+        )
+    deliberation.deliberate(
+        conn,
+        cell_id=auditor_child.cell_id,
+        provider=providers.MockProvider(reply=GOLDEN_SPEND_REQUEST_REPLY),
+        wake_key="golden:wake:auditor-child",
+        wake_reason=deliberation.WAKE_CAPITAL_ALLOCATION,
+        model="mock-1",
+        proposal_sink=approval.QueueSink(),
+    )
+    auditor_request = next(
+        r for r in approval.queue(conn) if r.cell_id == auditor_child.cell_id
+    )
+    auditor_grant = approval.approve(
+        conn,
+        request_id=auditor_request.request_id,
+        decided_by="golden-operator",
+        reason="fixed scenario approval; exists to pin the loop",
+    )
+    promotion.allocate(
+        conn,
+        grant_id=auditor_grant.grant_id,
+        allocated_by="golden-operator",
+        reason="fixed scenario allocation; exists to pin rung 7",
+    )
+
+    # 15. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
 
@@ -735,6 +897,57 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         for row in conn.execute("SELECT * FROM proposals ORDER BY rowid").fetchall()
     ]
 
+    # §23's review queue. Ids, timestamps and the aggregation key's embedded
+    # cell id are all volatile, so what is pinned is the *classification*: what
+    # the Cell claimed, what the kernel assessed, the exposure it was assessed
+    # against, and which anti-gaming signals fired.
+    approval_rows = [
+        {
+            "cell": aliases.get(row["cell_id"], "cell#?"),
+            "claimed_tier": row["claimed_tier"],
+            "assessed_tier": row["assessed_tier"],
+            "exposure_minor_units": row["exposure_minor_units"],
+            "reversible": bool(row["reversible"]),
+            "status": row["status"],
+            "sla_seconds": row["sla_seconds"],
+            "signals": sorted(
+                signal["signal"]
+                for signal in conn.execute(
+                    "SELECT signal FROM approval_signals WHERE request_id = ?",
+                    (row["request_id"],),
+                ).fetchall()
+            ),
+        }
+        for row in conn.execute(
+            "SELECT * FROM approval_requests ORDER BY rowid"
+        ).fetchall()
+    ]
+
+    # No grant is ever issued by the scenario: §25.1 puts this loop at rung 6,
+    # and a golden run that started approving things on its own would be
+    # exactly the drift this file exists to catch.
+    approval_grant_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM approval_grants"
+    ).fetchone()["n"]
+
+    # §25.2's promotion evidence. Ids and timestamps are volatile; the rung,
+    # the amount, and the two humans are the substance.
+    promotion_rows = [
+        {
+            "cell": aliases.get(row["cell_id"], "cell#?"),
+            "rung": row["rung"],
+            "book": row["book"],
+            "allocated_minor_units": row["allocated_minor_units"],
+            "resolved_predictions": row["resolved_predictions"],
+            "unresolved_predictions": row["unresolved_predictions"],
+            "liability_minor_units": row["liability_minor_units"],
+            "transfer_degradation": row["transfer_degradation"],
+            "approved_by": row["approved_by"],
+            "allocated_by": row["allocated_by"],
+        }
+        for row in conn.execute("SELECT * FROM promotions ORDER BY rowid").fetchall()
+    ]
+
     model_call_rows = [
         {
             "cell": aliases.get(row["cell_id"], "cell#?"),
@@ -772,6 +985,9 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "predictions": prediction_rows,
         "deliberations": deliberation_rows,
         "proposals": proposal_rows,
+        "approval_requests": approval_rows,
+        "approval_grants": approval_grant_count,
+        "promotions": promotion_rows,
         "audit_event_types": audit_event_types,
         "event_inbox": inbox,
         "event_outbox": outbox,
