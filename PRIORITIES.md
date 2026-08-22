@@ -190,10 +190,22 @@
 - [ ] **Nothing runs the scheduler.** `tick` is a command, composable with cron per §30.1's
   "avoid unnecessary frameworks" — but a colony still needs someone to install the crontab, and
   there is no supervision, no restart-on-failure, and no alert when ticks simply stop.
-- [ ] **`max_births_per_epoch` (§9.2) is finally checkable and still unchecked.** The epoch
-  primitive was its missing prerequisite. Belongs with the birth paths rather than the scheduler,
-  and needs a call on what a denied birth does at an epoch boundary — wait, or fail like the other
-  population caps?
+- [x] **`max_births_per_epoch` (§9.2) — DONE** (2026-08-22), ADR-031. `population.py` + migration
+  0017. **The open question answered itself once the two refusals were put side by side:** it fails
+  like the other caps, but it must not be *confused* with them. Capacity is durable and is why §9.3
+  lets a birth displace a Cell; a rate limit is temporary and clears when the epoch turns. So
+  `BirthRateExceededError` is a **sibling** of `CarryingCapacityError`, never a subclass, and the
+  rate check runs before the displacer is consulted — otherwise a birth kills something to get
+  around a wait, and §10.5 does not permit a death caused by impatience. **The epoch is stamped on
+  the Cell at birth** rather than derived: cells are wall-stamped while epochs are simulated (§6.3),
+  and the scheduler's `epoch_log` anchors only exist for epochs a tick observed, so a
+  hand-driven colony would have births belonging to no epoch and a cap that silently never binds.
+  **The epoch primitive moved `scheduler` → `clock`**, because `population` cannot import
+  `scheduler` and an *optional* injected seam is not a cap. Dead Cells still count (§9.1 is about
+  the rate work is spawned, which dying does not undo). 671 tests (12 new); golden expectation
+  10 → 11 pins `born_in_epoch`, with an epoch turned mid-scenario so the column is not uniformly
+  zero (**no money moves**). Teeth-checked nine ways; the structural test's first draft used a
+  character window and passed against an insert binding a constant.
 - [x] **§23 approval queue — DONE** (2026-08-22), ADR-027. `approval.py` + migration 0015 + six
   CLI verbs. **§23.5 — "the approval queue is itself part of the environment and will be optimised
   against by Cells" — made the obvious design unusable**, because the obvious queue files by the
@@ -225,16 +237,36 @@
   autonomy flag. ADR-027's rung-6 test was deliberately loosened to land this — that friction was
   its purpose. 636 tests (15 new); golden expectation 8 → 9 now covers the whole loop (**no
   USD_REAL movement**). Teeth-checked nine ways.
-- [ ] **Nothing about this repo is shippable as an artifact yet.** Surfaced at the top of the
-  2026-08-22 session and then deprioritised in favour of the kernel work: the GitHub repo is
-  **private**, there is **no README**, and there is **no LICENSE** (public without one means
-  all-rights-reserved). Secrets audit came back clean — no `.env`, `.db` or key file was ever
-  committed, and the `sk-ant-…` strings in history are synthetic canaries in the redaction tests.
-  Hours of work, not days, whenever "out there" becomes the priority again.
-- [ ] **Nothing measures whether an allocation worked.** A promotion records §25.2 evidence at the
-  moment of funding, and the predictions it cites resolve later through the register — but no path
-  reads that back to decide whether the Cell earned its rung. Rung 8 ("expanded pilot") needs it,
-  and so does any honest claim that the ladder is being climbed rather than walked up.
+- [x] **README + LICENSE — DONE** (2026-08-22). `README.md` and `LICENSE` written; every factual
+  claim in the README was verified against the repo rather than written from memory (test count,
+  migration count, expectation version, each charter test id individually collectible, every linked
+  doc present). **Secrets audit re-run rather than trusted:** no `.env`, `.db`, key or credential
+  file has ever been committed, `.gitignore` covers all of them, and every `sk-ant-…` string in the
+  tree is a synthetic canary inside a redaction test (`AAAA…`, `ZZZZ…`, `CHARTERC14CANARY`).
+- [ ] **The repo stays private, deliberately** — not a gap. `LICENSE` is all-rights-reserved and
+  says so explicitly rather than leaving it inferred, because "the author forgot" and "the author
+  decided" call for different behaviour from a reader. While private this is free to change; once
+  published it is not, since terms cannot be retracted from versions people already hold. Swapping
+  in a permissive licence is a one-commit change whenever publishing is actually intended.
+- [x] **The §25.2 read-back — DONE** (2026-08-22), ADR-030. `outcome.py`, **no migration**: the
+  assessment is derived from the hash-chained register and the ledger every time, the posture
+  Charter C3 takes toward balances, because a stored copy is a second version that can disagree.
+  **§8.5 fixed the design and the obvious measure was wrong twice.** A Cell's current mean Brier
+  counts outcomes the approver already knew *and* forecasts registered after the money arrived — so
+  the verdict rests only on the set that was **open at the instant of funding**, hash-chained
+  before the outcomes were knowable and unarrangeable afterwards. Forecasts made while funded are
+  reported beside the verdict, never inside it (§23.5, the same split ADR-027 drew between claimed
+  and assessed tier). **Any overdue forecast blocks a verdict outright**, checked before any score,
+  because a mean over the subset someone chose to resolve is the self-selected curve `prediction.py`
+  exists to prevent — it looks excellent and means nothing, in the direction that favours
+  promotion. **§10.3 forbade the other obvious measure:** "Explorers need no immediate revenue", so
+  cost and revenue are recorded and never gated on; what is judged is calibration, on two
+  non-collapsing dimensions (§10.2) — §8.5's reality gap and an absolute bar at the 0.25 a coin
+  scores. Nothing acts on a verdict: upward that would be rung 8 without an argument, downward it
+  would be §10.5's forbidden cull on an estimate with no Auditor to concur. 659 tests (23 new);
+  golden expectation 9 → 10 now covers deliberate → queue → approve → allocate → resolve → assess
+  (**no USD_REAL movement, balances byte-identical**). Teeth-checked twelve ways; one test passed
+  for the wrong reason and was rewritten.
 - [ ] **Aggregate-invoice reconciliation** — the half ADR-023 provably cannot do. Per-call reconciliation leaves ADR-020's sub-cent rounding overstatement exactly where it was (3.5¢ reconciles back through the same ceiling to the 4¢ already recorded); only an invoice *total* spanning many calls can post the correction. Additive: needs an invoice-level record, reusing all the per-call sign handling and breaker registration.
 - [ ] **Forward recovery for the gateway** — ADR-022's deferred alternative, which belongs with the reconciliation plumbing. Rollback is atomic but loses the provider's reported usage, so a crashed call still needs a human. Recording the response durably before applying the accounting (a `settling` status) would let recovery finish the settlement automatically.
 - [ ] Tighten the pre-call token estimate — `providers._estimate_tokens` is a deliberate over-estimate (2 chars/token). The provider's `count_tokens` endpoint would cut over-reservation sharply and make cost overruns (ADR-021) rarer.
@@ -254,7 +286,7 @@
   property tests that build a database per example were charging migration time against
   Hypothesis's 200ms deadline.
 - [ ] An audited path to change population limits after `init` (`set_limits_if_absent` is write-once, and lowering a cap below the current population needs a stated policy). Blocks golden-run coverage of displacement. See FUTURE_BUILD_HOOKS.
-- [ ] Wiring the simulated clock into USD_SIM/synthetic timestamps + `max_births_per_epoch` enforcement (clock primitive exists, nothing consumes it yet — now the *only* remaining reason a real colony can't do true byte-identical replay, since ids are seeded but timestamps still aren't).
+- [ ] Wiring the simulated clock into USD_SIM/synthetic timestamps (still the *only* remaining reason a real colony can't do true byte-identical replay, since ids are seeded but timestamps still aren't). `max_births_per_epoch` no longer belongs on this line — it is enforced as of ADR-031, against `clock.current_epoch` with the epoch stamped on the Cell at birth precisely *because* the two clocks are still unmixed.
 - [ ] Wiring the event *outbox* into a real dispatcher. The inbox got its first producer and
   consumer with the agent loop (`enqueue_wake` / `run_ready_wakes`); nothing yet publishes staged
   outbox events anywhere.

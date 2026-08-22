@@ -1536,3 +1536,149 @@ completes the bookkeeping. Pinned by a test that simulates exactly that window.
   evidence yet about how often a real model returns schema-valid JSON — the unparseable path
   exists because it will not always. That, and something that wakes a Cell without a human asking,
   are the top two Next items.
+
+---
+
+## 2026-08-22 — Rung 7: the core loop closes, and an approval finally does something
+
+`promotion.py` + migration 0016 (ADR-029). §31 states the colony's core loop in one line —
+"... -> allocate capital -> scale, mutate, collaborate, sleep, or die" — and until now MITOSIS
+could do everything on both sides of that arrow and nothing at the arrow itself.
+
+### Two sockets the spec left open, neither invented here
+
+`promotion_pool` has been in §31's required account list since Phase 1, described in `accounts.py`
+as "capital held for §25 promotion — redistributed, never consumed", with nothing ever moving
+through it. §17.2 lists "capital allocation" among its wake reasons and
+`deliberation.WAKE_CAPITAL_ALLOCATION` has been defined and unemitted since the agent loop landed.
+A Cell woken *because* it has just been funded is exactly the event both were reserved for. The
+slice is mostly a matter of connecting things the spec had already named.
+
+### What makes this rung 7 and not rung 9
+
+§25.1 puts "tiny capped live experiment" one step past "human-reviewed prototype". **Two humans
+still stand in every allocation** — one approves the request under §23.1, one runs
+`mitosis allocate` — and a structural test forbids `scheduler.py` importing this module at all, so
+an allocation that fires on a timer costs a named test failure. What changed is only that an
+approval now *does* something.
+
+The pool is the other half of that. It has to be filled deliberately by an operator, which gives a
+single number bounding everything this path can ever allocate — a ceiling that holds whether or not
+anyone is watching the queue, and one no Cell can raise.
+
+### The rung-6 guarantee was deliberately loosened, which is the point of it
+
+ADR-027 shipped `test_no_kernel_path_consumes_a_grant` so that climbing the ladder would cost an
+explicit edit to a named guarantee rather than slipping in as a plausible commit. Landing this
+slice required that edit. The replacement, `test_only_the_promotion_module_consumes_a_grant`, still
+forbids the *next* unargued step and names the scheduler specifically.
+
+### Verification
+
+- **636 tests passing** (15 new, 0 removed; up from 621).
+- **Golden expectation 8 → 9**: the scenario now runs the whole loop — deliberate a spend request,
+  queue it under §23, approve it, allocate at rung 7, wake the Cell. Every line of the diff traces
+  to that one block and the note explains each. **The allocation deliberately runs on a USD_SIM
+  Cell**: the scenario's explorer is USD_REAL and `promotion.allocate` refuses it without §27.1's
+  `autonomy.real_spending`, which the scenario must never enable. `external_expense` is unchanged
+  in every book, and the new USD_REAL movement is a `seed_bank -> cell cash` transfer whose model
+  call *released* rather than settled — the tell that no real money moved.
+- **Teeth-checked nine ways**, each failing its named test: allocating a grant twice, allocating an
+  expired grant, allocating for a non-spend proposal, ignoring the pool ceiling, funding a dead or
+  quarantined Cell, moving USD_REAL without the autonomy flag, allocating with no stated reason,
+  not waking the Cell, and letting the scheduler import the promotion path.
+- **Hand-verified end to end on a live colony**: pool funded 500, Cell proposed a 60-unit spend
+  request claiming MEDIUM (kernel assessed **HIGH** with an `understated_risk` signal), approved,
+  allocated — pool 500 → 440, Cell +60, promotion recorded at rung 7 with liability and transfer
+  degradation both reported unavailable. The Cell then woke under "capital allocation". A second
+  allocation of the same grant was refused. Conservation in both books and the hash chain green,
+  `external_expense` still 0.
+- Next: nothing measures whether an allocation *worked* — the promotion's predictions resolve
+  through the register, but no path closes back onto rung 8. Nothing still runs the scheduler, and
+  `max_births_per_epoch` is checkable and unchecked.
+
+---
+
+## 2026-08-22 — The read-back: what a rung is actually worth
+
+`outcome.py` (ADR-030). ADR-029 recorded §25.2's promotion evidence at the moment of funding, and
+half of §25.2's list cannot exist at that moment — it asks for "predicted vs **observed** outcome"
+and for "reality gap (from the prediction register, §8.5)", both of which need outcomes that arrive
+later. Until now nothing read them back, so "the colony is climbing §25.1's ladder" was an
+assertion rather than a measurement, and `transfer_degradation` would have stayed NULL for every
+Cell forever.
+
+### §8.5 fixed the design, and the obvious measure was wrong twice over
+
+The obvious read-back is the Cell's mean Brier score today. It counts outcomes the approver could
+already read — part of the record that *justified* the funding, not evidence about what the funding
+achieved — and it counts forecasts the Cell registered *after* the money arrived. The second is a
+live gaming surface: §23.5 warns that the review path "will be optimised against by Cells", and the
+cheapest optimisation available to a newly funded Cell is a pile of easy claims.
+
+So the verdict rests on exactly one set: forecasts **open at the instant of funding** that have
+since resolved. Hash-chained before the outcomes were knowable, unarrangeable afterwards. Forecasts
+made while funded are counted and reported beside the verdict and never inside it — the same
+asymmetry ADR-027 drew between a Cell's `claimed_tier` and the kernel's `assessed_tier`, applied to
+evidence instead of risk.
+
+### Cherry-picking blocks a verdict outright, ahead of any score
+
+`prediction.py` is blunt that "a mean Brier score over three cherry-picked resolutions is worse than
+useless", and resolution is operator-supplied — a Cell's losers can simply stay open. So any overdue
+forecast in the funding set returns `EVIDENCE_WITHHELD` **before** a score is computed, including
+when the resolved remainder looks excellent. Hand-verified on the case that matters: three
+resolutions at Brier 0.0025 plus one outcome nobody recorded produces no verdict, not a promotion.
+`EVIDENCE_WITHHELD` is kept distinct from `INSUFFICIENT_EVIDENCE` because the remedies are opposite
+— and because resolution is the operator's job, a withheld verdict is a finding about the evidence,
+not an accusation against the Cell.
+
+### §10.3 forbade the other obvious measure
+
+"Explorers need no immediate revenue", and Explorers are most of this colony — so a verdict that
+asked whether the grant earned its money back would reject exactly the Cells the clause protects.
+Cost and revenue are **recorded** per §25.2 and never gated on. What is judged is calibration, on
+two dimensions that §10.2 forbids collapsing: §8.5's reality gap against the record the promotion
+was granted on, and an absolute bar at the 0.25 a coin scores. They are genuinely independent, and
+the case that proves it is a Cell funded on 0.01 now scoring 0.09 — passes the absolute bar, fails
+the relative one.
+
+### No table, and nothing may read a verdict
+
+There is **no migration**. The assessment is recomputed from the register and the ledger every time,
+the posture Charter C3 takes toward balances, and the reason migration 0016 already gives for
+snapshotting calibration rather than copying predictions: a second copy is a second version that can
+disagree. Storage becomes right when a decision consumes an assessment, and nothing does.
+
+`test_no_kernel_path_acts_on_an_assessment` closes both directions. Upward, acting on
+`supports_promotion` would take §25.1's rung-8 step — removing one of the two humans in every
+allocation — without an argument. Downward and harder, §10.5 forbids killing on an estimate without
+strong evidence *and* a concurring Auditor, and no Auditor Cell exists, so `death.py` must not be
+able to see a negative verdict at all.
+
+### Verification
+
+- **659 tests passing** (23 new, 0 removed; up from 636).
+- **Golden expectation 9 → 10**: the scenario now runs deliberate → queue → approve → allocate →
+  resolve → assess. **No money moves in the step at all** — resolving a forecast posts no
+  transaction, so `balances`, `transaction_types` and `reservations` are byte-identical to version
+  9 and `external_expense` stays 0 in every book. Two sections in the diff were **not predicted**
+  when the migration note was first drafted and are named in it: the mock reply is three
+  predictions longer, so `output_tokens` and the metered `quantity` both go 139 → 279 (the metered
+  *charge* is unchanged, which is why balances hold).
+- **Teeth-checked twelve ways**, each failing its named test: post-funding forecasts leaking into
+  the verdict, already-resolved forecasts counting as observed outcome, cherry-picking no longer
+  blocking, a verdict on one lucky resolution, the reality gap collapsed into the absolute bar, no
+  absolute bar at all, the ladder becoming a profit test, cost measured over a lifetime, the
+  allocation counted as supervision of itself, liability fabricated as 0, `death.py` culling on a
+  verdict, and an assessment writing a row. **One test passed for the wrong reason** —
+  `test_cost_is_measured_from_the_funding_instant` spent only before funding and only in a book
+  other than the Cell's, so the windowed and lifetime figures were both 0 and it passed against an
+  `assess` that ignored the window entirely. Rewritten to spend on both sides of the funding
+  instant, in the Cell's own book.
+- **Hand-verified end to end on two live colonies**, including the cases the first pass could not
+  reach: a Cell with a resolved record *before* funding (so a reality gap exists at all), and good
+  resolutions alongside an overdue one. Conservation in all three books, both hash chains green,
+  `external_expense` 0 throughout.
+- Next: `max_births_per_epoch` (§9.2) is checkable and still unchecked, and nothing runs the
+  scheduler.

@@ -70,11 +70,15 @@ from . import (
 from .accounts import cell_cash
 from .models import Book, Cell, CellStatus
 
-#: One simulated day. Matches colony.yaml's accelerated rate of 86400 simulated
-#: seconds per wall second, so at that rate an epoch is roughly a wall second —
-#: fast enough for a flight simulator, and the unit §9.2's
-#: `max_births_per_epoch` reads naturally against.
-DEFAULT_EPOCH_DURATION_SECONDS = 86_400
+# Re-exported, not redefined: an epoch is a span of simulated time, so it lives
+# in clock.py (§6). `population` enforces §9.2's per-epoch birth cap and cannot
+# import this module, and two derivations of "which epoch is it" could disagree.
+from .clock import (  # noqa: E402  (kept beside the other imports it belongs with)
+    DEFAULT_EPOCH_DURATION_SECONDS,
+    configure_epochs_if_absent,
+    current_epoch,
+    epoch_settings,
+)
 
 #: How many prior epochs form the baseline the alarm compares against. Short on
 #: purpose: a long window lets a slow, sustained ramp become the new normal,
@@ -128,42 +132,6 @@ class TickResult:
 
 
 # --- epochs ------------------------------------------------------------------
-
-
-def configure_epochs_if_absent(
-    conn: sqlite3.Connection,
-    *,
-    genesis: datetime | None = None,
-    duration_seconds: int = DEFAULT_EPOCH_DURATION_SECONDS,
-) -> None:
-    """Anchor epoch zero. Write-once, like every other colony config here — a
-    genesis that moved would renumber history."""
-    start = genesis or clock.now(conn)
-    if start.tzinfo is None:
-        raise SchedulerError("genesis must be timezone-aware UTC (Charter C11)")
-    conn.execute(
-        "INSERT OR IGNORE INTO epoch_config (id, genesis_simulated_at_utc, epoch_duration_seconds) "
-        "VALUES (1, ?, ?)",
-        (start.astimezone(timezone.utc).isoformat(), duration_seconds),
-    )
-
-
-def epoch_settings(conn: sqlite3.Connection) -> tuple[datetime, int]:
-    row = conn.execute("SELECT * FROM epoch_config WHERE id = 1").fetchone()
-    if row is None:
-        return clock.now(conn), DEFAULT_EPOCH_DURATION_SECONDS
-    return (
-        datetime.fromisoformat(row["genesis_simulated_at_utc"]),
-        row["epoch_duration_seconds"],
-    )
-
-
-def current_epoch(conn: sqlite3.Connection) -> int:
-    """Derived from the simulated clock, never stored (Charter C3's rule for
-    balances, applied for the same reason)."""
-    genesis, duration = epoch_settings(conn)
-    elapsed = (clock.now(conn) - genesis).total_seconds()
-    return max(0, int(elapsed // duration))
 
 
 def _record_epoch_start_locked(conn: sqlite3.Connection, epoch_number: int) -> datetime:

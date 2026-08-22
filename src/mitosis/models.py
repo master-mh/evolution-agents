@@ -318,13 +318,15 @@ class ModelCall(_Frozen):
 class PopulationLimits(_Frozen):
     """SPEC.md §9.2, §27.1 `colony.yaml` `population:` block.
 
-    max_living_cells and max_active_cells are enforced on every birth
-    (population.py); max_lineage_population_fraction is enforced on every
-    reproduction (lineage.py). The remaining two are stored so the config
-    shape matches colony.yaml exactly, but are not yet checked:
-    max_parallel_experiments needs experiment tracking and
-    max_births_per_epoch needs the clock wired into a real epoch counter —
-    neither exists in the kernel yet.
+    max_living_cells, max_active_cells and max_births_per_epoch are enforced
+    on every birth (population.py); max_lineage_population_fraction is
+    enforced on every reproduction (lineage.py). max_parallel_experiments is
+    stored so the config shape matches colony.yaml exactly, but is not yet
+    checked: experiment tracking does not exist in the kernel.
+
+    max_births_per_epoch is a **rate** limit and the only one here that
+    clears by itself — see population.BirthRateExceededError on why it must
+    never be confused with a carrying-capacity refusal.
     """
 
     max_living_cells: int

@@ -192,3 +192,73 @@ def set_mode(
         conn.execute("ROLLBACK")
         raise
     return get_state(conn)
+
+
+# --- epochs (SPEC.md §6.3; §9.2, §23.3 both count in them) -------------------
+#
+# An epoch is a fixed span of *simulated* time, which is why it lives here and
+# not in scheduler.py where it was first written: §9.2's `max_births_per_epoch`
+# is enforced on the birth paths and §23.3's metabolic alarm in the scheduler,
+# and neither may import the other. `scheduler` re-exports these names, so
+# there is one derivation rather than two that could disagree — the same reason
+# balances are never cached (Charter C3).
+#
+# What stays in scheduler is `epoch_log`, the per-epoch *wall* anchor. That is
+# about a tick having observed an epoch, not about what an epoch is.
+
+#: One simulated day. Matches colony.yaml's accelerated rate of 86400 simulated
+#: seconds per wall second, so at that rate an epoch is roughly a wall second —
+#: fast enough for a flight simulator, and the unit §9.2's
+#: `max_births_per_epoch` reads naturally against.
+DEFAULT_EPOCH_DURATION_SECONDS = 86_400
+
+
+def configure_epochs_if_absent(
+    conn: sqlite3.Connection,
+    *,
+    genesis: datetime | None = None,
+    duration_seconds: int = DEFAULT_EPOCH_DURATION_SECONDS,
+) -> None:
+    """Anchor epoch zero. Write-once, like every other colony config here — a
+    genesis that moved would renumber history."""
+    start = genesis or now(conn)
+    if start.tzinfo is None:
+        raise ClockError("genesis must be timezone-aware UTC (Charter C11)")
+    conn.execute(
+        "INSERT OR IGNORE INTO epoch_config (id, genesis_simulated_at_utc, epoch_duration_seconds) "
+        "VALUES (1, ?, ?)",
+        (start.astimezone(timezone.utc).isoformat(), duration_seconds),
+    )
+
+
+def epochs_configured(conn: sqlite3.Connection) -> bool:
+    """Whether epoch zero has been anchored.
+
+    Worth asking separately, because the fallback below is silently
+    *conservative* rather than absent: an unanchored colony reports epoch 0
+    forever, so a per-epoch cap degrades into a lifetime total instead of
+    quietly not applying. Erring toward restriction is the right direction, but
+    a caller refusing something should be able to say which of the two it is.
+    `mitosis init` anchors epochs, so this is only ever false for a colony
+    built by driving the kernel directly.
+    """
+    return conn.execute("SELECT 1 FROM epoch_config WHERE id = 1").fetchone() is not None
+
+
+def epoch_settings(conn: sqlite3.Connection) -> tuple[datetime, int]:
+    row = conn.execute("SELECT * FROM epoch_config WHERE id = 1").fetchone()
+    if row is None:
+        return now(conn), DEFAULT_EPOCH_DURATION_SECONDS
+    return (
+        datetime.fromisoformat(row["genesis_simulated_at_utc"]),
+        row["epoch_duration_seconds"],
+    )
+
+
+def current_epoch(conn: sqlite3.Connection) -> int:
+    """Derived from the simulated clock, never stored (Charter C3's rule for
+    balances, applied for the same reason: a cached counter and a clock that
+    disagree get resolved in favour of whichever the reader consulted)."""
+    genesis, duration = epoch_settings(conn)
+    elapsed = (now(conn) - genesis).total_seconds()
+    return max(0, int(elapsed // duration))

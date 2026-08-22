@@ -60,7 +60,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 
-from . import audit, ids, ledger, lifecycle, population
+from . import audit, clock, ids, ledger, lifecycle, population
 from .accounts import cell_cash
 from .models import Book, Cell, CellStatus, CellType, EntrySpec, PopulationLimits
 
@@ -169,8 +169,8 @@ def reproduce(
             INSERT INTO cells (
                 cell_id, cell_type, genome_hash, book, status,
                 created_at_utc, idempotency_key,
-                parent_cell_id, founder_cell_id, generation
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                parent_cell_id, founder_cell_id, generation, born_in_epoch
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 child_id,
@@ -183,6 +183,8 @@ def reproduce(
                 parent.cell_id,
                 parent.founder_cell_id,
                 parent.generation + 1,
+                # §9.2, same reason as the founder path in lifecycle.py.
+                clock.current_epoch(conn),
             ),
         )
 

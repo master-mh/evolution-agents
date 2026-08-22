@@ -351,8 +351,18 @@ def get_balance(conn: sqlite3.Connection, account_id: str, book: Book) -> int:
     return row["balance"]
 
 
-def spend_by_book(conn: sqlite3.Connection, cell_id: str) -> dict[str, int]:
+def spend_by_book(
+    conn: sqlite3.Connection, cell_id: str, *, since: datetime | None = None
+) -> dict[str, int]:
     """Net minor units a Cell has spent — value it *consumed* — by book.
+
+    `since` narrows to transactions posted after an instant, which is what
+    §25.2's "cost at this rung" needs: consumption *since the capital arrived*,
+    not a lifetime total that a Cell's whole history before the promotion would
+    swamp. It filters `created_at_utc`, deliberately **not** `effective_at_utc`
+    — a caller may back- or forward-date the effective stamp to a simulated
+    instant (§6.3), while every consumer of this window compares against a
+    wall-clock record, and mixing the two clocks silently drops or admits rows.
 
     Measured as the **signed** sum of this Cell's entries landing on a
     `accounts.SPEND_DESTINATIONS` account. Signed, so a reconciliation credit
@@ -381,6 +391,11 @@ def spend_by_book(conn: sqlite3.Connection, cell_id: str) -> dict[str, int]:
     """
     destinations = tuple(sorted(SPEND_DESTINATIONS))
     placeholders = ", ".join("?" for _ in destinations)
+    window, window_params = (
+        ("AND t.created_at_utc > ?", (since.astimezone(timezone.utc).isoformat(),))
+        if since is not None
+        else ("", ())
+    )
     rows = conn.execute(
         f"""
         SELECT t.book AS book, COALESCE(SUM(e.amount_minor_units), 0) AS spent
@@ -388,9 +403,10 @@ def spend_by_book(conn: sqlite3.Connection, cell_id: str) -> dict[str, int]:
         JOIN ledger_transactions t ON t.transaction_id = e.transaction_id
         WHERE e.cell_id = ?
           AND e.account_id IN ({placeholders})
+          {window}
         GROUP BY t.book
         """,
-        (cell_id, *destinations),
+        (cell_id, *destinations, *window_params),
     ).fetchall()
     return {r["book"]: r["spent"] for r in rows}
 

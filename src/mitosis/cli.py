@@ -34,6 +34,7 @@ from . import (
     lifecycle,
     lineage,
     money,
+    outcome,
     population,
     prediction,
     pricing,
@@ -825,8 +826,16 @@ def cmd_scheduler_status(args: argparse.Namespace) -> None:
     state = scheduler.operator_state(conn)
     metabolic = scheduler.metabolic_status(conn)
 
+    limits = population.get_limits(conn)
     print(f"Epoch {epoch}  ({epoch_seconds}s simulated each, genesis {genesis.isoformat()})")
     print(f"  eligible cells now: {len(scheduler.eligible_cells(conn, epoch))}")
+    print(
+        f"  births this epoch:  {population.births_in_epoch(conn, epoch)}"
+        f"/{limits.max_births_per_epoch} (SPEC.md §9.2)"
+    )
+    if not clock.epochs_configured(conn):
+        print("  NOTE: epoch zero is not anchored, so every birth lands in epoch 0 "
+              "and §9.2's cap is acting as a lifetime total.")
     print("\nGuards (SPEC.md §23.3, §27.1):")
     print(f"  real_spending:   {'ENABLED' if state.real_spending_enabled else 'disabled'}")
     on_vacation = scheduler.is_on_vacation(conn)
@@ -1218,6 +1227,98 @@ def cmd_promotions(args: argparse.Namespace) -> None:
         print(f"    cell {item.cell_id}")
         print(f"    approved by {item.approved_by}, allocated by {item.allocated_by}")
         print(f"    {item.reason}")
+    conn.close()
+
+
+def _print_assessment(result: outcome.Assessment, *, indent: str = "  ") -> None:
+    """§25.2's evidence list, in the order the spec enumerates it."""
+    pad = indent
+    print(f"{pad}verdict: {result.verdict.value.upper()}")
+    for reason in result.reasons:
+        print(f"{pad}  - {reason}")
+    print()
+    print(f"{pad}predicted vs observed (forecasts open when the capital moved):")
+    print(f"{pad}  open at funding:   {result.forecasts_open_at_funding}")
+    print(f"{pad}  resolved since:    {result.forecasts_resolved_since}")
+    print(f"{pad}  still open:        {result.forecasts_still_open} "
+          f"({result.forecasts_overdue} past deadline)")
+    print(f"{pad}  observed Brier:    {_or_na(result.observed_mean_brier)}")
+    print(f"{pad}  observed log:      {_or_na(result.observed_mean_log)}")
+    print(f"{pad}reality gap (§8.5):  {_or_na(result.reality_gap)}"
+          f"   (funded on {_or_na(result.funded_mean_brier)})")
+    print(f"{pad}transfer degradation: {_or_na(result.transfer_degradation)}")
+    print(f"{pad}cost since funding:")
+    print(f"{pad}  allocated:         {result.allocated_minor_units} {result.book.value}")
+    print(f"{pad}  consumed:          {result.spend_since_minor_units} "
+          f"({result.unspent_minor_units} never drawn on)")
+    print(f"{pad}  revenue:           {result.revenue_since_minor_units}")
+    print(f"{pad}  net contribution:  {result.net_contribution_minor_units} "
+          "(recorded, not judged — §10.3: Explorers need no immediate revenue)")
+    print(f"{pad}liability:           not modelled (§13's reserve is Phase 6+)")
+    print(f"{pad}human intervention:  {result.human_interventions}")
+    for kind, count in sorted(result.intervention_kinds.items()):
+        print(f"{pad}  {kind}: {count}")
+    print(f"{pad}forecasts made while funded: {result.forecasts_made_while_funded} "
+          f"({result.forecasts_made_while_funded_resolved} resolved, "
+          f"mean Brier {_or_na(result.mean_brier_made_while_funded)})")
+    print(f"{pad}  excluded from the verdict on purpose — §23.5: a Cell optimises "
+          "against anything it can arrange after the fact.")
+
+
+def _or_na(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.4f}"
+
+
+def cmd_assess(args: argparse.Namespace) -> None:
+    """§25.2's read-back: did an allocation work?
+
+    Reports only. Nothing here promotes a Cell to rung 8 or kills one at rung 7
+    — §25.1 wants a human for the first and §10.5 forbids the second without an
+    independent Auditor, which does not exist yet.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    try:
+        result = outcome.assess(conn, args.promotion_id)
+    except outcome.OutcomeError as error:
+        conn.close()
+        raise CliError(str(error)) from error
+
+    print(f"Promotion {result.promotion_id}  (§25.1 rung {result.rung})")
+    print(f"  cell {result.cell_id}, funded {result.funded_at_utc.isoformat()}")
+    print()
+    _print_assessment(result)
+    print()
+    if result.verdict is outcome.Verdict.SUPPORTS_PROMOTION:
+        print(f"  The evidence supports considering rung {result.next_rung}. "
+              "A human decides — nothing in the kernel acts on this.")
+    conn.close()
+
+
+def cmd_assessments(args: argparse.Namespace) -> None:
+    """One line per promotion: what the colony can actually show for its rungs."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    results = outcome.assess_all(conn, cell_id=args.cell)
+    if not results:
+        print("No promotions to assess.")
+        conn.close()
+        return
+
+    print(f"{len(results)} promotion(s):")
+    for result in results:
+        print(f"  {result.promotion_id}  rung {result.rung}  "
+              f"{result.allocated_minor_units} {result.book.value}  "
+              f"-> {result.verdict.value}")
+        print(f"    cell {result.cell_id}  "
+              f"{result.forecasts_resolved_since}/{result.forecasts_open_at_funding} "
+              f"funding forecasts resolved, Brier {_or_na(result.observed_mean_brier)}")
+        if args.verbose:
+            print()
+            _print_assessment(result, indent="    ")
+            print()
     conn.close()
 
 
@@ -1916,6 +2017,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     promotions_parser.add_argument("--cell", default=None)
     promotions_parser.set_defaults(func=cmd_promotions)
+
+    assess_parser = subparsers.add_parser(
+        "assess",
+        help="§25.2's read-back: did an allocation work? (reports only, promotes nothing)",
+    )
+    assess_parser.add_argument("promotion_id")
+    assess_parser.set_defaults(func=cmd_assess)
+
+    assessments_parser = subparsers.add_parser(
+        "assessments", help="every promotion's §25.2 read-back, one line each"
+    )
+    assessments_parser.add_argument("--cell", default=None)
+    assessments_parser.add_argument(
+        "--verbose", action="store_true", help="full evidence for each"
+    )
+    assessments_parser.set_defaults(func=cmd_assessments)
 
     call_model_parser = subparsers.add_parser(
         "call-model",

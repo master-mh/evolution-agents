@@ -68,6 +68,7 @@ from . import (
     ledger,
     lifecycle,
     lineage,
+    outcome,
     population,
     prediction,
     promotion,
@@ -185,7 +186,68 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           enable — a replay that started moving real money is the worst
 #           regression this file could miss. Conservation holds in all three
 #           books; both hash chains and resource linkage stay green.
-EXPECTATION_VERSION = 9
+#   9 -> 10: the loop now closes back on itself. Version 9 funded a Cell and
+#           stopped; §25.2 asks for "predicted vs **observed** outcome" at each
+#           rung, and observed outcomes only exist afterwards. The scenario
+#           gains three forecasts on the spend request and resolves all three
+#           after the allocation, and the snapshot gains an `assessments`
+#           section. Six sections differ and nothing else does:
+#           (a) `predictions` gains three rows on cell#4 — p=0.8, resolved
+#               true, Brier 0.04 and log 0.223144 each — joining the six
+#               already there.
+#           (b) `audit_event_types`: `prediction_registered` 4 -> 7 and
+#               `prediction_resolved` 2 -> 5. Three registrations and three
+#               resolutions, which is the whole of what this step does.
+#           (c) the `promotions` row's `unresolved_predictions` goes 0 -> 3.
+#               That snapshot is taken at funding, when all three forecasts are
+#               still open — which is exactly the state the read-back needs.
+#               Its being 0 before was a scenario funding a Cell that had
+#               promised nothing.
+#           (d) new `assessments`: one row, **verdict `supports_promotion`**,
+#               3 of 3 funding forecasts resolved, observed Brier
+#               0.03999999999999998 (pinned as the float it is, since it is the
+#               number the verdict turns on), zero overdue, `funded_mean_brier`
+#               and `reality_gap` both null — cell#4 had no resolved record at
+#               funding, so there is no baseline it could have degraded from —
+#               liability null, 30 allocated and **0 consumed**, and 3 human
+#               interventions, being the three operator resolutions with the
+#               allocation itself correctly excluded.
+#           (e) `model_calls[2].output_tokens` 139 -> 279 and, following it,
+#               `resource_usage[9].quantity` 139 -> 279. **Not predicted when
+#               this diff was first written, and worth naming for the reason
+#               v5 -> v6 was:** the mock provider's reply is now three
+#               predictions longer, and output tokens are estimated from the
+#               reply's length. 279 still sits well inside the 700-token
+#               `DEFAULT_MAX_TOKENS` budget, so nothing was truncated.
+#           **No money moves at all in this step.** Resolving a forecast posts
+#           no transaction, and although the metered *quantity* above doubled,
+#           the metered *charge* did not — so `balances`, `transaction_types`
+#           and `reservations` are byte-identical to version 9 and
+#           `external_expense` stays 0 in every book. **What this pins is a
+#           verdict, not an action** — nothing in the kernel may read one
+#           (`test_no_kernel_path_acts_on_an_assessment`), so if a later slice
+#           makes a verdict move money or end a Cell, the diff appears here
+#           first, in a section that today reports and does nothing.
+#  10 -> 11: §9.2's `max_births_per_epoch` is enforced, so a Cell now records
+#           the epoch it was born in (migration 0017), and the `cells` section
+#           pins it. Two sections differ and nothing else does:
+#           (a) `cells[*].born_in_epoch`: null -> 0 for the four founders and
+#               **1 for cell#4**, the auditor's child. The scenario turns one
+#               epoch immediately before that reproduction on purpose — a
+#               snapshot where every Cell was born in epoch 0 would pass just as
+#               happily against a kernel that stamped a constant, which is
+#               exactly the regression that would leave the cap unenforced.
+#           (b) `clock.simulated_at` 2026-01-08 -> 2026-01-09, being that one
+#               epoch. The clock is paused, so the advance is exact, and
+#               nothing else in the scenario moves with it: reservations expire
+#               in 2030 and no tick runs here.
+#           **No money moves.** `balances`, `transaction_types`, `reservations`,
+#           `resource_usage`, `predictions`, `promotions` and `assessments` are
+#           all byte-identical to version 10, and `external_expense` stays 0 in
+#           every book. The scenario also now anchors epoch zero explicitly at
+#           `SCENARIO_EPOCH`; without an anchor a colony reports epoch 0 forever
+#           and (a) would have been a column of zeroes.
+EXPECTATION_VERSION = 11
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -228,7 +290,19 @@ GOLDEN_SPEND_REQUEST_REPLY = json.dumps(
         "rationale": "fixed scenario spend request; exists to pin rung 7, not to be clever",
         "risk_tier": "MEDIUM",
         "estimated_cost_minor_units": 30,
-        "predictions": [],
+        # Three forecasts, because §25.2's read-back needs an *observed* outcome
+        # to compare against and `outcome.MIN_RESOLVED_FOR_A_VERDICT` will not
+        # state a verdict on fewer. Registered here, before the request is
+        # approved, so they are open at the instant the capital moves — which is
+        # the only set the read-back is allowed to judge on.
+        "predictions": [
+            {
+                "claim": f"golden-run purchase clears checkpoint {index}",
+                "probability": 0.8,
+                "horizon_days": 30,
+            }
+            for index in range(3)
+        ],
     },
     sort_keys=True,
 )
@@ -288,6 +362,11 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         ),
     )
     clock.initialize_if_absent(conn, mode=ClockMode.PAUSED, start_at=SCENARIO_EPOCH)
+    #    Anchor epoch zero explicitly, at the same fixed instant. §9.2's
+    #    `max_births_per_epoch` counts against it, and an unanchored colony
+    #    reports epoch 0 forever — which would make `born_in_epoch` below a
+    #    column of zeroes that pins nothing.
+    clock.configure_epochs_if_absent(conn, genesis=SCENARIO_EPOCH)
 
     # 2. Seed capital into each book.
     for book, currency, amount in (
@@ -332,6 +411,12 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     # own cash rather than a colony account, carrying a mutated genome so the
     # run pins a real genome-parentage edge as well as a cell-parentage one
     # (SPEC.md §26 names the "expected lineage tree" as golden-run content).
+    #    One epoch turns before this birth, on purpose: §9.2's cap counts per
+    #    epoch, so a snapshot where every Cell was born in epoch 0 would pass
+    #    just as happily against a kernel that stamped a constant. The clock is
+    #    paused, so the advance is exact and nothing else in the scenario moves
+    #    with it — reservations expire in 2030 and no tick runs here.
+    clock.advance(conn, timedelta(seconds=clock.DEFAULT_EPOCH_DURATION_SECONDS))
     auditor_child = lineage.reproduce(
         conn, parent_cell_id=auditor.cell_id, budget_minor_units=500,
         idempotency_key="golden:birth:auditor-child",
@@ -713,7 +798,33 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         reason="fixed scenario allocation; exists to pin rung 7",
     )
 
-    # 15. Simulated clock.
+    # 15. §25.2's read-back — the other half of the promotion record, which
+    #     cannot exist at allocation time because it needs outcomes.
+    #
+    #     Resolving all three forecasts *after* the allocation is the point of
+    #     the step: they were open when the capital moved, so they are the only
+    #     evidence the assessment is allowed to judge on, and resolving every
+    #     one of them is what keeps the verdict out of `evidence_withheld`. A
+    #     replay where the assessment silently became decidable on a
+    #     self-selected subset would be a real regression and an easy one to
+    #     miss, since the score itself would look excellent.
+    #
+    #     Nothing here promotes anything. The snapshot pins a *verdict*, and if
+    #     a later slice ever makes a verdict move money or end a Cell, this
+    #     section is where the diff shows up.
+    for index, open_forecast in enumerate(
+        conn.execute(
+            "SELECT prediction_id FROM prediction_register WHERE cell_id = ? ORDER BY rowid",
+            (auditor_child.cell_id,),
+        ).fetchall()
+    ):
+        prediction.resolve(
+            conn,
+            open_forecast["prediction_id"],
+            occurred=True,
+            source=f"golden-run observation {index}",
+        )
+    # 16. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
 
@@ -775,6 +886,10 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
             "parent": aliases.get(row["parent_cell_id"]) if row["parent_cell_id"] else None,
             "founder": aliases.get(row["founder_cell_id"], "cell#?"),
             "generation": row["generation"],
+            # §9.2's per-epoch birth cap counts on this. Pinned because a birth
+            # path that stopped stamping it would leave the cap silently
+            # unenforced with every other assertion still green.
+            "born_in_epoch": row["born_in_epoch"],
         }
         for row in conn.execute("SELECT * FROM cells ORDER BY rowid").fetchall()
     ]
@@ -948,6 +1063,38 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         for row in conn.execute("SELECT * FROM promotions ORDER BY rowid").fetchall()
     ]
 
+    # §25.2's read-back, derived rather than stored — the assessment has no
+    # table, so this section is computed from the register and the ledger at
+    # snapshot time exactly as `mitosis assess` computes it.
+    #
+    # `observed_mean_brier` is pinned as an exact float because it is the number
+    # the verdict turns on. Every timestamp-derived field is excluded as usual;
+    # `forecasts_overdue` is safely stable because the scenario's forecasts
+    # resolve 30 days out and are resolved immediately.
+    assessment_rows = [
+        {
+            "cell": aliases.get(item.cell_id, "cell#?"),
+            "rung": item.rung,
+            "next_rung": item.next_rung,
+            "verdict": item.verdict.value,
+            "forecasts_open_at_funding": item.forecasts_open_at_funding,
+            "forecasts_resolved_since": item.forecasts_resolved_since,
+            "forecasts_still_open": item.forecasts_still_open,
+            "forecasts_overdue": item.forecasts_overdue,
+            "observed_mean_brier": item.observed_mean_brier,
+            "funded_mean_brier": item.funded_mean_brier,
+            "reality_gap": item.reality_gap,
+            "liability_minor_units": item.liability_minor_units,
+            "allocated_minor_units": item.allocated_minor_units,
+            "spend_since_minor_units": item.spend_since_minor_units,
+            "revenue_since_minor_units": item.revenue_since_minor_units,
+            "human_interventions": item.human_interventions,
+            "intervention_kinds": item.intervention_kinds,
+            "forecasts_made_while_funded": item.forecasts_made_while_funded,
+        }
+        for item in outcome.assess_all(conn)
+    ]
+
     model_call_rows = [
         {
             "cell": aliases.get(row["cell_id"], "cell#?"),
@@ -988,6 +1135,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "approval_requests": approval_rows,
         "approval_grants": approval_grant_count,
         "promotions": promotion_rows,
+        "assessments": assessment_rows,
         "audit_event_types": audit_event_types,
         "event_inbox": inbox,
         "event_outbox": outbox,

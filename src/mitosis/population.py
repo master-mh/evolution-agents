@@ -5,11 +5,17 @@ This module enforces the two population-size limits, `max_living_cells` and
 `max_active_cells`, which apply to every birth by either path.
 `max_lineage_population_fraction` is enforced too, but it lives in
 lineage.py (`check_lineage_licence`) since it only has meaning for a birth
-with a parent — see that module on how lineage is defined. §9.2's remaining
-limits — max_parallel_experiments and max_births_per_epoch — are stored (so
-colony_config matches colony.yaml's shape) but not yet checked, because
-their prerequisites don't exist in this kernel yet: experiment tracking and
-a clock wired into a real epoch counter respectively.
+with a parent — see that module on how lineage is defined.
+`max_births_per_epoch` is enforced here as of the §9.2 slice, against the
+epoch primitive in clock.py. §9.2's one remaining limit —
+max_parallel_experiments — is stored (so colony_config matches colony.yaml's
+shape) but not yet checked: experiment tracking does not exist in this kernel.
+
+**The per-epoch cap is checked before the capacity check and can never reach
+the displacer**, because the two refusals mean opposite things — see
+`BirthRateExceededError`. This is the one ordering constraint in this module
+that a reader would not guess, and getting it wrong turns a wait into a
+death.
 
 Amendment A2 (displacement is objective-only, docs/DECISIONS.md ADR-009) is
 implemented as of the §9.3 slice, but *not* here: `Displacer` below is the
@@ -41,6 +47,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from . import clock
 from .models import DEFAULT_POPULATION_LIMITS, CellStatus, PopulationLimits
 
 
@@ -50,6 +57,28 @@ class PopulationError(Exception):
 
 class CarryingCapacityError(PopulationError):
     pass
+
+
+class BirthRateExceededError(PopulationError):
+    """§9.2's `max_births_per_epoch`, breached.
+
+    **Deliberately not a subclass of `CarryingCapacityError`**, and that is the
+    whole point of it existing. The two refusals look identical to a caller and
+    mean opposite things:
+
+        CarryingCapacityError   the colony has no slot. Durable — it stays true
+                                until a Cell dies, which is why §9.3 lets a
+                                birth displace one to make room.
+        BirthRateExceededError  the colony has slots and has used its births
+                                for this epoch. Temporary — it clears by itself
+                                when the epoch turns, with nothing dying.
+
+    If this inherited from the other, every existing `except
+    CarryingCapacityError` would treat a rate limit as a structural shortage,
+    and the displacement path would kill a Cell to get around a wait. §9.3
+    licenses displacement for "an available population slot", and §10.5 requires
+    deaths to be objective — a death caused by impatience is neither.
+    """
 
 
 @dataclass(frozen=True)
@@ -135,6 +164,51 @@ def active_count(conn: sqlite3.Connection) -> int:
     return row["n"]
 
 
+def births_in_epoch(conn: sqlite3.Connection, epoch_number: int) -> int:
+    """How many Cells were born in `epoch_number`, by either birth path.
+
+    Exact match on `born_in_epoch`, so Cells born before that column existed
+    (NULL) count toward no epoch — see migration 0017 on why they are not
+    backfilled into epoch 0.
+
+    Dead Cells still count. A birth that happened, happened: §9.1's concern is
+    the *rate* at which the colony spawns work — "Cells, events, model calls,
+    experiments, records, audit workload" — and none of that is undone by the
+    Cell later dying. Counting only the living would let a colony churn through
+    unlimited births per epoch as long as it killed them fast enough.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM cells WHERE born_in_epoch = ?", (epoch_number,)
+    ).fetchone()
+    return row["n"]
+
+
+def _check_birth_rate(conn: sqlite3.Connection, limits: PopulationLimits) -> int:
+    """§9.2's per-epoch birth cap. Returns the epoch the birth belongs to.
+
+    Called **before** the carrying-capacity check and before any displacer is
+    consulted, which is a deliberate ordering: a rate limit must never be able
+    to reach the code that kills a Cell. See `BirthRateExceededError`.
+    """
+    epoch = clock.current_epoch(conn)
+    born = births_in_epoch(conn, epoch)
+    if born >= limits.max_births_per_epoch:
+        unanchored = (
+            ""
+            if clock.epochs_configured(conn)
+            else " This colony has never anchored epoch zero, so every birth lands "
+            "in epoch 0 and the cap is behaving as a lifetime total — "
+            "`mitosis init` anchors it."
+        )
+        raise BirthRateExceededError(
+            f"birth denied: {born}/{limits.max_births_per_epoch} births already in "
+            f"epoch {epoch} (SPEC.md §9.2). The colony is not out of room — this "
+            f"clears when the epoch turns, and nothing needs to die for it to."
+            f"{unanchored}"
+        )
+    return epoch
+
+
 def _binding_caps(conn: sqlite3.Connection, limits: PopulationLimits) -> tuple[str, ...]:
     """Which population caps a birth would breach right now.
 
@@ -184,6 +258,11 @@ def check_birth_licence(
     of slot (or none) degrades to a denied birth, never to a second kill.
     """
     limits = limits or get_limits(conn)
+
+    # §9.2's per-epoch rate, first and never displaceable. A birth refused here
+    # is waiting, not competing for a slot — reaching the displacer below would
+    # turn "come back next epoch" into a death.
+    _check_birth_rate(conn, limits)
 
     breached = _binding_caps(conn, limits)
     if not breached:

@@ -4,63 +4,102 @@ Keeps only the current entry so this file stays small enough to read in full eve
 Earlier slices (1–10, plus CI wiring, seeded ids, reproduction/lineage, the full Phase 4 gateway
 arc, real-spend type registration, the first real paid call, revenue + Ollama, the `spend_by_book`
 account fix, the prediction register, death criteria, §9.3 displacement, the agent loop, the
-scheduler, the §23 approval queue, and the dead-Cell estate, 2026-07-21 through 2026-08-22):
+scheduler, the §23 approval queue, the dead-Cell estate, the rung-7 promotion path, and the §25.2
+read-back, 2026-07-21 through 2026-08-22):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-22 — Rung 7: the core loop closes, and an approval finally does something
+## 2026-08-22 — §9.2's birth cap, and why a rate limit must never kill anything
 
-`promotion.py` + migration 0016 (ADR-029). §31 states the colony's core loop in one line —
-"... -> allocate capital -> scale, mutate, collaborate, sleep, or die" — and until now MITOSIS
-could do everything on both sides of that arrow and nothing at the arrow itself.
+`population.py` + migration 0017 (ADR-031). `max_births_per_epoch` has been in `colony_config`
+since the Phase 1 population slice — stored so the config matched `colony.yaml`, unenforced because
+there was no epoch. ADR-026's scheduler supplied the epoch. This is the other half, and the last
+§9.2 limit that was checkable and unchecked.
 
-### Two sockets the spec left open, neither invented here
+### The open question answered itself once the two refusals sat side by side
 
-`promotion_pool` has been in §31's required account list since Phase 1, described in `accounts.py`
-as "capital held for §25 promotion — redistributed, never consumed", with nothing ever moving
-through it. §17.2 lists "capital allocation" among its wake reasons and
-`deliberation.WAKE_CAPITAL_ALLOCATION` has been defined and unemitted since the agent loop landed.
-A Cell woken *because* it has just been funded is exactly the event both were reserved for. The
-slice is mostly a matter of connecting things the spec had already named.
+PRIORITIES had this down as needing a call: does a denied birth **wait** at an epoch boundary, or
+**fail** like the other population caps? It fails — a synchronous kernel call cannot wait, which
+`population.py` already said about §9.3. But putting the two refusals next to each other showed the
+question was the wrong one:
 
-### What makes this rung 7 and not rung 9
+    CarryingCapacityError   no slot. Durable — true until a Cell dies, which is
+                            exactly why §9.3 lets a birth displace one.
+    BirthRateExceededError  slots available, births spent for this epoch.
+                            Temporary — clears when the epoch turns, nothing dies.
 
-§25.1 puts "tiny capped live experiment" one step past "human-reviewed prototype". **Two humans
-still stand in every allocation** — one approves the request under §23.1, one runs
-`mitosis allocate` — and a structural test forbids `scheduler.py` importing this module at all, so
-an allocation that fires on a timer costs a named test failure. What changed is only that an
-approval now *does* something.
+They refuse identically and mean opposite things. So `BirthRateExceededError` is a **sibling** of
+`CarryingCapacityError` and never a subclass, and the rate check runs **before** the capacity check
+and before any displacer is consulted. Had it inherited, every existing `except
+CarryingCapacityError` in the kernel would have been enrolled in treating a wait as a shortage, and
+the §9.3 displacement path would kill a Cell to get around a limit that would have cleared by
+itself. §9.3 licenses displacement for "an available population slot"; §10.5 requires deaths to be
+objective. A death caused by impatience is neither.
 
-The pool is the other half of that. It has to be filled deliberately by an operator, which gives a
-single number bounding everything this path can ever allocate — a ceiling that holds whether or not
-anyone is watching the queue, and one no Cell can raise.
+### The epoch is stamped at birth, and that is §6.3's doing
 
-### The rung-6 guarantee was deliberately loosened, which is the point of it
+Every other population count is derived from live rows (Charter C3). This one cannot be. Cells are
+stamped `created_at_utc` in **wall** time while an epoch is a span of **simulated** time, and §6.3
+forbids mixing the two "without explicit conversion metadata". The scheduler's `epoch_log` is that
+metadata for spend — but it holds anchors only for epochs a *tick* has observed, so a colony driven
+by hand would have births belonging to no epoch at all, and a cap that silently never binds is
+worse than one that does not exist.
 
-ADR-027 shipped `test_no_kernel_path_consumes_a_grant` so that climbing the ladder would cost an
-explicit edit to a named guarantee rather than slipping in as a plausible commit. Landing this
-slice required that edit. The replacement, `test_only_the_promotion_module_consumes_a_grant`, still
-forbids the *next* unargued step and names the scheduler specifically.
+Cells born before migration 0017 get NULL and are deliberately not backfilled to epoch 0, which
+would consume a live colony's current birth budget with history.
+
+### The layering forced a move, and the move was the right home anyway
+
+`population` enforces §9.2 and cannot import `scheduler` — `scheduler` imports `lifecycle` which
+imports `population`. The established fix here is an injected seam, and it is **wrong for a cap**:
+`Displacer` and `ExternalOperationChecker` are optional by design, and any caller omitting an
+optional seam would bypass §9.2 entirely. So the epoch primitive moved to `clock.py`, which is
+where it belonged — an epoch is a span of simulated time, and §6 is the clock; migration 0014's own
+header cites §6.3. `scheduler` re-exports the names, so no call site changed and there is exactly
+one derivation of "which epoch is it". `epoch_log` stays in `scheduler`, being about a tick having
+*observed* an epoch.
 
 ### Verification
 
-- **636 tests passing** (15 new, 0 removed; up from 621).
-- **Golden expectation 8 → 9**: the scenario now runs the whole loop — deliberate a spend request,
-  queue it under §23, approve it, allocate at rung 7, wake the Cell. Every line of the diff traces
-  to that one block and the note explains each. **The allocation deliberately runs on a USD_SIM
-  Cell**: the scenario's explorer is USD_REAL and `promotion.allocate` refuses it without §27.1's
-  `autonomy.real_spending`, which the scenario must never enable. `external_expense` is unchanged
-  in every book, and the new USD_REAL movement is a `seed_bank -> cell cash` transfer whose model
-  call *released* rather than settled — the tell that no real money moved.
-- **Teeth-checked nine ways**, each failing its named test: allocating a grant twice, allocating an
-  expired grant, allocating for a non-spend proposal, ignoring the pool ceiling, funding a dead or
-  quarantined Cell, moving USD_REAL without the autonomy flag, allocating with no stated reason,
-  not waking the Cell, and letting the scheduler import the promotion path.
-- **Hand-verified end to end on a live colony**: pool funded 500, Cell proposed a 60-unit spend
-  request claiming MEDIUM (kernel assessed **HIGH** with an `understated_risk` signal), approved,
-  allocated — pool 500 → 440, Cell +60, promotion recorded at rung 7 with liability and transfer
-  degradation both reported unavailable. The Cell then woke under "capital allocation". A second
-  allocation of the same grant was refused. Conservation in both books and the hash chain green,
-  `external_expense` still 0.
-- Next: nothing measures whether an allocation *worked* — the promotion's predictions resolve
-  through the register, but no path closes back onto rung 8. Nothing still runs the scheduler, and
-  `max_births_per_epoch` is checkable and unchecked.
+- **671 tests passing** (12 new, 0 removed; up from 659).
+- **Golden expectation 10 → 11**: `cells.born_in_epoch` is pinned, and the scenario turns one epoch
+  immediately before its last birth so the column reads 0, 0, 0, 0, **1** rather than uniformly
+  zero — a constant-stamping kernel would otherwise pass. The only other change is
+  `clock.simulated_at` moving by that one day. **No money moves**: balances, transaction types,
+  reservations, resource usage, predictions, promotions and assessments are byte-identical to
+  version 10.
+- **Teeth-checked nine ways**, each failing its named test: the cap not enforced, a rate limit
+  reaching the displacer and killing a Cell, the rate error becoming a capacity error, capacity
+  reported ahead of the rate limit, dead Cells dropping out of the count, a birth path stamping a
+  constant, a second definition of `current_epoch`, the migration backfilling history into epoch 0,
+  and an unanchored colony not saying so. **The structural test's first draft was too weak** — it
+  scanned a 700-character window from the SQL, which stopped ~15 characters short of the parameter
+  tuple, so an insert that named `born_in_epoch` and bound `None` passed it. Rewritten to scope by
+  AST to the `execute` call itself, and re-checked against both birth paths.
+- **Existing fixtures corrected**: `test_population.py`, `test_lifecycle.py` and
+  `test_charter_properties.py` set `max_births_per_epoch=1` as filler while the field was
+  unenforced. Those tests are named for the *capacity* caps and would have begun passing for the
+  wrong reason, so the filler is now 1000.
+- **Hand-verified through the CLI**: cap lowered to 2, two `create-cell` runs succeed, the third is
+  refused with the §9.2 message, `mitosis scheduler-status` reports `births this epoch: 2/2`, and
+  `advance-time --days 1` clears it — nothing died and nothing was reconfigured.
+- **Migration upgrade path covered explicitly**, the blind spot every other test in this suite has:
+  one test builds a colony on the pre-0017 schema from the actual `.sql` files and migrates it,
+  confirming the ALTER TABLE runs against a populated `cells` and leaves history at NULL.
+- Next: nothing runs the scheduler, and `max_parallel_experiments` is the last §9.2 limit still
+  stored and unchecked (it needs Phase 2's experiment tracking).
+
+### Also this session: `README.md` and `LICENSE`
+
+Not a kernel slice, and recorded here rather than as its own entry for that reason. Every factual
+claim in the README was checked against the repo instead of written from memory — test count,
+migration count, expectation version, each Charter test id actually collectible by `pytest -k`, and
+every linked doc present. The secrets audit was **re-run rather than inherited from PRIORITIES**:
+no `.env`, `.db`, key or credential file has ever been committed, `.gitignore` covers all of them,
+and every `sk-ant-…` string in the tree is a synthetic canary inside a redaction test.
+
+The repo **stays private**, and `LICENSE` is all-rights-reserved. That is the deliberate state
+rather than a missing file, which is why it says so in words: a repository with no LICENSE is
+already all-rights-reserved, but a reader cannot distinguish that from an oversight. Publishing was
+offered and declined, and the asymmetry is the reason it is safe to leave for later — adding a
+permissive licence is one commit, while retracting one from versions people already hold is not
+possible at all.

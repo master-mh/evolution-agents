@@ -43,7 +43,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import accounts, audit, genome, ids, ledger, population, reservations
+from . import accounts, audit, clock, genome, ids, ledger, population, reservations
 from .accounts import cell_cash
 from .models import (
     Book,
@@ -258,8 +258,8 @@ def create_cell(
             INSERT INTO cells (
                 cell_id, cell_type, genome_hash, book, status,
                 created_at_utc, idempotency_key,
-                parent_cell_id, founder_cell_id, generation
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 0)
+                parent_cell_id, founder_cell_id, generation, born_in_epoch
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, ?)
             """,
             (
                 cell_id,
@@ -270,6 +270,9 @@ def create_cell(
                 now.isoformat(),
                 idempotency_key,
                 cell_id,
+                # §9.2: stamped at birth because `created_at_utc` is wall time
+                # and an epoch is simulated time (§6.3). See migration 0017.
+                clock.current_epoch(conn),
             ),
         )
 

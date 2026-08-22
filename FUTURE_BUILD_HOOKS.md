@@ -406,3 +406,65 @@ actually queued for building — this file is memory, not a backlog to work thro
   enforced by it. §25.1 describes a sequence, and a real gate would refuse a rung-7 promotion for a
   Cell with no rung-6 history.
 
+
+## From the §25.2 read-back slice (2026-08-22, ADR-030)
+
+- **`MIN_RESOLVED_FOR_A_VERDICT = 3` is a stand-in for a confidence interval.** The honest
+  instrument for "is this score distinguishable from luck" is a CI on the mean Brier, which §8.5
+  does not authorise and which would need a bootstrap or a beta-binomial the kernel has no other
+  use for. §27.1's own phase-3 metric is "pre-registered selection effect size (CI excludes 0)", so
+  the machinery is wanted eventually anyway. Until then the constant only ever *withholds* a
+  verdict, which is the safe direction for an arbitrary number to be wrong in.
+- **There is no `assessments` table, deliberately.** The read-back is recomputed from the register
+  and the ledger every time, the posture Charter C3 takes toward balances. It becomes worth storing
+  when a *decision* consumes one — at that point "what was known when we decided" is itself a fact,
+  and a derived value recomputed later would answer a different question.
+- **Should a Cell see its own verdict?** §15 context shows a Cell facts about itself; the
+  assessment is the kernel's judgement *of* it, and §23.5 says a Cell will optimise against
+  anything it can see. Kept out for now. The argument for letting it in is real though — a Cell
+  told "your funded forecasts came in worse than the record that funded you" could correct, and
+  nothing else in the colony gives it that signal.
+- **`audit_events` has no actor column**, so §25.2's "human intervention" is a by-event-type
+  classification (`outcome.HUMAN_INTERVENTION_EVENTS`) rather than a count of what people actually
+  did. `cell_lifecycle_transition` had to be excluded entirely because the row does not say whether
+  an operator or the kernel caused it. An actor column would make the figure exact and would feed
+  §27.1's phase-8 "human minutes/artifact" metric properly.
+- **Rung 8 itself.** A verdict of `supports_promotion` is read by nobody
+  (`test_no_kernel_path_acts_on_an_assessment`). Rung 8 is "expanded pilot", which means removing
+  one of the two humans standing in every allocation — its own argued step, and the test is there
+  to make taking it cost an explicit edit.
+- **The read-back cannot see stage progression.** §25.2 wants outcomes per rung and the coroner
+  report's `stage_reached` is still always None; both need experiment tracking (Phase 2). Today the
+  assessment judges calibration and reports cost, which is everything the kernel can currently
+  observe about whether an allocation worked.
+- **Nothing re-assesses on a schedule.** An `evidence_withheld` verdict stays withheld until
+  someone runs `mitosis assess` again, and nothing tells an operator that a promotion's forecasts
+  have just come due. The scheduler is the obvious home and is deliberately not wired to it.
+
+## From the §9.2 birth-rate slice (2026-08-22, ADR-031)
+
+- **A refused birth is lost, not deferred.** §9.3's word is "waits", and a synchronous kernel call
+  cannot — so `BirthRateExceededError` is raised and the caller has to come back. A real birth queue
+  would implement waiting properly, and would matter most for the reproduction path, where the
+  parent has already decided to reproduce and simply gets told no. Note the queue itself would then
+  be §23.5-shaped: a Cell that learns births are queued has an incentive to ask early and often.
+- **The cap applies to operator-created founders too.** §9.2 says "births" without qualification and
+  `max_living_cells` already binds an operator, so uniform is the reading taken. But §9.1's
+  rationale is about *reproduction* growing exponentially, and an operator seeding a colony by hand
+  is not that. If seeding a large colony ever becomes awkward, exempting the founder path is the
+  defensible change — with the exemption stated, not silent.
+- **`max_parallel_experiments` is now the only §9.2 limit still stored and unchecked.** Its
+  prerequisite is experiment tracking (Phase 2), the same thing blocking the coroner report's
+  `stage_reached` and the §25.2 read-back's stage progression.
+- **Nothing warns as the cap approaches.** `mitosis scheduler-status` prints births-this-epoch, but
+  an unattended colony hits the wall without notice and the refusal only appears in whatever tried
+  to give birth. The metabolic alarm's shape — watch the derivative, warn before the cap — applies
+  here too.
+- **`epoch_config` unanchored means the cap acts as a lifetime total.** `mitosis init` anchors epoch
+  zero, so this only bites a colony driven straight through the kernel. The fallback errs toward
+  restriction deliberately, and the refusal says so, but a colony that cannot anchor epochs after
+  the fact has no way out except raising the limit — `configure_epochs_if_absent` is write-once by
+  design and lowering or re-anchoring a genesis would renumber history.
+- **Population limits are still write-once** (`set_limits_if_absent`), which now bites harder: the
+  birth cap is the limit most likely to need tuning as a colony grows, and there is no audited path
+  to change it. This was already logged for the carrying-capacity caps and the birth cap joins it.

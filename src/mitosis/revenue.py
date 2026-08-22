@@ -40,6 +40,7 @@ supplies the figure, exactly as with an invoice.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 
 from . import audit, ledger, lifecycle
 from .accounts import cell_cash
@@ -140,23 +141,39 @@ def record_revenue(
     return transaction
 
 
-def total_revenue(conn: sqlite3.Connection, cell_id: str, book: Book = Book.USD_REAL) -> int:
+def total_revenue(
+    conn: sqlite3.Connection,
+    cell_id: str,
+    book: Book = Book.USD_REAL,
+    *,
+    since: datetime | None = None,
+) -> int:
     """Gross earnings for one Cell, as a positive number.
 
     Reads the Cell's own positive leg rather than the `revenue` account, because
     the `revenue` account is colony-wide — the per-Cell attribution lives on the
     cell-scoped entry.
+
+    `since` narrows to a window, for §25.2's "what did this rung earn" — and
+    filters `created_at_utc` for the same reason `ledger.spend_by_book` does:
+    the effective stamp may be simulated, the window boundary is wall-clock.
     """
+    window, window_params = (
+        ("AND t.created_at_utc > ?", (since.astimezone(timezone.utc).isoformat(),))
+        if since is not None
+        else ("", ())
+    )
     row = conn.execute(
-        """
+        f"""
         SELECT COALESCE(SUM(e.amount_minor_units), 0) AS total
         FROM ledger_entries e
         JOIN ledger_transactions t ON t.transaction_id = e.transaction_id
         WHERE t.book = ?
           AND t.transaction_type = ?
           AND e.account_id = ?
+          {window}
         """,
-        (book.value, REVENUE_TRANSACTION_TYPE, cell_cash(cell_id)),
+        (book.value, REVENUE_TRANSACTION_TYPE, cell_cash(cell_id), *window_params),
     ).fetchone()
     return row["total"]
 

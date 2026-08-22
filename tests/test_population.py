@@ -21,7 +21,7 @@ def test_get_limits_returns_defaults_when_unconfigured(conn):
 def test_set_limits_if_absent_configures_once(conn):
     requested = PopulationLimits(
         max_living_cells=5, max_active_cells=3, max_parallel_experiments=1,
-        max_births_per_epoch=1, max_lineage_population_fraction=0.5,
+        max_births_per_epoch=1000, max_lineage_population_fraction=0.5,
     )
     result = population.set_limits_if_absent(conn, requested)
     assert result == requested
@@ -31,7 +31,7 @@ def test_set_limits_if_absent_configures_once(conn):
 def test_set_limits_if_absent_does_not_override_existing(conn):
     first = PopulationLimits(
         max_living_cells=5, max_active_cells=3, max_parallel_experiments=1,
-        max_births_per_epoch=1, max_lineage_population_fraction=0.5,
+        max_births_per_epoch=1000, max_lineage_population_fraction=0.5,
     )
     second = PopulationLimits(
         max_living_cells=999, max_active_cells=999, max_parallel_experiments=999,
@@ -62,7 +62,7 @@ def test_active_count_only_counts_alive(conn):
 def test_check_birth_licence_allows_under_limit(conn):
     limits = PopulationLimits(
         max_living_cells=2, max_active_cells=2, max_parallel_experiments=1,
-        max_births_per_epoch=1, max_lineage_population_fraction=1.0,
+        max_births_per_epoch=1000, max_lineage_population_fraction=1.0,
     )
     population.set_limits_if_absent(conn, limits)
     make_cell(conn, "c1")
@@ -72,7 +72,7 @@ def test_check_birth_licence_allows_under_limit(conn):
 def test_check_birth_licence_denies_at_max_living_cells(conn):
     limits = PopulationLimits(
         max_living_cells=1, max_active_cells=99, max_parallel_experiments=1,
-        max_births_per_epoch=1, max_lineage_population_fraction=1.0,
+        max_births_per_epoch=1000, max_lineage_population_fraction=1.0,
     )
     population.set_limits_if_absent(conn, limits)
     make_cell(conn, "c1", CellStatus.DORMANT)  # living but not active
@@ -83,7 +83,7 @@ def test_check_birth_licence_denies_at_max_living_cells(conn):
 def test_check_birth_licence_denies_at_max_active_cells(conn):
     limits = PopulationLimits(
         max_living_cells=99, max_active_cells=1, max_parallel_experiments=1,
-        max_births_per_epoch=1, max_lineage_population_fraction=1.0,
+        max_births_per_epoch=1000, max_lineage_population_fraction=1.0,
     )
     population.set_limits_if_absent(conn, limits)
     make_cell(conn, "c1", CellStatus.ALIVE)
@@ -94,7 +94,7 @@ def test_check_birth_licence_denies_at_max_active_cells(conn):
 def test_dead_cells_never_block_births(conn):
     limits = PopulationLimits(
         max_living_cells=1, max_active_cells=1, max_parallel_experiments=1,
-        max_births_per_epoch=1, max_lineage_population_fraction=1.0,
+        max_births_per_epoch=1000, max_lineage_population_fraction=1.0,
     )
     population.set_limits_if_absent(conn, limits)
     make_cell(conn, "c1", CellStatus.DEAD)

@@ -98,7 +98,7 @@ def test_create_cell_denied_at_carrying_capacity(conn):
         conn,
         PopulationLimits(
             max_living_cells=1, max_active_cells=99, max_parallel_experiments=1,
-            max_births_per_epoch=1, max_lineage_population_fraction=1.0,
+            max_births_per_epoch=1000, max_lineage_population_fraction=1.0,
         ),
     )
     lifecycle.create_cell(
@@ -121,7 +121,7 @@ def test_denied_birth_does_not_consume_idempotency_key(conn):
         conn,
         PopulationLimits(
             max_living_cells=0, max_active_cells=99, max_parallel_experiments=1,
-            max_births_per_epoch=1, max_lineage_population_fraction=1.0,
+            max_births_per_epoch=1000, max_lineage_population_fraction=1.0,
         ),
     )
     with pytest.raises(population.CarryingCapacityError):

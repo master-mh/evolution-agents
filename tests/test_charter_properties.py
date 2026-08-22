@@ -266,7 +266,7 @@ def test_charter_carrying_capacity(max_living, attempts):
         max_living_cells=max_living,
         max_active_cells=max_living,  # active cap not the binding constraint here
         max_parallel_experiments=1,
-        max_births_per_epoch=1,
+        max_births_per_epoch=1000,
         max_lineage_population_fraction=1.0,
     )
     population.set_limits_if_absent(conn, limits)
@@ -318,7 +318,7 @@ def test_charter_carrying_capacity_lineage_share(cap, attempts, founders):
             max_living_cells=100,
             max_active_cells=100,
             max_parallel_experiments=1,
-            max_births_per_epoch=1,
+            max_births_per_epoch=1000,
             max_lineage_population_fraction=cap,
         ),
     )

@@ -804,6 +804,138 @@ Template: **Status** · **Spec ref** · **Context** · **Decision** · **Consequ
 
 ---
 
+## ADR-030: The promotion read-back judges only forecasts that were open when the capital moved
+
+- **Status:** Accepted
+- **Spec ref:** §25.2, §25.1, §8.5 (A14), §10.2, §10.3, §10.5 (A15), §23.5, §0.3, §13, §27.1; Charter C3; ADR-027, ADR-029
+- **Context:** ADR-029 recorded §25.2's promotion evidence at the moment of funding, and half of
+  that list cannot exist at that moment — §25.2 asks for "predicted vs **observed** outcome" and
+  for "reality gap (from the prediction register, §8.5)", both of which need outcomes that arrive
+  later. Until something read them back, "the colony is climbing §25.1's ladder" was an assertion
+  rather than a measurement, and `transfer_degradation` would have stayed NULL for every Cell
+  forever. This is the other half.
+- **Decisions, and the alternatives each displaced:**
+  1. **The verdict rests only on forecasts that were open at the instant of funding and have since
+     resolved.** Rejected: the Cell's current mean Brier, which is the obvious measure and wrong
+     twice — it includes outcomes the approver already knew, and it includes forecasts registered
+     *after* the money arrived. The second is a live gaming surface: §23.5 warns the review path
+     "will be optimised against by Cells", and the cheapest optimisation available to a newly
+     funded Cell is a pile of easy claims. The funding set was hash-chained before the outcomes
+     were knowable and cannot be arranged afterwards. Forecasts made while funded are counted and
+     reported beside the verdict, never inside it — the same split ADR-027 drew between
+     `claimed_tier` and `assessed_tier`, applied to evidence instead of risk.
+  2. **Any overdue forecast in the funding set blocks a verdict entirely** (`EVIDENCE_WITHHELD`),
+     checked *before* any score, including when good resolutions exist. Rejected: scoring the
+     resolved remainder, which is precisely the self-selected calibration curve `prediction.py`
+     exists to prevent — it looks excellent and means nothing, in exactly the direction that
+     favours promotion. `EVIDENCE_WITHHELD` is kept distinct from `INSUFFICIENT_EVIDENCE` because
+     the remedies are opposite: one needs time, the other needs someone to resolve what is
+     outstanding. And because resolution is operator-supplied, a withheld verdict is a finding
+     about the evidence, not an accusation against the Cell.
+  3. **Cost and revenue are recorded and never gated on.** Rejected: asking whether the grant
+     earned its money back, which §10.3 forbids in effect — "Explorers need no immediate revenue",
+     and Explorers are most of this colony, so a profit test would reject exactly the Cells the
+     clause protects. What the kernel judges is calibration, which is the selection pressure §8.5
+     exists to supply when there is no customer yet.
+  4. **Two calibration dimensions, not one** (§10.2: "do not collapse all dimensions into one
+     scalar"): §8.5's reality gap against the record the promotion was granted on, and an absolute
+     bar at the 0.25 a coin scores. Either failing withholds support. They are genuinely
+     independent — a Cell funded on 0.01 that now scores 0.09 passes the absolute bar and fails the
+     relative one, and that case is what proves the collapse did not happen.
+  5. **A minimum of three resolved forecasts before any verdict.** The weakest number in the slice,
+     placed where being wrong is harmless: it can only ever withhold a verdict a human is still
+     free to reach by reading the evidence. Rejected: verdicts on n=1, which is a coin flip wearing
+     a decimal point. The rule the whole module follows where an arbitrary choice arises is **err
+     toward withholding**, because only one direction of that error compounds.
+  6. **Derived, never stored — no table and no migration.** Rejected: an `assessments` table. The
+     register and ledger already hold these facts canonically, and migration 0016 gives exactly
+     this reason for snapshotting calibration rather than copying predictions: a second copy is a
+     second version that can disagree. Charter C3 takes the same posture toward balances. Storage
+     becomes right when a *decision* consumes an assessment, and nothing does.
+  7. **Nothing in the kernel may read a verdict**, enforced by
+     `test_no_kernel_path_acts_on_an_assessment`, which closes two directions. Upward: acting on
+     `supports_promotion` would take §25.1's rung-8 step — removing one of the two humans in every
+     allocation — without anyone arguing for it; this is the successor to ADR-027's and ADR-029's
+     ladder guarantees and, like them, exists so the next step costs an explicit edit. Downward and
+     harder: §10.5 requires that "estimated negative EV alone must not kill a Cell" without strong
+     evidence *and* an independent Auditor concurring, and no Auditor Cell exists, so `death.py`
+     must not be able to see a `does_not_support_promotion` verdict at all.
+  8. **The window filters `created_at_utc`, not `effective_at_utc`.** A caller may date the
+     effective stamp to a simulated instant (§6.3) while the promotion record is wall-clock;
+     mixing the two clocks silently drops or admits rows from the cost figure.
+  9. **Liability stays NULL.** §13's reserve is Phase 6+, and a fabricated 0 reads as "this rung
+     carried no liability" rather than "nothing models liability yet" — a much stronger claim, and
+     one a promotion decision would be made on. Same reasoning ADR-029 applied at funding.
+- **Consequences:** §25.2 is satisfied end to end for the first time, and the golden run covers the
+  whole arc at expectation version 10 — deliberate, queue, approve, allocate, resolve, assess — with
+  no USD_REAL movement and byte-identical balances against version 9. `ledger.spend_by_book` and
+  `revenue.total_revenue` gained an optional `since` window rather than the query being duplicated,
+  keeping `accounts.SPEND_DESTINATIONS` the single place consumption is classified. Still absent:
+  rung 8 itself; a confidence interval to replace decision 5's constant; an actor column on
+  `audit_events`, without which §25.2's "human intervention" is a by-event-type classification; and
+  stage progression, which needs Phase 2's experiment tracking.
+
+---
+
+## ADR-031: A per-epoch birth cap is a rate limit, and a rate limit may never cause a death
+
+- **Status:** Accepted
+- **Spec ref:** §9.1, §9.2, §9.3 (A2), §6.3, §10.5 (A15); Charter C3, C9; ADR-009, ADR-026
+- **Context:** `max_births_per_epoch` has sat in `colony_config` since the Phase 1 population slice,
+  stored so the config matched `colony.yaml` and unenforced because there was no epoch. ADR-026's
+  scheduler supplied the epoch; this is the other half. It is the last §9.2 limit that was
+  checkable and unchecked — `max_parallel_experiments` still needs Phase 2's experiment tracking.
+- **Decisions, and the alternatives each displaced:**
+  1. **`BirthRateExceededError` is a sibling of `CarryingCapacityError`, not a subclass, and the
+     rate check runs before the capacity check and before any displacer is consulted.** This is the
+     whole substance of the slice. The two refusals look identical to a caller and mean opposite
+     things: capacity is durable and stays true until a Cell dies, which is exactly why §9.3
+     licenses a birth to displace one; a rate limit is temporary and clears when the epoch turns
+     with nothing dying. Rejected: reusing `CarryingCapacityError`, which would enrol every
+     existing `except` clause in treating a wait as a shortage — and the displacement path would
+     kill a Cell to get around a limit that would have cleared by itself. §9.3 licenses displacement
+     for "an available population slot" and §10.5 requires deaths to be objective; a death caused
+     by impatience is neither.
+  2. **The epoch is stamped on the Cell at birth** (`cells.born_in_epoch`, migration 0017) rather
+     than derived. Every other population count is derived from live rows per Charter C3, and this
+     one cannot be: Cells are stamped `created_at_utc` in **wall** time while an epoch is a span of
+     **simulated** time, and §6.3 forbids mixing them without explicit conversion metadata.
+     Rejected: deriving it through the scheduler's `epoch_log` wall anchors, the way §23.3's spend
+     figure does — those anchors exist only for epochs a *tick* has observed, so a colony driven by
+     hand would have births belonging to no epoch and a cap that silently never binds.
+  3. **The epoch primitive moved from `scheduler` to `clock`.** `population` enforces §9.2 and
+     cannot import `scheduler` (which imports `lifecycle`, which imports `population`). Rejected:
+     an injected seam of the `Displacer`/`ExternalOperationChecker` kind — those are optional by
+     design, and an optional cap is not a cap: any caller omitting the seam would bypass §9.2.
+     Also rejected: a second derivation in `population`, because two answers to "which epoch is it"
+     get resolved differently by different readers, the same failure a cached balance causes.
+     `clock` is the correct home anyway — an epoch is a span of simulated time and §6 is the clock.
+     `scheduler` re-exports the names, so no call site changed and there is one implementation.
+     `epoch_log` stays in `scheduler`: it is about a tick having *observed* an epoch.
+  4. **Dead Cells still count toward their epoch.** §9.1's concern is the rate at which the colony
+     spawns "Cells, events, model calls, experiments, records, audit workload", none of which is
+     undone by the Cell later dying. Rejected: counting only the living, which would let a colony
+     take unlimited births per epoch provided it killed them fast enough — the exact loop §9.1 names.
+  5. **Cells born before migration 0017 have NULL and are not backfilled.** Rejected: backfilling to
+     epoch 0, which would consume a live colony's current birth budget with history. `births_in_epoch`
+     matches exactly, so NULL belongs to no epoch rather than being dumped into one.
+  6. **An unanchored colony reports epoch 0 forever, so the cap degrades to a lifetime total**, and
+     the refusal says so. Rejected: skipping the check when `epoch_config` is absent — a cap that
+     silently stops binding is worse than one that binds too hard, and the fallback should err
+     toward restriction. `mitosis init` anchors epochs, so this only affects a colony built by
+     driving the kernel directly.
+- **Consequences:** Both birth paths are capped, and a structural test requires any future one to
+  derive the stamp from the clock rather than merely name the column — the first draft of that test
+  used a character window and passed against an insert that bound a constant. Several existing
+  tests set `max_births_per_epoch=1` as filler while the field was unenforced; those are now 1000,
+  since they are named for the capacity caps and would otherwise have started passing for the wrong
+  reason. Golden expectation 10 → 11 pins `born_in_epoch`, with the scenario turning one epoch
+  before its last birth so the column is not uniformly zero — **no money moves**. Still absent: a
+  real birth queue (§9.3's "waits" is still a raise), any warning as the cap approaches, and an
+  audited path to change population limits after `init`.
+
+---
+
 ## Amendments folded directly into the spec without a standalone ADR
 
 The remaining amendments from `docs/SPEC.md` §"Amendments introduced in v0.2" are feature
