@@ -1,5 +1,5 @@
 {
-  "expectation_version": 11,
+  "expectation_version": 12,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "5e939789ad1f2b21e5bb55b379041f8eece0113206a5144798417ec1d4a6be23",
+  "semantic_hash": "ea8e9b58a3758a5d30c3137e38ea3170ee3daf4d8fd7eb3c697db71d57ded4e5",
   "snapshot": {
     "approval_grants": 1,
     "approval_requests": [
@@ -42,10 +42,10 @@
         "allocated_minor_units": 30,
         "cell": "cell#4",
         "forecasts_made_while_funded": 0,
-        "forecasts_open_at_funding": 3,
+        "forecasts_open_at_funding": 4,
         "forecasts_overdue": 0,
         "forecasts_resolved_since": 3,
-        "forecasts_still_open": 0,
+        "forecasts_still_open": 1,
         "funded_mean_brier": null,
         "human_interventions": 3,
         "intervention_kinds": {
@@ -70,21 +70,33 @@
       "cell_lifecycle_transition": 12,
       "event_dead_lettered": 1,
       "model_call_reconciled": 1,
-      "model_call_settled": 3,
-      "prediction_registered": 7,
+      "model_call_settled": 4,
+      "prediction_registered": 8,
       "prediction_resolved": 5,
       "promotion_pool_funded": 1,
-      "real_spend_limit_configured": 1
+      "real_spend_limit_configured": 1,
+      "request_audited": 1
     },
+    "audits": [
+      {
+        "auditor": "cell#4",
+        "failure_reason": null,
+        "has_prediction": true,
+        "probability": 0.3,
+        "status": "recorded",
+        "subject": "cell#1",
+        "verdict": "concern"
+      }
+    ],
     "balances": {
       "RESOURCE::cell:cell#1:cash": 4996,
       "RESOURCE::cell:cell#1:committed": 0,
       "RESOURCE::cell:cell#2:cash": 5000,
       "RESOURCE::cell:cell#2:committed": 1150,
-      "RESOURCE::cell:cell#4:cash": 1998,
+      "RESOURCE::cell:cell#4:cash": 1996,
       "RESOURCE::cell:cell#4:committed": 0,
       "RESOURCE::external_capital": -50000,
-      "RESOURCE::infrastructure_reserve": 1856,
+      "RESOURCE::infrastructure_reserve": 1858,
       "RESOURCE::seed_bank": 35000,
       "USD_REAL::cell:cell#1:cash": 965,
       "USD_REAL::cell:cell#1:committed": 15,
@@ -288,6 +300,22 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
+        "input_tokens": 1190,
+        "mirror_minor_units": 0,
+        "output_tokens": 104,
+        "pricing_table_version": "2026-07-27",
+        "provider": "mock",
+        "reconciled": false,
+        "reconciled_micro_usd": null,
+        "reconciliation_source": null,
+        "requested_model": "mock-1",
+        "resolved_model": "mock-1",
+        "settled_minor_units": 0,
+        "status": "succeeded"
+      },
+      {
+        "cell": "cell#4",
+        "cost_actual_micro_usd": 0,
         "input_tokens": 1461,
         "mirror_minor_units": 0,
         "output_tokens": 279,
@@ -344,6 +372,16 @@
         "resolved": false
       },
       {
+        "brier_score": null,
+        "cell": "cell#4",
+        "claim": "approval request bb0a2e74-b045-4692-b726-ee6dd428d085 (experiment, 25 USD_REAL) achieves what its proposal claims",
+        "log_score": null,
+        "outcome": null,
+        "probability": 0.3,
+        "resolution_source": null,
+        "resolved": false
+      },
+      {
         "brier_score": 0.04,
         "cell": "cell#4",
         "claim": "golden-run purchase clears checkpoint 0",
@@ -385,7 +423,7 @@
         "resolved_predictions": 0,
         "rung": 7,
         "transfer_degradation": null,
-        "unresolved_predictions": 3
+        "unresolved_predictions": 4
       }
     ],
     "proposals": [
@@ -508,6 +546,22 @@
         "maximum_amount": 2,
         "settled_amount": 2,
         "status": "settled"
+      },
+      {
+        "book": "USD_REAL",
+        "cell": "cell#4",
+        "external_operation_type": "model_call",
+        "maximum_amount": 1,
+        "settled_amount": 0,
+        "status": "released"
+      },
+      {
+        "book": "RESOURCE",
+        "cell": "cell#4",
+        "external_operation_type": "model_call",
+        "maximum_amount": 2,
+        "settled_amount": 2,
+        "status": "settled"
       }
     ],
     "resource_usage": [
@@ -562,6 +616,18 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
+        "quantity": 1190,
+        "resource_type": "input_tokens"
+      },
+      {
+        "cell": "cell#4",
+        "minor_units": 1,
+        "quantity": 104,
+        "resource_type": "output_tokens"
+      },
+      {
+        "cell": "cell#4",
+        "minor_units": 1,
         "quantity": 1461,
         "resource_type": "input_tokens"
       },
@@ -576,13 +642,13 @@
       "RESOURCE::cell_birth_funding": 1,
       "RESOURCE::cell_funding": 2,
       "RESOURCE::colony_seed_capital": 1,
-      "RESOURCE::reservation_reserve": 4,
-      "RESOURCE::reservation_settle": 4,
+      "RESOURCE::reservation_reserve": 5,
+      "RESOURCE::reservation_settle": 5,
       "USD_REAL::cell_birth_funding": 1,
       "USD_REAL::cell_funding": 1,
       "USD_REAL::colony_seed_capital": 1,
-      "USD_REAL::reservation_release": 3,
-      "USD_REAL::reservation_reserve": 5,
+      "USD_REAL::reservation_release": 4,
+      "USD_REAL::reservation_reserve": 6,
       "USD_REAL::reservation_settle": 1,
       "USD_SIM::capital_allocation": 1,
       "USD_SIM::cell_birth_funding": 2,

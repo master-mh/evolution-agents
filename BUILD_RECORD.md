@@ -4,102 +4,112 @@ Keeps only the current entry so this file stays small enough to read in full eve
 Earlier slices (1–10, plus CI wiring, seeded ids, reproduction/lineage, the full Phase 4 gateway
 arc, real-spend type registration, the first real paid call, revenue + Ollama, the `spend_by_book`
 account fix, the prediction register, death criteria, §9.3 displacement, the agent loop, the
-scheduler, the §23 approval queue, the dead-Cell estate, the rung-7 promotion path, and the §25.2
-read-back, 2026-07-21 through 2026-08-22):
+scheduler, the §23 approval queue, the dead-Cell estate, the rung-7 promotion path, the §25.2
+read-back, and §9.2's birth cap, 2026-07-21 through 2026-08-22):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-22 — §9.2's birth cap, and why a rate limit must never kill anything
+## 2026-08-22 — Auditor Cells: a flag that costs something
 
-`population.py` + migration 0017 (ADR-031). `max_births_per_epoch` has been in `colony_config`
-since the Phase 1 population slice — stored so the config matched `colony.yaml`, unenforced because
-there was no epoch. ADR-026's scheduler supplied the epoch. This is the other half, and the last
-§9.2 limit that was checkable and unchecked.
+`auditor.py` + migration 0018 (ADR-032). §23.2's "independent Auditor summary" has read as
+unavailable since ADR-027, correctly — the clause says *independent* and §0.3 forbids the proposing
+Cell writing it. This fills it, and closes what PRIORITIES called the largest remaining gap in the
+review path.
 
-### The open question answered itself once the two refusals sat side by side
+### The blocker on record was wrong on both counts
 
-PRIORITIES had this down as needing a call: does a denied birth **wait** at an epoch boundary, or
-**fail** like the other population caps? It fails — a synchronous kernel call cannot wait, which
-`population.py` already said about §9.3. But putting the two refusals next to each other showed the
-question was the wrong one:
+PRIORITIES said the hole would stand "until the Auditor type in §7's taxonomy is real". §7 is the
+flight simulator, not the taxonomy; and `CellType.AUDITOR` has existed since Phase 1, with
+`death.kill_for_negative_ev` validating a concurring Auditor since the death slice. Nothing was
+missing from the type system. What was missing was any way for an Auditor to *produce* an audit —
+a much smaller slice than the entry implied, and worth checking before scheduling rather than after.
 
-    CarryingCapacityError   no slot. Durable — true until a Cell dies, which is
-                            exactly why §9.3 lets a birth displace one.
-    BirthRateExceededError  slots available, births spent for this epoch.
-                            Temporary — clears when the epoch turns, nothing dies.
+### §10.4 forbids the obvious Auditor
 
-They refuse identically and mean opposite things. So `BirthRateExceededError` is a **sibling** of
-`CarryingCapacityError` and never a subclass, and the rate check runs **before** the capacity check
-and before any displacer is consulted. Had it inherited, every existing `except
-CarryingCapacityError` in the kernel would have been enrolled in treating a wait as a shortage, and
-the §9.3 displacement path would kill a Cell to get around a limit that would have cleared by
-itself. §9.3 licenses displacement for "an available population slot"; §10.5 requires deaths to be
-objective. A death caused by impatience is neither.
+The obvious one wakes, reads the proposal, and writes prose flagging whatever looks risky. §10.4:
 
-### The epoch is stamped at birth, and that is §6.3's doing
+    Auditor reward is **precision-weighted**: reward valid detected errors, prevented loss,
+    reproducible findings; penalise wrongful flags, excessive false positives, unnecessary
+    blocking, unverified accusations.
 
-Every other population count is derived from live rows (Charter C3). This one cannot be. Cells are
-stamped `created_at_utc` in **wall** time while an epoch is a span of **simulated** time, and §6.3
-forbids mixing the two "without explicit conversion metadata". The scheduler's `epoch_log` is that
-metadata for spend — but it holds anchors only for epochs a *tick* has observed, so a colony driven
-by hand would have births belonging to no epoch at all, and a cap that silently never binds is
-worse than one that does not exist.
+and §29's acceptance criterion 10 is, in full, "Wrongful Auditor flags are penalised". **Prose
+cannot be penalised.** An Auditor whose flags cost it nothing will flag everything — maximally
+cautious, maximally uninformative, and it looks responsible the entire time it is destroying the
+signal the operator needs.
 
-Cells born before migration 0017 get NULL and are deliberately not backfilled to epoch 0, which
-would consume a live colony's current birth budget with history.
+So every audit stakes a **probability, registered as a §8.5 prediction** before the outcome is
+known, scored by the same proper scoring rule every other Cell faces. A wrongful flag lands in the
+Auditor's own calibration record — the currency ADR-030's read-back already uses. Verified on a live
+colony: a concern raised at p=0.2 against a request that then succeeded scores Brier 0.64, against
+the 0.25 an Auditor gets for knowing nothing.
 
-### The layering forced a move, and the move was the right home anyway
+**The kernel composes the claim, not the Auditor.** §0.3 binds the independent evaluator as much as
+the proposer: one allowed to phrase its own claim would phrase an unfalsifiable one and never be
+wrong. And a verdict incoherent with its own probability — `concern` at p>0.5 — is refused, because
+that pair is a free flag: the alarm the operator reads and the number the Auditor is scored on point
+opposite ways.
 
-`population` enforces §9.2 and cannot import `scheduler` — `scheduler` imports `lifecycle` which
-imports `population`. The established fix here is an injected seam, and it is **wrong for a cap**:
-`Displacer` and `ExternalOperationChecker` are optional by design, and any caller omitting an
-optional seam would bypass §9.2 entirely. So the epoch primitive moved to `clock.py`, which is
-where it belonged — an epoch is a span of simulated time, and §6 is the clock; migration 0014's own
-header cites §6.3. `scheduler` re-exports the names, so no call site changed and there is exactly
-one derivation of "which epoch is it". `epoch_log` stays in `scheduler`, being about a tick having
-*observed* an epoch.
+### Independence is four checks, and the identity ones are the weak half
+
+Not the subject, an oversight type (§10.4 pairs Auditor and Immune), a different lineage, able to
+think. Lineage because ADR-027 already made it §23.4's aggregation key for the same reason — it is
+the cheapest thing a Cell can split itself across, so also the cheapest way to manufacture a
+friendly reviewer.
+
+But a Cell running the same prompt over the same context is not independent whatever the row says.
+What makes it a second opinion is that the Auditor is briefed on what the subject **cannot see about
+itself**: its calibration record, its overdue count, its lineage exposure, and the kernel's
+*assessed* risk tier rather than the tier it claimed.
+
+### An audit advises; it never blocks
+
+§10.4 penalises "unnecessary blocking" and §23.2 asks only that the summary be *shown*. `approval`
+does not import `auditor` and does not branch on a verdict, enforced structurally. An Auditor with a
+veto is a second approver — a governance change nobody argued for — and it would make flagging
+strictly better than not, inverting the incentive the rest of the module builds.
+
+### Three things the build found that the design did not
+
+- **An unusable reply must be recorded, not raised.** The first implementation raised. But the
+  gateway commits before the reply is parsed (ADR-022), so by then the Auditor has already paid for
+  the call — raising leaves real spend with nothing explaining what it bought, and hides an Auditor
+  that reliably produces nothing, which is itself a §10.4 fitness fact. Found by a CLI test.
+- **Uniqueness had to become partial.** `UNIQUE (request_id, auditor_cell_id)` let one malformed
+  reply permanently disqualify that Auditor from that request — a model's bad JSON deciding who is
+  allowed to review what. It is now a partial unique index on `status = 'recorded'`: one *opinion*
+  per Auditor, unlimited attempts.
+- **Dormant Cells must be able to audit.** Requiring ALIVE was inconsistent with the deliberation
+  path, where §17.2's whole model is dormant Cells woken by events — and an Auditor is idle between
+  reviews by construction. Found by wiring the golden run, whose own Auditor sleeps.
 
 ### Verification
 
-- **671 tests passing** (12 new, 0 removed; up from 659).
-- **Golden expectation 10 → 11**: `cells.born_in_epoch` is pinned, and the scenario turns one epoch
-  immediately before its last birth so the column reads 0, 0, 0, 0, **1** rather than uniformly
-  zero — a constant-stamping kernel would otherwise pass. The only other change is
-  `clock.simulated_at` moving by that one day. **No money moves**: balances, transaction types,
-  reservations, resource usage, predictions, promotions and assessments are byte-identical to
-  version 10.
-- **Teeth-checked nine ways**, each failing its named test: the cap not enforced, a rate limit
-  reaching the displacer and killing a Cell, the rate error becoming a capacity error, capacity
-  reported ahead of the rate limit, dead Cells dropping out of the count, a birth path stamping a
-  constant, a second definition of `current_epoch`, the migration backfilling history into epoch 0,
-  and an unanchored colony not saying so. **The structural test's first draft was too weak** — it
-  scanned a 700-character window from the SQL, which stopped ~15 characters short of the parameter
-  tuple, so an insert that named `born_in_epoch` and bound `None` passed it. Rewritten to scope by
-  AST to the `execute` call itself, and re-checked against both birth paths.
-- **Existing fixtures corrected**: `test_population.py`, `test_lifecycle.py` and
-  `test_charter_properties.py` set `max_births_per_epoch=1` as filler while the field was
-  unenforced. Those tests are named for the *capacity* caps and would have begun passing for the
-  wrong reason, so the filler is now 1000.
-- **Hand-verified through the CLI**: cap lowered to 2, two `create-cell` runs succeed, the third is
-  refused with the §9.2 message, `mitosis scheduler-status` reports `births this epoch: 2/2`, and
-  `advance-time --days 1` clears it — nothing died and nothing was reconfigured.
-- **Migration upgrade path covered explicitly**, the blind spot every other test in this suite has:
-  one test builds a colony on the pre-0017 schema from the actual `.sql` files and migrates it,
-  confirming the ALTER TABLE runs against a populated `cells` and leaves history at NULL.
-- Next: nothing runs the scheduler, and `max_parallel_experiments` is the last §9.2 limit still
-  stored and unchecked (it needs Phase 2's experiment tracking).
-
-### Also this session: `README.md` and `LICENSE`
-
-Not a kernel slice, and recorded here rather than as its own entry for that reason. Every factual
-claim in the README was checked against the repo instead of written from memory — test count,
-migration count, expectation version, each Charter test id actually collectible by `pytest -k`, and
-every linked doc present. The secrets audit was **re-run rather than inherited from PRIORITIES**:
-no `.env`, `.db`, key or credential file has ever been committed, `.gitignore` covers all of them,
-and every `sk-ant-…` string in the tree is a synthetic canary inside a redaction test.
-
-The repo **stays private**, and `LICENSE` is all-rights-reserved. That is the deliberate state
-rather than a missing file, which is why it says so in words: a repository with no LICENSE is
-already all-rights-reserved, but a reader cannot distinguish that from an oversight. Publishing was
-offered and declined, and the asymmetry is the reason it is safe to leave for later — adding a
-permissive licence is one commit, while retracting one from versions people already hold is not
-possible at all.
+- **696 tests passing** (25 new, 0 removed; up from 671).
+- **Golden expectation 11 → 12**: the auditor's child audits the explorer's queued request — a
+  different lineage, and both sides pinned as aliases so a regression letting a Cell audit itself
+  shows up as the same alias twice. **No USD_REAL moves**; the only balance change is 2 RESOURCE of
+  metered compute, which is §10.4's governance overhead becoming non-zero for the first time. The
+  USD_REAL leg *releases* rather than settles, the tell that the mock is priced at zero.
+  `approval_grants` is byte-identical, which is where a regression to a blocking Auditor would show.
+  **Two `resource_usage` rows appear to change and do not** — the audit now runs before the child's
+  deliberation and takes those indices; checked rather than assumed, because a reordering and a
+  regression look identical in a positional diff.
+- **Teeth-checked sixteen ways**, each failing its named test: self-audit, any cell type auditing, a
+  relative vouching, a quarantined Cell auditing, the flag staked on the wrong Cell, a wrongful flag
+  going unpenalised, precision reading as perfect before any resolution, a hedged flag accepted, the
+  Auditor writing its own claim, a rejected audit rendering as an opinion, an unusable reply raising
+  and losing the paid call, an audit revised after the fact, `approval` importing the auditing path,
+  a decided request being audited, the prompt rendering enums as a JSON list again, and the Auditor
+  briefed on the claimed tier only. Two mutations were bad on the first pass — one still called the
+  function it was meant to disable, one left the searched-for string in place — and were redone.
+- **Hand-verified end to end on a live colony**: every independence check refused, the coherence
+  guard refused a hedged flag, §23.2's field filled with attribution, idempotency held at one model
+  call, and a wrongful flag moved precision to 0.0 with Brier 0.5625. Conservation in all three
+  books, both hash chains green, `external_expense` 0 throughout.
+- **Found while wiring the golden run:** §8.5's register has one namespace, and an Auditor now puts
+  two kinds of claim in it — forecasts about its own work and flags about other Cells' requests. A
+  naive "resolve everything this Cell predicted" folded an audit of the explorer into the §25.2
+  read-back of the auditor's own funding. Scoped around in the scenario and logged; the real fix is
+  a `kind` on the register.
+- Next: nothing requires an audit and nothing schedules one; §10.4's governance overhead ratio is
+  now computable and unbuilt; and §10.5's concurring-auditor check still validates a Cell's type but
+  not its record.

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import (
     approval,
+    auditor,
     clock,
     context,
     db,
@@ -1322,6 +1323,95 @@ def cmd_assessments(args: argparse.Namespace) -> None:
     conn.close()
 
 
+def cmd_audit(args: argparse.Namespace) -> None:
+    """§23.2's independent Auditor summary: have an Auditor Cell review a request.
+
+    Operator-invoked, and only that. An audit costs a model call, so a colony
+    that audited on a timer would be spending money unattended — which is the
+    thing §23.3's whole guard set exists to prevent.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    provider = _build_provider(args)
+    try:
+        result = auditor.audit_request(
+            conn,
+            request_id=args.request_id,
+            auditor_cell_id=args.auditor,
+            provider=provider,
+            model=args.model,
+            max_tokens=args.max_tokens,
+            idempotency_key=args.idempotency_key,
+        )
+    except (auditor.AuditError, approval.ApprovalError) as error:
+        conn.close()
+        raise CliError(str(error)) from error
+
+    if not result.is_recorded:
+        # The model call was already bought and committed (ADR-022), so this is
+        # a recorded fact rather than an error: real spend that produced no
+        # usable opinion is exactly what should be visible.
+        print(f"Audit {result.audit_id}  (REJECTED — no usable opinion)")
+        print(f"  auditor {result.auditor_cell_id} reviewing {result.subject_cell_id}")
+        print(f"  request {result.request_id}")
+        print()
+        for line in textwrap.wrap(result.failure_reason or "", width=76):
+            print(f"  {line}")
+        print()
+        print("  The Auditor paid for this call and produced nothing usable, so it")
+        print("  is recorded rather than discarded — `mitosis auditor-record` counts")
+        print("  it. No prediction was registered: there was no probability to stake.")
+        conn.close()
+        return
+
+    print(f"Audit {result.audit_id}  ({result.verdict.value.upper()})")
+    print(f"  auditor {result.auditor_cell_id} reviewing {result.subject_cell_id}")
+    print(f"  request {result.request_id}")
+    print()
+    for line in textwrap.wrap(result.summary or "", width=76):
+        print(f"  {line}")
+    print()
+    print(f"  probability the request achieves what it claims: {result.probability}")
+    print(f"  registered as prediction {result.prediction_id} (§8.5)")
+    print("  §10.4: this flag is scored. A wrongful one costs the Auditor its")
+    print("  calibration, which is what stops flagging everything being free.")
+    print()
+    print("  This audit advises; it does not block. Run `mitosis approval "
+          f"{result.request_id}` to see it in the §23.2 payload.")
+    conn.close()
+
+
+def cmd_auditor_record(args: argparse.Namespace) -> None:
+    """§10.4's precision-weighted Auditor record."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    record = auditor.precision(conn, args.cell)
+    print(f"Auditor {record.auditor_cell_id} (SPEC.md §10.4)")
+    print(f"  audits given:      {record.audits} ({record.resolved_audits} resolved)")
+    print(f"  rejected replies:  {record.rejected}  "
+          "(paid for, produced nothing usable)")
+    print(f"  flags raised:      {record.flags_raised} ({record.flags_resolved} resolved)")
+    print(f"    vindicated:      {record.flags_vindicated}  (valid detected errors)")
+    print(f"    wrongful:        {record.wrongful_flags}  (§29.10 penalises these)")
+    precision_value = record.flag_precision
+    print(
+        "  flag precision:    "
+        + ("n/a (nothing resolved yet — unmeasured, not perfect)"
+           if precision_value is None else f"{precision_value:.4f}")
+    )
+    print(
+        "  mean Brier:        "
+        + ("n/a" if record.mean_brier is None else f"{record.mean_brier:.4f}")
+        + "   (0.25 is what always answering 0.5 scores)"
+    )
+    print()
+    print("  Reported unreduced on purpose (§10.2): precision alone is maximised")
+    print("  by never flagging anything, which would rank a silent Auditor top.")
+    conn.close()
+
+
 def cmd_call_model(args: argparse.Namespace) -> None:
     """The one CLI verb that can spend real money.
 
@@ -2017,6 +2107,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     promotions_parser.add_argument("--cell", default=None)
     promotions_parser.set_defaults(func=cmd_promotions)
+
+    audit_parser = subparsers.add_parser(
+        "audit",
+        help="§23.2: have an Auditor Cell independently review a pending request",
+    )
+    audit_parser.add_argument("request_id")
+    audit_parser.add_argument(
+        "--auditor", required=True,
+        help="cell_id of the auditing Cell (must be an auditor/immune Cell of a "
+             "different lineage from the one under review)",
+    )
+    audit_parser.add_argument("--idempotency-key", default=None)
+    _add_model_args(audit_parser, default_max_tokens=deliberation.DEFAULT_MAX_TOKENS)
+    audit_parser.set_defaults(func=cmd_audit)
+
+    auditor_record_parser = subparsers.add_parser(
+        "auditor-record", help="§10.4's precision-weighted record for one Auditor"
+    )
+    auditor_record_parser.add_argument("--cell", required=True)
+    auditor_record_parser.set_defaults(func=cmd_auditor_record)
 
     assess_parser = subparsers.add_parser(
         "assess",

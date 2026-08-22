@@ -20,9 +20,9 @@ not climbed.
 
 | | |
 |---|---|
-| Tests | 671, including Hypothesis property tests for the Colony Charter |
-| Golden-run replay | expectation version 11, verified in CI |
-| Schema | 17 numbered migrations |
+| Tests | 696, including Hypothesis property tests for the Colony Charter |
+| Golden-run replay | expectation version 12, verified in CI |
+| Schema | 18 numbered migrations |
 | Python | 3.11+ |
 | Real money spent to date | 0.19¢, once, deliberately |
 
@@ -61,6 +61,10 @@ This matters more than it usually does, because **the spec repeatedly forbids th
 - **§23.5** — the approval queue "will be optimised against by Cells" — is why a Cell's claimed risk
   tier and the kernel's assessed tier are separate values, folded with `max`. A Cell may raise its
   own risk tier and never lower it.
+- **§10.4** requires Auditor reward be *precision-weighted*, penalising "wrongful flags, excessive
+  false positives". Prose cannot be penalised — so an Auditor's flag stakes a probability in the
+  prediction register, and a concern raised against a request that then succeeds costs the Auditor
+  its own calibration.
 
 Every one of those changed the implementation. `CLAUDE.md` records the habit that produced them:
 read the normative section *before* designing, never afterwards.

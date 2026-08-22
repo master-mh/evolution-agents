@@ -59,6 +59,7 @@ from pathlib import Path
 
 from . import (
     approval,
+    auditor,
     clock,
     deliberation,
     db,
@@ -247,7 +248,51 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           every book. The scenario also now anchors epoch zero explicitly at
 #           `SCENARIO_EPOCH`; without an anchor a colony reports epoch 0 forever
 #           and (a) would have been a column of zeroes.
-EXPECTATION_VERSION = 11
+#  11 -> 12: §23.2's "independent Auditor summary" is producible, so the
+#           scenario produces one (ADR-032). The auditor's child — an AUDITOR
+#           by inheritance, of a different lineage from the explorer — audits
+#           the explorer's queued request. Seven sections differ:
+#           (a) new `audits`: one row, **auditor cell#4 / subject cell#1**.
+#               Both sides are pinned as aliases so the *independence* is what
+#               the snapshot checks — a regression letting a Cell audit itself,
+#               or a relative do it, appears here as the same alias twice
+#               rather than passing silently. Recorded, `concern`, p=0.3, with
+#               a prediction attached (§10.4: a flag that stakes nothing is a
+#               free flag).
+#           (b) `balances`: RESOURCE cell#4 cash 1998 -> 1996 and
+#               `infrastructure_reserve` 1856 -> 1858. That is the audit's
+#               metered compute, and it is §10.4's governance overhead becoming
+#               non-zero for the first time. **USD_REAL is unchanged.**
+#           (c) `reservations` gains two rows for cell#4: a USD_REAL
+#               reserve/**release** (max 1, settled 0) and a RESOURCE
+#               reserve/settle (max 2, settled 2). The release is the tell that
+#               no real money moved — the mock is priced at zero.
+#           (d) `resource_usage` gains two rows (input 1461, output 279) and
+#               **rows [8]/[9] appear to change, 1461 -> 1190 and 279 -> 104.
+#               They did not.** The audit now runs before the child's
+#               deliberation, so the audit's smaller call takes those indices
+#               and the deliberation's unchanged numbers move to [10]/[11].
+#               Checked rather than assumed, because a reordering and a
+#               regression look identical in a positional diff.
+#           (e) `transaction_types`: RESOURCE reserve/settle 4 -> 5, USD_REAL
+#               reserve 5 -> 6 and release 3 -> 4. One more zero-cost call.
+#           (f) `predictions` gains the audit's flag, left **unresolved on
+#               purpose**, and `promotions.unresolved_predictions` goes 3 -> 4
+#               because it was open when the capital moved. The §25.2
+#               assessment therefore now reads 3 of 4 resolved with 1 still
+#               open and none overdue — which also covers the
+#               outstanding-but-not-yet-due path that version 11 could not
+#               reach. The verdict stays `supports_promotion`.
+#           (g) `audit_event_types`: new `request_audited` 1,
+#               `model_call_settled` 3 -> 4, `prediction_registered` 7 -> 8.
+#           **No USD_REAL balance moves and `external_expense` stays 0 in every
+#           book.** `cells`, `proposals`, `deliberations`, `approval_requests`,
+#           `approval_grants`, `coroner_reports`, the event tables and the clock
+#           are all byte-identical to version 11 — an audit advises and changes
+#           no decision, which is exactly what §10.4's ban on "unnecessary
+#           blocking" requires, and `approval_grants` staying put is where a
+#           regression to a blocking Auditor would show.
+EXPECTATION_VERSION = 12
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -303,6 +348,22 @@ GOLDEN_SPEND_REQUEST_REPLY = json.dumps(
             }
             for index in range(3)
         ],
+    },
+    sort_keys=True,
+)
+
+
+# The Auditor's reply for the §23.2 step. A `concern` at p=0.3 — coherent with
+# its verdict, which the kernel checks: a flag that quietly predicts success
+# would be a costless flag (§10.4).
+GOLDEN_AUDIT_REPLY = json.dumps(
+    {
+        "verdict": "concern",
+        "summary": (
+            "the Cell claimed LOW and the kernel assessed MEDIUM, and its "
+            "register still shows unresolved claims; fixed scenario text"
+        ),
+        "probability": 0.3,
     },
     sort_keys=True,
 )
@@ -402,7 +463,7 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         conn, cell_type=CellType.BUILDER, budget_minor_units=8_000,
         book=Book.RESOURCE, idempotency_key="golden:birth:builder",
     )
-    auditor = lifecycle.create_cell(
+    auditor_cell = lifecycle.create_cell(
         conn, cell_type=CellType.AUDITOR, budget_minor_units=2_000,
         book=Book.USD_SIM, idempotency_key="golden:birth:auditor",
     )
@@ -418,7 +479,7 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     #    with it — reservations expire in 2030 and no tick runs here.
     clock.advance(conn, timedelta(seconds=clock.DEFAULT_EPOCH_DURATION_SECONDS))
     auditor_child = lineage.reproduce(
-        conn, parent_cell_id=auditor.cell_id, budget_minor_units=500,
+        conn, parent_cell_id=auditor_cell.cell_id, budget_minor_units=500,
         idempotency_key="golden:birth:auditor-child",
         mutation={"strategy": "golden-child-v2"},
         mutation_operator="golden_run_mutation",
@@ -447,7 +508,7 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     reservations.release(conn, partial.reservation_id)
 
     released = reservations.request(
-        conn, cell_id=auditor.cell_id, book=Book.USD_SIM, currency="USD",
+        conn, cell_id=auditor_cell.cell_id, book=Book.USD_SIM, currency="USD",
         maximum_amount=400, expires_at=SCENARIO_RESERVATION_EXPIRY,
         idempotency_key="golden:res:released",
     )
@@ -457,7 +518,7 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     # external operation is reconciled, never auto-released, so the golden
     # run pins that funds stay committed.
     stuck = reservations.request(
-        conn, cell_id=auditor.cell_id, book=Book.USD_SIM, currency="USD",
+        conn, cell_id=auditor_cell.cell_id, book=Book.USD_SIM, currency="USD",
         maximum_amount=250, expires_at=SCENARIO_RESERVATION_EXPIRY,
         idempotency_key="golden:res:stuck",
         external_operation_type="mock_external_call",
@@ -509,7 +570,7 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     # 7. Lifecycle — every remaining transition, ending in a coroner report.
     lifecycle.sleep(conn, builder.cell_id)
     lifecycle.wake(conn, builder.cell_id)
-    lifecycle.sleep(conn, auditor.cell_id)
+    lifecycle.sleep(conn, auditor_cell.cell_id)
 
     lifecycle.quarantine(
         conn, explorer.cell_id, reason="golden-run policy violation",
@@ -572,7 +633,7 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         try:
             events.process_event(
                 conn, poison.event_id, failing_handler,
-                max_attempts=3, cell_id=auditor.cell_id,
+                max_attempts=3, cell_id=auditor_cell.cell_id,
             )
         except RuntimeError:
             pass
@@ -773,6 +834,31 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
                 ),
             ],
         )
+    #     §23.2's independent Auditor summary, which had been reported
+    #     unavailable since ADR-027 because nothing could produce one.
+    #
+    #     The reviewer is the auditor's child — an AUDITOR by inheritance, of a
+    #     different lineage from the explorer whose request it reviews. Both
+    #     halves are pinned on purpose. The colony's *other* Auditor is
+    #     quarantined by the poison event in step 11 and is refused here, which
+    #     is the §18.2 guard doing its job inside the replay rather than only in
+    #     a unit test; and a same-lineage reviewer would be refused too.
+    #
+    #     The audit costs a model call the Auditor pays for (§15.4) — §10.4's
+    #     governance overhead becoming real and non-zero for the first time. It
+    #     advises and never blocks: the explorer's request stays pending, and
+    #     the approval below is of a different request entirely.
+    auditor.audit_request(
+        conn,
+        request_id=next(
+            r.request_id for r in approval.queue(conn) if r.cell_id == explorer.cell_id
+        ),
+        auditor_cell_id=auditor_child.cell_id,
+        provider=providers.MockProvider(reply=GOLDEN_AUDIT_REPLY),
+        model="mock-1",
+        idempotency_key="golden:audit:explorer",
+    )
+
     deliberation.deliberate(
         conn,
         cell_id=auditor_child.cell_id,
@@ -812,9 +898,20 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     #     Nothing here promotes anything. The snapshot pins a *verdict*, and if
     #     a later slice ever makes a verdict move money or end a Cell, this
     #     section is where the diff shows up.
+    #     Scoped to the spend request's own checkpoints, and the scope matters.
+    #     cell#4 is both the proposer here and the Auditor above, so its
+    #     register holds two different kinds of claim: forecasts about its own
+    #     work, and a flag it raised about someone else's request. §8.5 gives
+    #     them one namespace, so a naive "resolve everything this Cell
+    #     predicted" would fold an audit of the *explorer* into the §25.2
+    #     read-back of cell#4's own funding — see FUTURE_BUILD_HOOKS. The flag
+    #     is deliberately left open, which also covers the case where a funding
+    #     forecast is still outstanding but not yet overdue.
     for index, open_forecast in enumerate(
         conn.execute(
-            "SELECT prediction_id FROM prediction_register WHERE cell_id = ? ORDER BY rowid",
+            "SELECT prediction_id FROM prediction_register "
+            " WHERE cell_id = ? AND claim LIKE 'golden-run purchase clears checkpoint%'"
+            " ORDER BY rowid",
             (auditor_child.cell_id,),
         ).fetchall()
     ):
@@ -1063,6 +1160,23 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         for row in conn.execute("SELECT * FROM promotions ORDER BY rowid").fetchall()
     ]
 
+    # §23.2's independent Auditor summaries. Cell aliases on both sides, so
+    # the *independence* itself is what the snapshot pins: a regression that
+    # let a Cell audit its own request, or a relative do it, shows up here as
+    # the same alias twice rather than passing silently.
+    audit_rows = [
+        {
+            "auditor": aliases.get(row["auditor_cell_id"], "cell#?"),
+            "subject": aliases.get(row["subject_cell_id"], "cell#?"),
+            "status": row["status"],
+            "verdict": row["verdict"],
+            "probability": row["probability"],
+            "has_prediction": row["prediction_id"] is not None,
+            "failure_reason": row["failure_reason"],
+        }
+        for row in conn.execute("SELECT * FROM audits ORDER BY rowid").fetchall()
+    ]
+
     # §25.2's read-back, derived rather than stored — the assessment has no
     # table, so this section is computed from the register and the ledger at
     # snapshot time exactly as `mitosis assess` computes it.
@@ -1134,6 +1248,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "proposals": proposal_rows,
         "approval_requests": approval_rows,
         "approval_grants": approval_grant_count,
+        "audits": audit_rows,
         "promotions": promotion_rows,
         "assessments": assessment_rows,
         "audit_event_types": audit_event_types,

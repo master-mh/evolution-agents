@@ -271,10 +271,12 @@ class ApprovalPayload:
     liability_minor_units: int | None
     #: §23.2 "Cell explanation".
     cell_explanation: str
-    #: §23.2 "independent Auditor summary". None until an Auditor Cell exists.
+    #: §23.2 "independent Auditor summary", filled from `audits` when an
+    #: Auditor Cell has reviewed this request (ADR-032). Still None when none
+    #: has — an unaudited request must read as unaudited rather than as clean.
     #: **This field can never be filled by the proposing Cell** — the clause
     #: says *independent*, and §0.3 forbids a Cell defining the canonical
-    #: account of its own work. An absent Auditor must therefore read as absent.
+    #: account of its own work.
     auditor_summary: str | None
     #: §23.2 "relevant evidence" — the Cell's own track record, taken from the
     #: hash-chained register rather than from anything it said about itself.
@@ -286,6 +288,12 @@ class ApprovalPayload:
     signals: tuple[Signal, ...]
     current_cell_status: CellStatus
     overdue: bool
+    #: Every audit on this request, oldest first. Plural because a second
+    #: Auditor is allowed and is worth seeing separately: two independent
+    #: opinions that agree are evidence, and the same opinion twice is not.
+    #: Raw rows rather than `auditor.Audit` — see `_audit_rows` on why this
+    #: module reads the table instead of importing the module that owns it.
+    audits: tuple = ()
 
 
 # --- the seam ----------------------------------------------------------------
@@ -1138,6 +1146,49 @@ def get_grant(conn: sqlite3.Connection, grant_id: str) -> Grant | None:
     )
 
 
+def _audit_rows(conn: sqlite3.Connection, request_id: str) -> list[sqlite3.Row]:
+    """§23.2's Auditor summaries, read as rows rather than through `auditor`.
+
+    The dependency runs auditor -> approval (an audit is *of* a request, and
+    needs this payload to brief the Auditor at all), so importing back would
+    close a cycle. A direct read is the honest alternative here: `audits` is
+    part of the same migrated schema, and the shape being read — a verdict and
+    a summary — is the §23.2 field itself, not the auditing machinery.
+
+    Deliberately not a seam. `population.Displacer` and
+    `sweeper.ExternalOperationChecker` invert *behaviour* that would otherwise
+    run the wrong way; this is a read with no behaviour in it, and a protocol
+    around a SELECT would be ceremony that hides where the coupling is.
+    """
+    return conn.execute(
+        "SELECT * FROM audits WHERE request_id = ? ORDER BY rowid", (request_id,)
+    ).fetchall()
+
+
+def _auditor_summary(conn: sqlite3.Connection, request_id: str) -> str | None:
+    """The §23.2 field, rendered for a human.
+
+    None when nobody has audited — an unaudited request must read as unaudited,
+    never as clean. Attribution is included even for a single audit, because a
+    summary whose author is invisible reads as the kernel's own view, and the
+    whole point of the clause is that it is somebody else's.
+    """
+    # Rejected audits are excluded, not rendered as an opinion with blanks in
+    # it: a reply that produced no verdict is not a judgement, and §23.2's
+    # field showing one would tell an operator that somebody looked when
+    # nobody usefully did. They stay visible in `audits` and in
+    # `auditor.precision`, which is where a Cell burning money to say nothing
+    # belongs.
+    rows = [r for r in _audit_rows(conn, request_id) if r["verdict"] is not None]
+    if not rows:
+        return None
+    return "\n\n".join(
+        f"[{row['verdict']}, p={row['probability']:.2f}] "
+        f"{row['auditor_cell_id']}: {row['summary']}"
+        for row in rows
+    )
+
+
 def payload(
     conn: sqlite3.Connection, request_id: str, *, now: datetime | None = None
 ) -> ApprovalPayload:
@@ -1198,7 +1249,8 @@ def payload(
         related_request_count=related,
         liability_minor_units=None,
         cell_explanation=proposal_row["rationale"],
-        auditor_summary=None,
+        auditor_summary=_auditor_summary(conn, request_id),
+        audits=tuple(_audit_rows(conn, request_id)),
         resolved_prediction_count=int(scores.get("resolved", 0) or 0),
         unresolved_prediction_count=int(scores.get("unresolved", 0) or 0),
         overdue_prediction_count=overdue_count,

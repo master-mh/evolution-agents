@@ -936,6 +936,78 @@ Template: **Status** · **Spec ref** · **Context** · **Decision** · **Consequ
 
 ---
 
+## ADR-032: An Auditor's flag is a registered prediction, because prose cannot be penalised
+
+- **Status:** Accepted
+- **Spec ref:** §23.2, §10.4 (A17), §8.5 (A14), §0.3, §10.5 (A15), §18.2, §17.2, §23.5, §29.10; Charter C6, C8; ADR-022, ADR-027, ADR-030
+- **Context:** `approval.payload` has reported §23.2's "independent Auditor summary" as unavailable
+  since ADR-027, correctly — the clause says *independent* and §0.3 forbids the proposing Cell
+  writing it. `CellType.AUDITOR` has existed since Phase 1 and `death.kill_for_negative_ev` has
+  always demanded a concurring Auditor; what never existed was any way for an Auditor to produce an
+  audit. This was the largest remaining hole in the review path. (PRIORITIES had recorded the
+  blocker as "the Auditor type in §7's taxonomy is not real" — that was wrong twice over: §7 is the
+  flight simulator, and the type has always been real.)
+- **Decisions, and the alternatives each displaced:**
+  1. **Every audit stakes a probability, registered as a §8.5 prediction before the outcome is
+     known.** Rejected: the obvious Auditor, which wakes, reads the proposal, and writes prose
+     flagging whatever looks risky. §10.4 requires Auditor reward be *precision-weighted* —
+     "penalise wrongful flags, excessive false positives, unnecessary blocking, unverified
+     accusations" — and §29's acceptance criterion 10 is "Wrongful Auditor flags are penalised".
+     **Prose cannot be penalised.** An Auditor whose flags cost nothing flags everything: maximally
+     cautious, maximally uninformative, and it looks responsible the whole time. Staking a
+     probability makes §10.4 computable from machinery that already exists — the hash-chained
+     register and the same proper scoring rule every other Cell is judged by — rather than from a
+     reputation system invented for the purpose.
+  2. **The kernel composes the claim; the Auditor supplies only a number and prose.** §0.3 binds the
+     independent evaluator as much as the proposer. Rejected: letting the Auditor phrase its own
+     claim, which lets it phrase an unfalsifiable one ("this request carries some risk" is never
+     wrong) and turns its calibration record into decoration.
+  3. **A verdict incoherent with its own probability is refused.** `concern` at p>0.5 is a free
+     flag: the alarm the operator reads and the number the Auditor is scored on point opposite ways.
+     Refusing the pair is what keeps the stake and the statement the same claim.
+  4. **Independence is four checks inside the write lock** — not the subject, an oversight type
+     (auditor/immune, per §10.4's pairing), a different lineage, and able to think. Lineage matters
+     because ADR-027 already established it as §23.4's aggregation key for the same reason: it is
+     the cheapest thing a Cell can split itself across, so also the cheapest way to manufacture a
+     friendly reviewer. **But the identity checks are the weak half.** What makes an audit a second
+     opinion rather than an echo is that the Auditor is briefed on what the subject cannot see about
+     itself — its calibration record, its overdue count, its lineage exposure, and the kernel's
+     *assessed* tier rather than the tier it claimed.
+  5. **Dormant Cells may audit**, using the same status set that may deliberate rather than a
+     stricter one. §17.2's model is dormant Cells woken by events and an Auditor is idle between
+     reviews by construction; requiring ALIVE would mean paying an Auditor to stay awake. Found by
+     wiring the golden run, whose own Auditor sleeps.
+  6. **An audit advises and never blocks.** §10.4 penalises "unnecessary blocking" and §23.2 asks
+     only that the summary be *shown*. `approval` does not import `auditor` and does not branch on a
+     verdict, enforced structurally — an Auditor with a veto is a second approver, a governance
+     change nobody argued for, and it would make flagging strictly better than not. Same posture as
+     ADR-030: produce the evidence, let a person decide.
+  7. **An unusable reply is recorded, not raised.** Rejected: raising, which was the first
+     implementation. The gateway commits before the reply is parsed (ADR-022), so by the time a
+     reply turns out to be garbage the Auditor has already paid for it — raising leaves real spend
+     with nothing explaining what it bought, and hides an Auditor that reliably produces nothing,
+     which is itself a §10.4 fitness fact. The reply is still never salvaged: no verdict invented,
+     no probability guessed, and §23.2's field stays empty rather than showing a blank opinion.
+  8. **Uniqueness is partial, on recorded audits only.** One *opinion* per Auditor per request; a
+     rejected attempt is not one. A plain UNIQUE let a single malformed reply permanently disqualify
+     that Auditor from that request, which would have made a model's bad JSON decide who is allowed
+     to review what.
+  9. **`approval` reads the `audits` table directly rather than through a seam.** The dependency
+     runs auditor → approval (an audit needs the payload to brief the Auditor at all), so importing
+     back would close a cycle. Rejected: a `Displacer`-shaped protocol — those invert *behaviour*
+     running the wrong way, and this is a SELECT with no behaviour in it.
+- **Consequences:** §23.2's payload is complete for the first time, and §29's acceptance criterion
+  10 is demonstrable rather than aspirational: a concern raised at p=0.2 against a request that then
+  succeeded scores Brier 0.64, far worse than the 0.25 an Auditor gets for knowing nothing. Golden
+  expectation 11 → 12 covers the whole path — **no USD_REAL moves**, and `approval_grants` stays
+  put, which is where a regression to a blocking Auditor would show. §10.4's governance overhead is
+  now non-zero and measurable (`audits.model_call_id`) but the ratio itself is unbuilt. Still
+  absent: any requirement that a request *be* audited, any scheduling of audits, reward actually
+  flowing from precision, and a link between an audit record and §10.5's concurring-auditor check —
+  which today validates a Cell's type but not its record.
+
+---
+
 ## Amendments folded directly into the spec without a standalone ADR
 
 The remaining amendments from `docs/SPEC.md` §"Amendments introduced in v0.2" are feature

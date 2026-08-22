@@ -222,10 +222,22 @@
   (**no USD_REAL moves**). Teeth-checked thirteen ways; two tests initially passed for the wrong
   reason and were rewritten.
 
-- [ ] **No Auditor Cell exists, so §23.2's payload has a permanent hole.** The clause requires an
-  *independent* Auditor summary on every approval, and §0.3 forbids the proposing Cell filling it —
-  so it correctly reports as unavailable, and will until the Auditor type in §7's taxonomy is real.
-  This is the largest remaining gap in the review path.
+- [x] **§23.2's independent Auditor summary — DONE** (2026-08-22), ADR-032. `auditor.py` +
+  migration 0018. **The blocker recorded here was wrong on both counts:** §7 is the flight
+  simulator, not the taxonomy, and `CellType.AUDITOR` has existed since Phase 1 — `death.kill_for_
+  negative_ev` has always validated a concurring Auditor. What was missing was any way for one to
+  *produce* an audit. **§10.4 forbade the obvious design:** Auditor reward is precision-weighted and
+  §29.10 is "wrongful Auditor flags are penalised", and prose cannot be penalised — an Auditor whose
+  flags cost nothing flags everything, which looks responsible while destroying the signal. So every
+  audit stakes a **probability registered as a §8.5 prediction**, scored by the same rule every
+  other Cell faces; the *kernel* composes the claim, because §0.3 binds the evaluator too. A verdict
+  incoherent with its own probability is refused. Independence is four checks — not the subject, an
+  oversight type, a different lineage, able to think — but the identity checks are the weak half:
+  what makes it a second opinion is that the Auditor is briefed on what the subject cannot see about
+  itself, including the kernel's **assessed** tier. **An audit advises and never blocks** (§10.4
+  penalises "unnecessary blocking"), enforced structurally. An unusable reply is *recorded* rather
+  than raised, because the model call is already paid for. 696 tests (25 new); golden expectation
+  11 → 12 (**no USD_REAL movement**). Teeth-checked sixteen ways.
 - [ ] **§23.2's liability figure is unmodelled.** No liability reserve exists (§13 is Phase 6+), so
   the payload prints "not modelled" rather than a fabricated zero. Lands with the reserve.
 - [x] **The grant consumer — DONE** (2026-08-22), ADR-029. `promotion.py` + migration 0016. §31's

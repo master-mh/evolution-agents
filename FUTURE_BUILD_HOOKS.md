@@ -468,3 +468,48 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **Population limits are still write-once** (`set_limits_if_absent`), which now bites harder: the
   birth cap is the limit most likely to need tuning as a colony grows, and there is no audited path
   to change it. This was already logged for the carrying-capacity caps and the birth cap joins it.
+
+## From the §23.2 Auditor slice (2026-08-22, ADR-032)
+
+- **§8.5's register has one namespace, and an Auditor now puts two kinds of claim in it.** A Cell's
+  forecasts about its own work and the flags it raises about *other* Cells' requests are
+  indistinguishable in `prediction_register`. Found in the golden run: a naive "resolve everything
+  this Cell predicted" folded an audit of the explorer into the §25.2 read-back of the auditor's own
+  funding. Scoped around for now by filtering on the claim text, which is not a real fix. A `kind`
+  column, or scoping audit flags through `experiment_id`, would separate them — and §25.2's read-back
+  should probably judge a Cell on its self-forecasts while §10.4 judges it on its flags.
+- **Governance overhead ratio (§10.4's second half) is now computable and unbuilt.** "(audit +
+  immune + approval spend) / total spend against a configured target band. An immune system that
+  consumes the organism is its own failure mode." Auditing costs a model call as of this slice, so
+  the numerator is finally non-zero — `audits.model_call_id` links every audit to its cost precisely
+  so this can be built without re-deriving it.
+- **Nothing requires an audit.** §23.2 lists the Auditor summary among the payload's fields, and an
+  unaudited request still approves. Making one mandatory for HIGH/CRITICAL tiers is the obvious next
+  step and is deliberately not taken here: it would make the Auditor a gate, and §10.4 penalises
+  "unnecessary blocking". The honest version needs a policy on what happens when no eligible Auditor
+  exists — which, on a small colony, is often.
+- **Nothing schedules an audit.** `WAKE_AUDIT_REQUEST` is stamped for provenance but never emitted;
+  audits are operator-invoked because an audit spends money. Auto-enqueuing needs a stated policy for
+  *which* Auditor reviews *which* request — and that policy is itself §23.5-shaped, since a Cell that
+  learns how reviewers are assigned has an incentive to shape its requests around it.
+- **§10.4 says reward, and nothing pays.** `auditor.precision` measures precision-weighted
+  performance; no capital or credit flows from it. §11's negative-finding credit path is where that
+  belongs, and it would also give `flags_vindicated` an economic meaning rather than a reported one.
+- **`death.kill_for_negative_ev` takes a concurring auditor that need never have audited anything.**
+  The two paths both now exist and are unconnected: §10.5's concurrence check validates a Cell's
+  type and identity, not its record. Requiring a concurring Auditor to have a calibration record —
+  or refusing one whose flags are mostly wrongful — is the natural link.
+- **`mitosis audit --provider mock` always rejects**, because `MockProvider`'s default reply is not
+  audit-shaped and the CLI has no flag to set it. §7.3 wants the mock to be "a first-class component"
+  with configurable responses; today the reply is a constructor argument no CLI verb exposes. The
+  same is true of `mitosis wake --provider mock`, so this is a pre-existing gap the audit verb has
+  now made visible twice.
+- **An Auditor is briefed from `approval.payload`, which does not include §25.2's read-back.** The
+  Auditor is the one legitimate consumer of `outcome.assess` — it is exactly the independent
+  evaluator §10.5 wants — but reading it means loosening
+  `test_no_kernel_path_acts_on_an_assessment`. That is an argued step, not a convenience, and it
+  should be taken deliberately or not at all.
+- **The README pins numbers that go stale every slice** — test count, migration count, expectation
+  version. They were accurate when written and drifted twice within the same session (671 → 696).
+  Either derive them at build time, or soften them to ranges. A README that is confidently wrong
+  about its own test count undermines the more important claims next to it.
