@@ -1,5 +1,14 @@
 # MITOSIS — Priorities
 
+> **Convention: an entry that asserts a blocker must name what would disprove it.**
+> Added 2026-08-22 after an audit of the unchecked items found three that were wrong and one that
+> overstated the work — every one in the same direction, claiming something was missing when the
+> socket already existed (`liability_reserve` had been in §31's Phase-1 account list the whole
+> time). The cause is structural, not careless: an entry is written the moment a gap is noticed and
+> nothing ever re-reads it when a later slice happens to fill it. So a blocker claim now carries a
+> `*Disproved by:*` pointer to the symbol, table or command that would settle it — one grep instead
+> of a full pass. **Check the pointer before scheduling the item.**
+
 ## Now
 - [x] Write `docs/SPEC.md` v0.2 — DONE (1309 lines; 32 sections + Colony Charter + 19 amendments normative)
 - [x] Phase 0 formal artifacts — DONE: `docs/DECISIONS.md` (18 ADRs), `docs/STATE_MACHINES.md` (Cell lifecycle FSM + reservation FSM), `docs/EVENT_SEMANTICS.md` (delivery/ordering/poison-event handling)
@@ -238,8 +247,15 @@
   penalises "unnecessary blocking"), enforced structurally. An unusable reply is *recorded* rather
   than raised, because the model call is already paid for. 696 tests (25 new); golden expectation
   11 → 12 (**no USD_REAL movement**). Teeth-checked sixteen ways.
-- [ ] **§23.2's liability figure is unmodelled.** No liability reserve exists (§13 is Phase 6+), so
-  the payload prints "not modelled" rather than a fabricated zero. Lands with the reserve.
+- [ ] **§23.2's liability figure is unmodelled — but the account is not missing.** Corrected
+  2026-08-22: the previous wording ("no liability reserve exists (§13 is Phase 6+)") was wrong on
+  both counts. §13 is Novelty Evaluation; liability is not a §13 concept. And `liability_reserve`
+  is one of §31's **required Phase-1 accounts** — it exists in `accounts.py` and is already
+  classified as a `SPEND_DESTINATION` ("a provision the Cell's activity incurred — cost, not
+  transfer"). **What is missing is a policy that posts to it**, not the account. Until one exists
+  the payload prints "not modelled" rather than a fabricated zero, which stays correct.
+  *Disproved by:* `accounts.FIXED_ACCOUNTS`. The same wrong claim is still copied into
+  `approval.py`'s `liability_minor_units` comment.
 - [x] **The grant consumer — DONE** (2026-08-22), ADR-029. `promotion.py` + migration 0016. §31's
   core loop ("... -> allocate capital -> ...") finally closes: an approved `spend_request` grant
   allocates from `promotion_pool` and wakes the Cell under §17.2's "capital allocation" reason —
@@ -255,7 +271,8 @@
   doc present). **Secrets audit re-run rather than trusted:** no `.env`, `.db`, key or credential
   file has ever been committed, `.gitignore` covers all of them, and every `sk-ant-…` string in the
   tree is a synthetic canary inside a redaction test (`AAAA…`, `ZZZZ…`, `CHARTERC14CANARY`).
-- [ ] **The repo stays private, deliberately** — not a gap. `LICENSE` is all-rights-reserved and
+- **The repo stays private, deliberately** — not a gap, and not a task (checkbox removed: this is
+  a standing decision that will never be "done"). `LICENSE` is all-rights-reserved and
   says so explicitly rather than leaving it inferred, because "the author forgot" and "the author
   decided" call for different behaviour from a reader. While private this is free to change; once
   published it is not, since terms cannot be retracted from versions people already hold. Swapping
@@ -283,8 +300,8 @@
 - [ ] **Forward recovery for the gateway** — ADR-022's deferred alternative, which belongs with the reconciliation plumbing. Rollback is atomic but loses the provider's reported usage, so a crashed call still needs a human. Recording the response durably before applying the accounting (a `settling` status) would let recovery finish the settlement automatically.
 - [ ] Tighten the pre-call token estimate — `providers._estimate_tokens` is a deliberate over-estimate (2 chars/token). The provider's `count_tokens` endpoint would cut over-reservation sharply and make cost overruns (ADR-021) rarer.
 - [ ] Experiment tracking — the other Phase 2 prerequisite; also unblocks `max_parallel_experiments` and the coroner report's `experiment_ids`/`stage_reached` (currently always empty/None).
-- [ ] §24 gateway features left out of the slice: routing by task type (§24.3), controlled retries (a retry after `execution_unknown` risks double-billing), structured-output validation, model competition, and reacting to provider drift as a §8.4 regime change (drift is *recorded* — `resolved_model`/`api_version` — but nothing consumes it).
-- [ ] Remaining CLI (`list-cells/show-cell/kill-cell/ledger/verify-ledger`) — purely additive, no blockers. (`sweep` landed with ADR-022.)
+- [ ] §24 gateway features left out of the slice: routing by task type (§24.3), controlled retries (a retry after `execution_unknown` risks double-billing), model competition, and reacting to provider drift as a §8.4 regime change (drift is *recorded* — `resolved_model`/`api_version` — but nothing consumes it). **Structured-output validation was struck from this list** (2026-08-22): it exists, at the deliberation layer rather than the gateway — `proposal.parse` is strict, `extra="forbid"`, with `FORBIDDEN_FIELD_SENSE` as a schema tripwire. Anything added at the gateway must not duplicate it. *Disproved by:* `proposal.parse`.
+- [ ] Remaining CLI — **narrowed 2026-08-22** from `list-cells/show-cell/kill-cell/ledger/verify-ledger`, most of which had already landed among the CLI's 42 verbs. Still genuinely absent: **`list-cells`** (`status` prints counts and per-status/per-type tallies, but no roster) and **`ledger`** (no transaction browser). Struck: `verify-ledger` (`status` prints per-book conservation and `ledger.verify_chain`; `calibration` prints `prediction.verify_chain`), `show-cell` (substantially covered by `cell-fitness`), and `kill-cell` (`reap` kills on objective criteria — a *forced* operator kill is a §10.5 question, not an additive CLI verb, and should be argued before it is built). Purely additive, no blockers. *Disproved by:* `mitosis --help`.
 - [x] **A dead Cell's estate — DONE** (2026-08-22), ADR-028. `kill()` now releases the dead Cell's
   open reservations and returns its residual cash to `colony_treasury`, inside the same transaction
   as the death. **Charter C8 is the load-bearing clause and not for the obvious reason: an open
@@ -299,11 +316,22 @@
   Hypothesis's 200ms deadline.
 - [ ] An audited path to change population limits after `init` (`set_limits_if_absent` is write-once, and lowering a cap below the current population needs a stated policy). Blocks golden-run coverage of displacement. See FUTURE_BUILD_HOOKS.
 - [ ] Wiring the simulated clock into USD_SIM/synthetic timestamps (still the *only* remaining reason a real colony can't do true byte-identical replay, since ids are seeded but timestamps still aren't). `max_births_per_epoch` no longer belongs on this line — it is enforced as of ADR-031, against `clock.current_epoch` with the epoch stamped on the Cell at birth precisely *because* the two clocks are still unmixed.
-- [ ] Wiring the event *outbox* into a real dispatcher. The inbox got its first producer and
-  consumer with the agent loop (`enqueue_wake` / `run_ready_wakes`); nothing yet publishes staged
-  outbox events anywhere.
-- [ ] Model gateway/provider identification (needed before per-provider real-spend caps can be enforced and before resource usage's `minor_units` can be shadow-priced from a raw quantity instead of caller-supplied).
-- [ ] Reconciling resource_usage against actual sandbox/model-gateway logs (Amendment A6's other half — no such logs exist until Phase 4/5).
+- [ ] Giving the event *outbox* a real destination. **Reworded 2026-08-22** — the previous entry
+  ("wiring the outbox into a real dispatcher") overstated the work: `events.dispatch_outbox(conn,
+  publisher)` already exists, insertion-ordered, one commit per event, with the same at-least-once
+  contract as inbox delivery. The seam is built and takes an injected publisher. What is missing is
+  a publisher implementation and something that calls it. The inbox got its first producer and
+  consumer with the agent loop (`enqueue_wake` / `run_ready_wakes`). *Disproved by:*
+  `events.dispatch_outbox`.
+- [ ] Shadow-pricing `resource_usage.minor_units` from a raw quantity instead of a caller-supplied
+  figure. **Split 2026-08-22:** this entry used to lead with "model gateway/provider
+  identification (needed before per-provider real-spend caps can be enforced)", and that half
+  landed with the gateway slice. `reservations.provider` and `model_calls.provider` exist
+  (migration 0010), and `real_spend_breaker` states plainly that §5.1's "max real spend per
+  provider" **is** enforced, via `_concurrent_reserved_for_provider` and
+  `_settled_spend_for_provider_since`. Only the shadow-pricing half remains. *Disproved by:*
+  `real_spend_breaker._concurrent_reserved_for_provider`.
+- [ ] Reconciling resource_usage against actual sandbox/model-gateway logs (Amendment A6's other half). **Half-unblocked 2026-08-22:** the entry said "no such logs exist until Phase 4/5", but the model-gateway half now does — `model_calls` records provider, resolved model, API version and reported usage per call. The *sandbox* half is still genuinely blocked until Phase 5. *Disproved by:* the `model_calls` table.
 
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per directive §28

@@ -15,19 +15,23 @@ idempotency_key convention:
     the mechanism docs/EVENT_SEMANTICS.md §3 describes and what
     `charter_idempotent_handlers` (C6) tests.
 
-Deliberately out of scope for this slice (see PRIORITIES.md): nothing in the
-kernel yet produces real events through this path — Phase 2's flight
-simulator and later Phase 1 work (reproduction, resource metering) are the
-first real callers. Poison-event dead-lettering *does* quarantine the
+**Real producers now exist.** This paragraph used to open "nothing in the
+kernel yet produces real events through this path", naming Phase 2's flight
+simulator and later Phase 1 work as the first callers. That was true when
+written and stopped being true with the agent loop: `deliberation.enqueue_wake`
+and `_enqueue_wake_locked` emit wake events here and `run_ready_wakes` drains
+them, with §23.3 approval expiry and §17.2 capital allocation as further
+producers. Poison-event dead-lettering *does* quarantine the
 implicated Cell when the caller identifies one (`process_event`/
 `record_failure`'s optional `cell_id`) — see `record_failure`'s docstring;
 callers that can't attribute an event to a single Cell simply omit it, and
 dead-lettering proceeds without a quarantine side effect. `next_ready`'s
 ordering compares `simulated_at`/`available_at` timestamp strings directly
 (same approach as real_spend_breaker's window queries) — reconciling
-simulated vs. real effective_time against a *live* simulated clock (clock.py,
-not yet wired into any producer) is deferred to whichever slice first wires
-clock.py into a real event producer.
+simulated vs. real effective_time against a *live* simulated clock is still
+deferred: `simulated_at` is caller-supplied and **no producer passes it**, so
+events order on wall-clock `available_at`. Deferred to whichever slice first
+has a producer stamp simulated time.
 """
 
 from __future__ import annotations

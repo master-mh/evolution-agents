@@ -264,10 +264,15 @@ class ApprovalPayload:
     #: §23.2 "cumulative related exposure".
     exposure_minor_units: int
     related_request_count: int
-    #: §23.2 "liability". No liability-reserve concept is implemented (§13's
-    #: reserves are Phase 6+), so this is None and the CLI prints it as
-    #: unavailable. Fabricating a zero would read as "no liability" rather than
-    #: "not yet modelled".
+    #: §23.2 "liability". `liability_reserve` is one of §31's **required
+    #: Phase-1 accounts** and exists (`accounts.FIXED_ACCOUNTS`, classified as a
+    #: SPEND_DESTINATION); what is missing is any policy that *provisions* one,
+    #: so no Cell has a reserve to report. This stays None and the CLI prints it
+    #: as unavailable — fabricating a zero would read as "no liability" rather
+    #: than "not yet modelled". An earlier version of this comment said no
+    #: liability-reserve concept was implemented and cited §13, which is Novelty
+    #: Evaluation; both halves were wrong, and the account had been in the
+    #: Phase-1 list the whole time.
     liability_minor_units: int | None
     #: §23.2 "Cell explanation".
     cell_explanation: str
