@@ -95,6 +95,61 @@ def test_invalid_budget_string_fails_cleanly(tmp_path, capsys):
     assert "error:" in capsys.readouterr().err
 
 
+def test_create_cell_seeds_genome_content_from_json(tmp_path, capsys):
+    """§14: the operator seeds founders; this is the verb that does it."""
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init"])
+    capsys.readouterr()
+
+    exit_code = cli.main([
+        "--db", str(db_path), "create-cell", "--type", "commercial", "--budget", "5.00",
+        "--genome", '{"market": "small accounting firms", "revenue_model": "per-close fee"}',
+    ])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "genome content (§16.2)" in out
+    assert "small accounting firms" in out
+
+
+def test_create_cell_seeds_genome_content_from_a_file(tmp_path, capsys):
+    """A seed genome is prose about a market; a file is the expected form.
+
+    Shell-quoting a paragraph is how a seed genome arrives truncated, so
+    `--genome` accepts a path as readily as inline JSON.
+    """
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init"])
+    capsys.readouterr()
+
+    seed = tmp_path / "founder.json"
+    seed.write_text('{"market": "independent bookshops", "problem": "stock goes stale"}')
+
+    exit_code = cli.main([
+        "--db", str(db_path), "create-cell", "--type", "commercial", "--budget", "5.00",
+        "--genome", str(seed),
+    ])
+    assert exit_code == 0
+    assert "independent bookshops" in capsys.readouterr().out
+
+
+def test_create_cell_rejects_an_unknown_genome_field(tmp_path, capsys):
+    """§16.4: the closed schema must fail loudly at the operator, not silently.
+
+    A seed genome typo that were quietly dropped would leave a founder reasoning
+    from content the operator believed it had.
+    """
+    db_path = tmp_path / "mitosis.db"
+    cli.main(["--db", str(db_path), "init"])
+    capsys.readouterr()
+
+    exit_code = cli.main([
+        "--db", str(db_path), "create-cell", "--type", "commercial", "--budget", "5.00",
+        "--genome", '{"stratergy": "typo"}',
+    ])
+    assert exit_code == 1
+    assert "unknown genome field" in capsys.readouterr().err
+
+
 def test_create_cell_is_idempotent_across_cli_invocations(tmp_path, capsys):
     db_path = tmp_path / "mitosis.db"
     cli.main(["--db", str(db_path), "init"])
@@ -361,7 +416,7 @@ def test_reproduce_with_mutation_reports_a_distinct_genome(tmp_path, capsys):
 
     exit_code = cli.main([
         "--db", str(db_path), "reproduce", "--parent", parent, "--budget", "30.00",
-        "--mutation", '{"strategy": "v2"}', "--mutation-operator", "cli_test",
+        "--mutation", '{"acquisition_channel": "v2"}', "--mutation-operator", "cli_test",
     ])
     assert exit_code == 0
     assert "mutated genome" in capsys.readouterr().out

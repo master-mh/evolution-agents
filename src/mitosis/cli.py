@@ -347,6 +347,8 @@ def cmd_create_cell(args: argparse.Namespace) -> None:
     cell_type = CellType(args.type)
     idempotency_key = args.idempotency_key or f"cli_create_cell:{ids.new_id()}"
 
+    genome_content = _parse_genome_content(args.genome)
+
     cell = lifecycle.create_cell(
         conn,
         cell_type=cell_type,
@@ -355,6 +357,7 @@ def cmd_create_cell(args: argparse.Namespace) -> None:
         idempotency_key=idempotency_key,
         funding_account_id=args.funding_account,
         displacer=displacement.ObjectiveDisplacer() if args.displace else None,
+        genome_content=genome_content,
     )
 
     print(f"Created cell {cell.cell_id}")
@@ -363,9 +366,39 @@ def cmd_create_cell(args: argparse.Namespace) -> None:
     print(f"  book:   {cell.book.value}")
     print(f"  budget: {args.budget} ({budget_minor_units} minor units)")
     print(f"  genome: {cell.genome_hash}")
+    if genome_content:
+        print("  genome content (§16.2):")
+        for field in sorted(genome_content):
+            print(f"    {field}: {json.dumps(genome_content[field])}")
+    else:
+        print("  (no genome content — this Cell can only reason about its own books)")
     _print_displacement(conn, cell.cell_id)
 
     conn.close()
+
+
+def _parse_genome_content(raw: str | None) -> dict | None:
+    """`--genome` takes inline JSON or a path to a JSON file.
+
+    A file is the expected form: §16.2's fields are prose hypotheses about a
+    market, and shell-quoting a paragraph is how a seed genome ends up
+    truncated. The value is treated as a path when it names an existing file,
+    and as literal JSON otherwise, so the two never need distinguishing flags.
+    """
+    if raw is None:
+        return None
+    candidate = Path(raw)
+    try:
+        source = candidate.read_text() if candidate.is_file() else raw
+    except OSError as exc:
+        raise CliError(f"could not read --genome file {raw!r}: {exc}") from exc
+    try:
+        parsed = json.loads(source)
+    except json.JSONDecodeError as exc:
+        raise CliError(f"--genome must be valid JSON (or a path to it): {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise CliError(f"--genome must be a JSON object, got {type(parsed).__name__}")
+    return parsed
 
 
 def cmd_reproduce(args: argparse.Namespace) -> None:
@@ -1780,6 +1813,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create_cell_parser.add_argument(
         "--funding-account", default="seed_bank", help="account debited for the Cell's budget"
+    )
+    create_cell_parser.add_argument(
+        "--genome", default=None,
+        help="§16.2 genome content as JSON, or a path to a JSON file — the market, "
+             "problem, product and revenue_model this Cell reasons from. Founders are "
+             "the only entry point for genome content (§14: seed diverse founders, let "
+             "mutation explore). Fields: " + ", ".join(sorted(genome.GENOME_FIELDS)),
     )
     create_cell_parser.add_argument(
         "--idempotency-key", default=None, help="explicit idempotency key, for safe script retries"

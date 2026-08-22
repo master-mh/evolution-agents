@@ -26,7 +26,7 @@ from mitosis import (
 from mitosis.accounts import cell_cash
 from mitosis.models import Book, CellStatus, CellType, EntrySpec
 
-GENOME = {"objective": "find a paying niche", "strategy": "probe cheaply"}
+GENOME = {"market": "small accounting firms", "workflow": "probe cheaply"}
 
 
 def _reply(**overrides) -> str:

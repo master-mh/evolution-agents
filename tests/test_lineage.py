@@ -163,7 +163,7 @@ def test_mutated_child_gets_a_distinct_genome_with_a_parent_edge(conn):
         parent_cell_id=parent.cell_id,
         budget_minor_units=100,
         idempotency_key="c1",
-        mutation={"strategy": "v2"},
+        mutation={"acquisition_channel": "v2"},
         mutation_operator="test_op",
     )
     assert child.genome_hash != parent.genome_hash
@@ -174,7 +174,7 @@ def test_mutated_child_gets_a_distinct_genome_with_a_parent_edge(conn):
     assert json.loads(row["parent_genome_hashes"]) == [parent.genome_hash]
     assert row["mutation_operator"] == "test_op"
     assert row["version"] == 2
-    assert json.loads(row["canonical_genome_json"])["strategy"] == "v2"
+    assert json.loads(row["canonical_genome_json"])["acquisition_channel"] == "v2"
 
 
 def test_mutation_that_changes_nothing_creates_no_self_referential_edge(conn):
@@ -204,7 +204,7 @@ def test_non_serializable_mutation_is_rejected(conn):
             parent_cell_id=parent.cell_id,
             budget_minor_units=100,
             idempotency_key="c1",
-            mutation={"bad": object()},
+            mutation={"market": object()},
         )
 
 

@@ -57,6 +57,7 @@ to inherit or be blocked from inheriting.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 
@@ -95,11 +96,15 @@ def reproduce(
 
     The child inherits the parent's book (funding cannot cross books — §2.4
     forbids an implicit exchange-rate bridge) and, unless `cell_type` says
-    otherwise, its type. Supplying a `mutation` gives the child genuinely
-    different genome content, and therefore a distinct genome with a
-    parent_genome_hashes edge; omitting it means the child shares its
-    parent's genome exactly, which under content addressing is the same
-    genome row (ADR-018).
+    otherwise, its type. It also inherits the parent's **genome content**
+    (§16.3), which a `mutation` overlays field by field: mutating the
+    acquisition channel keeps the market and revenue model the lineage was
+    built on. A mutation therefore gives the child a distinct genome with a
+    parent_genome_hashes edge; omitting one means the child shares its
+    parent's genome exactly, which under content addressing is the same genome
+    row (ADR-018). That last sentence was true by accident until genomes
+    carried content — both were `{"cell_type": ...}` — and is now true by
+    construction.
 
     `displacer` opts the birth into §9.3 displacement (see displacement.py).
     The parent is always excluded from eviction: it funds the child, and
@@ -149,6 +154,13 @@ def reproduce(
             conn,
             child_type,
             mutation=mutation,
+            # §16.3: the child inherits its parent's content and the mutation
+            # overlays it. Rebuilding from cell_type alone — which is what
+            # happened before genomes carried real content — would disinherit
+            # every child of everything its lineage had learned, while ADR-018's
+            # content addressing quietly filed it alongside every other bare
+            # Cell of the same type.
+            parent_content=_genome_content_of(conn, parent_genome),
             parent_genome_hashes=(parent_genome,),
             mutation_operator=mutation_operator,
             version=_child_genome_version(conn, parent_genome),
@@ -271,6 +283,16 @@ def _genome_hash_of(conn: sqlite3.Connection, cell_id: str) -> str:
     if row is None:
         raise LineageError(f"unknown cell: {cell_id!r}")
     return row["genome_hash"]
+
+
+def _genome_content_of(conn: sqlite3.Connection, genome_hash: str) -> dict:
+    row = conn.execute(
+        "SELECT canonical_genome_json FROM cell_genomes WHERE genome_hash = ?",
+        (genome_hash,),
+    ).fetchone()
+    if row is None:
+        raise LineageError(f"unknown genome: {genome_hash!r}")
+    return json.loads(row["canonical_genome_json"])
 
 
 def _child_genome_version(conn: sqlite3.Connection, parent_genome_hash: str) -> int:

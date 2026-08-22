@@ -513,3 +513,24 @@ actually queued for building — this file is memory, not a backlog to work thro
   version. They were accurate when written and drifted twice within the same session (671 → 696).
   Either derive them at build time, or soften them to ranges. A README that is confidently wrong
   about its own test count undermines the more important claims next to it.
+
+- **§16.3's liability-linked inheritance class is unenforced.** Revenue-producing assets may not
+  transfer without their refund liabilities and service obligations, and the v0.1 field set
+  deliberately carries no field denoting such an asset — so nothing can currently escape, but
+  nothing is checked either. Lands with whatever first provisions `liability_reserve`.
+- **`prompt_hashes`, `module_hashes` and `model_policy_hash` are still written as empty/NULL.**
+  §16.2 names them and `cell_genomes` has the columns; §14.3's prompt provenance (prompt hash,
+  parent prompt hashes, mutation operator, evaluation seeds, cost, performance) is the natural
+  first consumer, and it needs prompts to be genome content rather than kernel constants.
+- **Nothing mutates a genome automatically.** §14.1 lists the operators — instruction-order, role
+  decomposition, critic add/remove, plus the economic ones (customer, problem, channel, pricing,
+  revenue-model, cross-domain transplant) — and every mutation today is an operator typing
+  `--mutation`. Automating them is where new business ideas actually come from, and it needs §14.2's
+  counterfactual twins to evaluate one against its parent rather than promoting on preference.
+- **MAP-Elites descriptors now have something to describe.** §12's behavioural descriptors were
+  unbuildable while genomes were placeholders; `market`/`revenue_model`/`acquisition_channel` are
+  the obvious axes for quality-diversity search, and `genome_hash` is already the archive key §16.1
+  names.
+- **`allowed_tools` is a request against an empty registry.** Nothing enumerates what tools exist,
+  so a genome can request `send_email` and the kernel has no way to say the tool is unknown rather
+  than merely ungranted. A tool registry would let the request be validated instead of only recorded.

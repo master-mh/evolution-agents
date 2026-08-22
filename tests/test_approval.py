@@ -28,7 +28,7 @@ from mitosis import (
 from mitosis.models import Book, CellStatus, CellType, EntrySpec
 from mitosis.proposal import RiskTier
 
-GENOME = {"objective": "find a paying niche", "strategy": "probe cheaply"}
+GENOME = {"market": "small accounting firms", "workflow": "probe cheaply"}
 
 
 def _reply(**overrides) -> str:

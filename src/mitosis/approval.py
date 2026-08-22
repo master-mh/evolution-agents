@@ -65,12 +65,13 @@ structural test rather than a promise in a docstring.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from . import audit, deliberation, ids, lifecycle, prediction
+from . import audit, deliberation, genome, ids, lifecycle, prediction
 from .models import Book, CellStatus
 from .proposal import ProposalKind, RiskTier
 
@@ -393,7 +394,10 @@ def _enqueue_locked(
     )
 
     assessed = _assessed_tier(
-        claimed=claimed, kernel_tier=kernel_tier, signals=signals
+        claimed=claimed,
+        kernel_tier=kernel_tier,
+        signals=signals,
+        genome_claim=_genome_risk_claim(conn, cell.genome_hash),
     )
 
     sla_seconds = _sla_seconds(conn, assessed)
@@ -578,17 +582,53 @@ def _exposure_tier(*, exposure_minor_units: int, alarm_cents_per_epoch: int) -> 
 
 
 def _assessed_tier(
-    *, claimed: RiskTier, kernel_tier: RiskTier, signals: tuple[Signal, ...]
+    *,
+    claimed: RiskTier,
+    kernel_tier: RiskTier,
+    signals: tuple[Signal, ...],
+    genome_claim: RiskTier | None = None,
 ) -> RiskTier:
-    """Fold the Cell's claim into the kernel's assessment — upward only.
+    """Fold the Cell's claims into the kernel's assessment — upward only.
 
     `max` is the entire policy, and it is the §23.5 boundary in one line: a Cell
     may raise its own tier and be believed, and may never lower it.
+
+    **There are two claims, not one.** `claimed` is the tier this proposal
+    stated; `genome_claim` is §16.2's `risk_class`, inherited and mutable. They
+    fold identically and for the same reason: a genome is Cell-mutable content,
+    so a lineage that could write `risk_class: LOW` into its children would have
+    bought them cheap approvals for as long as the lineage survived — a far more
+    durable version of the per-proposal gaming ADR-027 already refused. Reusing
+    `max` rather than adding a second mechanism is the point; a genome may raise
+    a Cell's review tier and can never lower it.
     """
     tier = _max_tier(kernel_tier, claimed)
+    if genome_claim is not None:
+        tier = _max_tier(tier, genome_claim)
     if any(s.signal in _ESCALATING_SIGNALS for s in signals):
         tier = _escalate(tier)
     return tier
+
+
+def _genome_risk_claim(conn: sqlite3.Connection, genome_hash: str) -> RiskTier | None:
+    """§16.2's `risk_class`, read as a claim (see `_assessed_tier`).
+
+    An unparseable or absent value is None rather than an error: a genome that
+    states no risk class is the ordinary case, and one that states nonsense
+    must not be able to block its own Cell's review by making the request
+    unbuildable.
+    """
+    row = conn.execute(
+        "SELECT canonical_genome_json FROM cell_genomes WHERE genome_hash = ?",
+        (genome_hash,),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        claim = genome.risk_class_of(json.loads(row["canonical_genome_json"]))
+        return RiskTier(claim) if claim is not None else None
+    except (json.JSONDecodeError, ValueError):
+        return None
 
 
 def _max_tier(left: RiskTier, right: RiskTier) -> RiskTier:

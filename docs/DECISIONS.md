@@ -1026,3 +1026,74 @@ from amendment ID to spec location is complete in one place:
 | A16 | Per-phase North Star metric table | §27.1, §28 |
 | A17 | Governance overhead ratio | §10.4 |
 | A18 | Chaos drills in Phase 2 flight-sim suite | §28 Phase 2 |
+
+---
+
+## ADR-033: A genome carries the business; its permission-shaped fields are claims, never grants
+
+- **Status:** Accepted
+- **Spec ref:** §16.1, §16.2, §16.3, §16.4, §14.1, §0.3, §0.4, §23.5, §15; Charter C11, C14, C15;
+  ADR-018, ADR-019, ADR-027
+- **Context:** §16.2's v0.1 genome fields (market, problem, product, revenue_model,
+  acquisition_channel, workflow, model_policy, mutation_rate, allowed_tools, risk_class) had never
+  been populated — `canonical_genome_json` carried `cell_type` and nothing else. Every input a Cell
+  reasoned from was therefore internal (its balances, its own prediction record, its recent
+  proposals), so its only real decisions were meta-decisions about its own standing. The one live
+  paid deliberation abstained citing its unresolved forecasts, which was correct reasoning about the
+  only subject it had data on: itself. `cell_genomes` already had every §16.2 column, so **no
+  migration was required** — the gap was content and semantics, not schema.
+- **Decisions, and the alternatives each displaced:**
+  1. **Inheritance is implemented, not assumed.** `lifecycle._get_or_create_genome` built a child's
+     content from its cell_type and the caller's mutation; the parent's content was never read.
+     While every genome was `{"cell_type": ...}` this was invisible — parent and child collided into
+     one content-addressed row, so ADR-018's "an unmutated child reuses its parent's genome" *looked*
+     true. With real content it is false twice: the child is born a blank slate, and that blank
+     addresses to the same row as every other bare Cell of its type, giving unrelated lineages one
+     shared genome and with it the mutation distance and counterfactual comparison §16.1 depends on.
+     Rejected: shipping the fields first and treating inheritance as a follow-up, which would have
+     put a silent disinheritance into every reproduction in between.
+  2. **The mutation overlays the parent's content; it never replaces it.** Rejected: replacement,
+     under which each of §14.1's economic mutation operators (change the channel, change the
+     pricing) destroys the strategy it was meant to vary.
+  3. **The schema is closed — only §16.2's fields are accepted.** Rejected: a blocklist of
+     credential-shaped keys, which fails open on every spelling nobody anticipated. §16.4 is
+     explicit that without exact inheritance semantics "Cells could reproduce to *escape liabilities
+     while keeping profitable assets*", and an arbitrary overlay field is exactly that vehicle.
+     Closure makes §16.3's non-inheritable categories **unrepresentable** rather than merely
+     rejected. `NON_INHERITABLE_SENSE` documents why each category has no field and trips a test if
+     one ever acquires one — the tripwire shape `proposal.FORBIDDEN_FIELD_SENSE` already uses.
+  4. **Validation runs on the merged content, not the mutation.** Checking only the overlay would
+     let anything already resident in a parent's genome propagate unchecked forever.
+  5. **`risk_class` and `allowed_tools` are claims and requests, never grants.** This is the
+     decision the slice turns on. Both are §16.2 genome fields, and a genome is Cell-mutable
+     content — so a lineage able to write `risk_class: LOW` into its children buys them cheap
+     approvals for as long as the lineage survives, a far more durable version of the per-proposal
+     gaming ADR-027 already refused. §23.5 warns the queue "will be optimised against"; §0.4 grants
+     autonomy "tool by tool, phase by phase". So `risk_class` folds into `approval._assessed_tier`
+     through the **same `max`** that governs `claimed_tier` — it may raise a Cell's review tier and
+     can never lower it — and `allowed_tools` grants nothing, with the module deliberately offering
+     no `has_tool`/`grant` helper for a caller to mistake for an entitlement. Rejected: a second,
+     genome-specific permission mechanism, which would have been a parallel path to the boundary
+     ADR-027 already draws.
+  6. **`genome.RISK_CLASSES` mirrors `proposal.RiskTier` by structural test, not by import.**
+     `genome` sits far below `proposal` in the dependency order and a back-edge would invert the
+     layering the kernel keeps everywhere else. The failure mode of drift is a claim that silently
+     stops escalating — in the direction that favours the Cell — so it is pinned rather than trusted.
+  7. **Founders are the only entry point for genome content**, seeded by the operator via
+     `create-cell --genome`; every other genome descends from one by mutation (§14). Rejected: a
+     Cell proposing its own genome content through the §23 queue. It is coherent and may yet be
+     right, but it is a governance change — a Cell rewriting the content that defines it is
+     self-modification, and it is also how a Cell learns to describe itself as low-risk. That
+     belongs in its own ADR.
+  8. **§16.3's liability-linked class is not enforced, and no field pretends otherwise.** The rule
+     is that revenue-producing assets cannot transfer without their refund liabilities and service
+     obligations. `liability_reserve` exists as an account but no policy provisions one, so the v0.1
+     field set carries no field denoting a transferable revenue-producing asset. Rejected: adding
+     the field with an unenforced check, which reads as a guarantee and is not one.
+- **Consequences:** A Cell's prompt now describes a business (§15), so its proposals can be about a
+  market rather than about its own books — the point of the slice. `GENOME_FIELDS` is declared
+  independently of the classification dicts, mirroring `accounts.FIXED_ACCOUNTS`, because deriving
+  it made `unclassified_fields()` empty by construction and the guard unfirable; that was caught by
+  teeth-checking, not by review. Golden expectation 12 → 13, with **no money moving**: the seeded
+  auditor's child inherits `risk_class: HIGH` and its assessed tier rises above the MEDIUM its own
+  proposal claimed, which is both halves of the slice visible in one line of the diff.

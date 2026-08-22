@@ -25,7 +25,11 @@ from mitosis import (
 )
 from mitosis.models import Book, CellStatus, CellType, EntrySpec
 
-GENOME = {"objective": "find a paying niche", "strategy": "probe cheaply, measure, iterate"}
+GENOME = {
+    "market": "small accounting firms",
+    "problem": "month-end close is manual",
+    "workflow": "probe cheaply, measure, iterate",
+}
 
 
 def _valid_reply(**overrides) -> str:
@@ -210,8 +214,8 @@ def test_genome_content_reaches_the_prompt_as_data(conn):
         wake_reason="scheduled research cycle",
     )
     rendered = assembled.render()
-    assert "find a paying niche" in rendered
-    assert json.dumps(GENOME["strategy"])[1:-1] in rendered
+    assert "small accounting firms" in rendered
+    assert json.dumps(GENOME["workflow"])[1:-1] in rendered
 
 
 # --- Charter C8 / §18.2: who may be woken ------------------------------------

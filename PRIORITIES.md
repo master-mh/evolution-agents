@@ -247,6 +247,28 @@
   penalises "unnecessary blocking"), enforced structurally. An unusable reply is *recorded* rather
   than raised, because the model call is already paid for. 696 tests (25 new); golden expectation
   11 → 12 (**no USD_REAL movement**). Teeth-checked sixteen ways.
+- [x] **Genome content (§16.2's v0.1 fields) — DONE** (2026-08-22), ADR-033. `genome.py` rewritten
+  + `lifecycle`/`lineage`/`approval`/`cli`; **no migration** — `cell_genomes` has had every §16.2
+  column since slice 2. **The slice was not "add fields": inheritance did not exist.**
+  `_get_or_create_genome` rebuilt a child's content from cell_type alone and never read the
+  parent's — invisible while every genome was `{"cell_type": ...}` (parent and child collided into
+  one content-addressed row, so ADR-018's promise *looked* true) and false in two directions the
+  moment content was real: a child born blank, addressing to the same row as every other bare Cell
+  of its type. **§16.4 closed the schema** — "Cells could reproduce to escape liabilities while
+  keeping profitable assets" — so only §16.2's fields are accepted and §16.3's non-inheritable
+  categories are *unrepresentable* rather than merely rejected; validation runs on the merged
+  content, not the overlay. **`risk_class` and `allowed_tools` are claims, never grants**, folding
+  through the same ADR-027 `max` that governs `claimed_tier`, because a lineage that could write
+  `risk_class: LOW` into its children would buy them cheap approvals for as long as it survived.
+  Founders are the only entry point (`create-cell --genome`); §14's operators explore from there —
+  a Cell proposing its own genome is self-modification and was deliberately not built. 719 tests
+  (23 new); golden expectation 12 → 13, where the child's assessed tier rises *above its own
+  claim* on inherited `risk_class` (**no money moves**). Teeth-checked eleven ways; one new test
+  was vacuous (`GENOME_FIELDS` derived from its own classification) and was rewritten.
+- [ ] **Nothing lets a Cell act on the business its genome names.** Genome content makes a Cell's
+  proposals about a market instead of its own books, but there is still no artifact store, no tool
+  surface, and `allowed_tools` names capabilities the kernel does not have. This is the gap between
+  a Cell that decides and one that earns. *Disproved by:* an `artifacts` or `tool_calls` table.
 - [ ] **§23.2's liability figure is unmodelled — but the account is not missing.** Corrected
   2026-08-22: the previous wording ("no liability reserve exists (§13 is Phase 6+)") was wrong on
   both counts. §13 is Novelty Evaluation; liability is not a §13 concept. And `liability_reserve`

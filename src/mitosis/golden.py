@@ -292,7 +292,41 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           no decision, which is exactly what §10.4's ban on "unnecessary
 #           blocking" requires, and `approval_grants` staying put is where a
 #           regression to a blocking Auditor would show.
-EXPECTATION_VERSION = 12
+#   12 -> 13 (genome content, §16.2/§16.3/§16.4; ADR-033). The auditor founder
+#           is seeded with real genome content — market, problem, workflow and a
+#           `risk_class` of HIGH — and its child now *inherits* that content
+#           instead of having a genome rebuilt from cell_type alone. Five
+#           sections move and each follows from one of those two facts:
+#           (a) `cells`: two `genome_hash` values change — the auditor's (it now
+#               carries content) and its child's (it inherits that content and
+#               mutates `acquisition_channel` where the old scenario set a
+#               `strategy` key the closed schema no longer accepts). The other
+#               three Cells are unseeded and untouched, which is the control:
+#               a regression that leaked content across lineages would move them.
+#           (b) `deliberations`: `context_tokens` 289 -> 343, and
+#           (c) `model_calls`: `input_tokens` 1461 -> 1570, and
+#           (d) `resource_usage`: `quantity` 1461 -> 1570 — all one cause. The
+#               genome renders into the prompt as data (§15, Charter C15), so a
+#               genome with content is a longer prompt, and A6 linkage carries
+#               the token count into metered RESOURCE 1:1. The three must move
+#               together; one moving alone would mean metering had come unstuck
+#               from the call it meters.
+#           (e) `approval_requests`: the child's `assessed_tier` MEDIUM -> HIGH
+#               and `sla_seconds` 14400 -> 3600. **This is the load-bearing line
+#               of the diff.** The child inherited `risk_class: HIGH` and §16.2's
+#               claim folds into `_assessed_tier` with the same `max` ADR-027
+#               applies to `claimed_tier` — so the tier rose above what the
+#               proposal itself claimed (still MEDIUM) and the SLA shortened to
+#               match. It demonstrates both halves of the slice at once:
+#               inheritance carried the claim from parent to child, and a claim
+#               escalates review. A genome that could *lower* a tier would show
+#               here as the opposite move, which is why the seeded class is
+#               deliberately not LOW.
+#           **No money moves: `balances` and `reservations` are byte-identical
+#           to version 12, and `external_expense` stays 0 in every book.** The
+#           unseeded explorer's request is unchanged, which is the check against
+#           a genome claim leaking onto a Cell that never made one.
+EXPECTATION_VERSION = 13
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -463,9 +497,21 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         conn, cell_type=CellType.BUILDER, budget_minor_units=8_000,
         book=Book.RESOURCE, idempotency_key="golden:birth:builder",
     )
+    # Seeded with real §16.2 content, and the only founder that is: the run
+    # then pins both halves of inheritance against each other — this Cell's
+    # content, and a child below that must carry it forward. A `risk_class` is
+    # deliberately included and deliberately *not* LOW, because the claim folds
+    # into approval's assessed tier with `max` and a LOW one would be
+    # indistinguishable from the claim being ignored entirely.
     auditor_cell = lifecycle.create_cell(
         conn, cell_type=CellType.AUDITOR, budget_minor_units=2_000,
         book=Book.USD_SIM, idempotency_key="golden:birth:auditor",
+        genome_content={
+            "market": "colony-internal oversight",
+            "problem": "requests are reviewed without an independent record",
+            "workflow": "read the request, stake a probability, record it",
+            "risk_class": "HIGH",
+        },
     )
 
     # The other birth path: a child of the auditor, funded from the auditor's
@@ -481,7 +527,7 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     auditor_child = lineage.reproduce(
         conn, parent_cell_id=auditor_cell.cell_id, budget_minor_units=500,
         idempotency_key="golden:birth:auditor-child",
-        mutation={"strategy": "golden-child-v2"},
+        mutation={"acquisition_channel": "golden-child-channel-v2"},
         mutation_operator="golden_run_mutation",
     )
 

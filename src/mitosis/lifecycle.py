@@ -147,6 +147,7 @@ def _get_or_create_genome(
     cell_type: CellType,
     *,
     mutation: dict | None = None,
+    parent_content: dict | None = None,
     parent_genome_hashes: tuple[str, ...] = (),
     mutation_operator: str | None = None,
     version: int = 1,
@@ -155,6 +156,14 @@ def _get_or_create_genome(
     always the same row, so an unmutated child simply reuses its parent's
     genome rather than duplicating it.
 
+    `parent_content` is the parent's canonical genome content, which the
+    mutation overlays (§16.3). Omitting it is the founder path — a Cell with
+    no parent inherits nothing and its content is whatever the operator seeds.
+    **Passing it is not optional for a birth that has a parent:** before this
+    was wired, a child's content was rebuilt from cell_type alone, which was
+    invisible while every genome was a placeholder and would silently have
+    disinherited every child once genomes carried real content.
+
     `parent_genome_hashes`/`mutation_operator`/`version` are recorded only
     when this call actually creates the row. A genome that already exists is
     returned untouched — its provenance describes how it *first* came to
@@ -162,7 +171,7 @@ def _get_or_create_genome(
     rewrite that history (nor could it meaningfully, since the same content
     can be reached from many parents).
     """
-    canonical = genome.canonical_genome_json(cell_type, mutation)
+    canonical = genome.inherit(parent_content, mutation, cell_type=cell_type)
     genome_hash = genome.compute_genome_hash(canonical)
     existing = conn.execute(
         "SELECT genome_hash FROM cell_genomes WHERE genome_hash = ?", (genome_hash,)
@@ -205,8 +214,18 @@ def create_cell(
     idempotency_key: str,
     funding_account_id: str = "seed_bank",
     displacer: population.Displacer | None = None,
+    genome_content: dict | None = None,
 ) -> Cell:
     """Seed a founder Cell, funded from a colony account.
+
+    `genome_content` seeds §16.2's v0.1 fields — the market, problem, product
+    and revenue model this Cell reasons from. **A founder is the only place
+    genome content can enter the colony**, because every other genome descends
+    from one by mutation (§14): the operator seeds diverse founders and
+    variation explores outward from them. Omitting it births a Cell whose
+    genome is its type and nothing else, which is legal and was the only
+    possibility before this slice — such a Cell can only reason about its own
+    books.
 
     `displacer` opts this birth into §9.3 displacement: if the colony is at
     carrying capacity, one objectively-failing Cell may be evicted to make
@@ -237,7 +256,7 @@ def create_cell(
         # under this same lock, so eviction and birth are one atomic step.
         displaced = population.check_birth_licence(conn, displacer=displacer)
 
-        genome_hash = _get_or_create_genome(conn, cell_type)
+        genome_hash = _get_or_create_genome(conn, cell_type, mutation=genome_content)
 
         ledger._write_transaction(
             conn,
