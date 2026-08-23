@@ -93,9 +93,20 @@ because the module is new and has no in-flight state to migrate.
   prompt-injection payload arriving fenced and labelled as data, the attacker URL in it unreachable
   because it is not allowlisted, conservation green in all three books, both chains valid,
   `external_expense` 0, one grant consumed of one, and the Cell woken.
-- **Not verified live: an actual network request.** `run-tool --live` is wired and unit-tested
-  (redirects, robots.txt, size cap) but was never pointed at a real host — that is one command and
-  the operator's call to make.
+- **Verified live against a real host** (2026-08-23, `example.com` — IANA's reserved documentation
+  domain). The full path ran end to end: propose → approve → open both gates → `run-tool --live` →
+  HTTP 200, 559 bytes, `UNTRUSTED_EXTERNAL`, sha256 recorded, licence and commercial_use both
+  `unknown` per §20.2, robots.txt checked and permitting. 5 RESOURCE metered as one
+  `network_requests` unit, `external_expense` 0, conservation green in all three books, ledger chain
+  valid. The page rendered into the Cell's context inside the fence.
+  **Two pieces of fetcher logic that only had fake coverage were exercised against the real
+  network:** the size cap (asked for 100 bytes, got exactly 100 from a live response), and the
+  redirect refusal, which fired correctly on IANA's own 301 —
+  `refused to follow a 301 redirect to 'http://www.iana.org/help/example-domains'`. That is the
+  Charter C12 bypass being closed against real-world behaviour rather than a mock.
+  Mildly surprising and worth knowing: `http://example.com/` serves 200 over plain HTTP rather than
+  redirecting to HTTPS, so the obvious "any http:// URL will exercise the redirect path" assumption
+  is false.
 - Next: nothing schedules a tool call, `browser_control`/`external_publish`/`external_message` have
   columns and no tools behind them, and §21.2's external-action registry must exist before any tool
   that changes the world does.

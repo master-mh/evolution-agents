@@ -565,3 +565,8 @@ actually queued for building — this file is memory, not a backlog to work thro
   licence/permitted_uses/commercial_use, all `unknown` from a web fetch. Nothing refuses to reuse
   content whose commercial_use is not `permitted`, which is the check the columns exist for and
   which matters the first time a Cell's output is sold.
+- **RESOLVED 2026-08-23 — "`run-tool --live` has never been pointed at a real host" (above).** It has
+  now: `https://example.com/`, HTTP 200, 559 bytes, full provenance recorded, accounting green. The
+  redirect refusal and the size cap were both exercised against real responses rather than fakes,
+  and the redirect guard fired on a genuine 301. Left in place rather than deleted because this file
+  is append-only and the original entry records why the gap mattered.
