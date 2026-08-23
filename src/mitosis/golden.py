@@ -59,6 +59,7 @@ from pathlib import Path
 
 from . import (
     approval,
+    artifacts,
     auditor,
     clock,
     deliberation,
@@ -78,6 +79,7 @@ from . import (
     reconciliation,
     reservations,
     resource_metering,
+    revenue,
     tool_registry,
     tools,
 )
@@ -381,7 +383,41 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           `promotions`, `assessments` and `coroner_reports` are byte-identical:
 #           a tool call observes, and changes nothing about who exists, what
 #           anyone forecast, or what anyone was paid.
-EXPECTATION_VERSION = 14
+#   14 -> 15 (the artifact store, §20/§18.1/§11/§15.2/§19.3, A3; ADR-035). The
+#           post-fetch wake now hands in a deliverable, both export gates are
+#           exercised against it, and the money that follows names it. The diff
+#           is deliberately small — the artifact rides on the deliberation that
+#           already existed, so `deliberations`, `proposals`, `model_calls`,
+#           `resource_usage` and `reservations` are all **unchanged in count**.
+#           (a) **`artifacts` (new)**: one `report`, 55 bytes, cited from the
+#               fetched page. `commercial_use: unknown` and taint
+#               `["UNTRUSTED_EXTERNAL"]` are both **inherited, not declared** —
+#               if either ever reads `permitted` or `[]`, §20.2's laundering
+#               path has reopened and this line is where it shows. `exported:
+#               true`, `export_is_commercial: 0`: the scenario tries a
+#               commercial export first and **requires it to be refused**, then
+#               exports non-commercially. A run that only exported successfully
+#               would pass identically against a gateway that refused nothing.
+#               The content is excluded and a hash prefix pinned instead —
+#               content addressing is the §11.3 mechanism, so what matters is
+#               that identical work yields an identical address.
+#           (b) **`artifact_lineage` (new)**: `{edges: 1, from_tool_calls: 1,
+#               from_artifacts: 0}` — §11.4's contribution graph, shape only,
+#               since source ids are volatile.
+#           (c) **`artifact_attributed_ledger_entries` (new)**: 1. Amendment
+#               A3's `ledger_entries.artifact_id` has existed since migration
+#               0001 and was populated for the first time here.
+#           (d) `balances`: **USD_SIM only** — cell#4 cash 530 -> 570 and the
+#               `revenue` account appearing at -40 (revenue accumulates
+#               negative, the same convention `external_capital` uses).
+#               `transaction_types` gains `USD_SIM::cell_revenue: 1`, which is
+#               **the first time in the golden run's history that money has
+#               entered the colony at all** rather than moving within it.
+#           **No USD_REAL balance moves and `external_expense` is unchanged in
+#           every book (20 / 1550).** The revenue is deliberately USD_SIM: a
+#           golden run must never move real money, and `record_revenue` is the
+#           one verb that brings money in.
+EXPECTATION_VERSION = 15
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -466,20 +502,30 @@ GOLDEN_TOOL_REQUEST_REPLY = json.dumps(
 # request: what is being pinned is that the taint flag propagates, and reusing
 # `tool_request` would confuse "the Cell read something" with "the Cell wants to
 # read something else".
-GOLDEN_POST_FETCH_REPLY = json.dumps(
-    {
-        "kind": "strategy",
-        "summary": "golden-run strategy note written after reading a page",
-        "rationale": (
-            "fixed scenario; exists to pin that a proposal made from a context "
-            "containing external content is flagged as such"
-        ),
-        "risk_tier": "LOW",
-        "estimated_cost_minor_units": 0,
-        "predictions": [],
-    },
-    sort_keys=True,
-)
+def _post_fetch_reply(tool_call_id: str) -> str:
+    """Built per-run rather than fixed, because the artifact must cite the tool
+    call that actually ran. A hard-coded source id would pin the *shape* of
+    provenance while proving nothing about whether rights really propagate."""
+    return json.dumps(
+        {
+            "kind": "strategy",
+            "summary": "golden-run strategy note written after reading a page",
+            "rationale": (
+                "fixed scenario; exists to pin that a proposal made from a context "
+                "containing external content is flagged as such"
+            ),
+            "risk_tier": "LOW",
+            "estimated_cost_minor_units": 0,
+            "predictions": [],
+            "artifact": {
+                "kind": "report",
+                "title": "golden-run write-up of a fetched page",
+                "content": "Fixed scenario artifact. Derived from one fetched page.",
+                "source_tool_call_ids": [tool_call_id],
+            },
+        },
+        sort_keys=True,
+    )
 
 
 # The Auditor's reply for the §23.2 step. A `concern` at p=0.3 — coherent with
@@ -1121,7 +1167,7 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         decided_by="golden-operator",
         reason="fixed scenario approval; exists to pin rung 4",
     )
-    tools.execute_grant(
+    tool_call = tools.execute_grant(
         conn,
         grant_id=tool_grant.grant_id,
         executed_by="golden-operator",
@@ -1139,13 +1185,59 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     deliberation.deliberate(
         conn,
         cell_id=auditor_child.cell_id,
-        provider=providers.MockProvider(reply=GOLDEN_POST_FETCH_REPLY),
+        provider=providers.MockProvider(reply=_post_fetch_reply(tool_call.tool_call_id)),
         wake_key="golden:wake:after-tool-result",
         wake_reason=deliberation.WAKE_TOOL_RESULT,
         model="mock-1",
     )
 
-    # 18. Simulated clock.
+    # 18. The artifact store (§20, §11.3, §19.3; ADR-035). The write-up above
+    #     cites the fetched page, so its §20.1 rights are *inherited*, not
+    #     declared: the page is `commercial_use: unknown`, so the artifact is
+    #     too. Both export gates are then exercised against that one artifact —
+    #     non-commercial passes, commercial is refused — which is the pair that
+    #     makes the §20.2 laundering path visible in a replay. A scenario that
+    #     only exported successfully would pass identically against a gateway
+    #     that refused nothing.
+    golden_artifact = conn.execute(
+        "SELECT artifact_id FROM artifacts ORDER BY rowid LIMIT 1"
+    ).fetchone()["artifact_id"]
+
+    try:
+        artifacts.export(
+            conn,
+            artifact_id=golden_artifact,
+            exported_by="golden-operator",
+            reason="fixed scenario commercial export; must be refused",
+            commercial=True,
+        )
+        raise AssertionError(
+            "§20.2 should have refused a commercial export of unknown-rights content"
+        )
+    except artifacts.ExportRefused:
+        pass
+
+    artifacts.export(
+        conn,
+        artifact_id=golden_artifact,
+        exported_by="golden-operator",
+        reason="fixed scenario non-commercial export; exists to pin rung 8 review",
+    )
+
+    #     Amendment A3's `ledger_entries.artifact_id`, populated for the first
+    #     time. USD_SIM deliberately: a golden run must never move USD_REAL, and
+    #     revenue is the one verb that brings money *in*.
+    revenue.record_revenue(
+        conn,
+        cell_id=auditor_child.cell_id,
+        amount_minor_units=40,
+        source="golden-run fixed customer",
+        book=Book.USD_SIM,
+        artifact_id=golden_artifact,
+        idempotency_key="golden:revenue:artifact",
+    )
+
+    # 19. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
 
@@ -1358,6 +1450,48 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         for row in conn.execute("SELECT * FROM tool_calls ORDER BY rowid").fetchall()
     ]
 
+    # §20/§11.3's store. The content itself is excluded and its *hash prefix*
+    # pinned instead — content addressing is the anti-duplication mechanism, so
+    # what matters to a replay is that identical work yields an identical
+    # address, not what the fixture happens to say. The §20.1 rights columns are
+    # pinned in full: this artifact cites a fetched page, so `commercial_use`
+    # reading anything other than `unknown` means inheritance stopped working
+    # and §20.2's laundering path reopened.
+    artifact_rows = [
+        {
+            "cell": aliases.get(row["created_by_cell_id"], "cell#?"),
+            "kind": row["kind"],
+            "title": row["title"],
+            "hash_prefix": row["artifact_hash"][:12],
+            "content_bytes": row["content_bytes"],
+            "licence": row["licence"],
+            "commercial_use": row["commercial_use"],
+            "contains_personal_data": row["contains_personal_data"],
+            "taint_labels": json.loads(row["taint_labels_json"]),
+            "exported": row["exported_at_utc"] is not None,
+            "export_is_commercial": row["export_is_commercial"],
+        }
+        for row in conn.execute("SELECT * FROM artifacts ORDER BY rowid").fetchall()
+    ]
+
+    # §11.4's contribution graph. Source ids are volatile, so what is pinned is
+    # the *shape*: how many edges, and of which kind.
+    artifact_lineage_shape = {
+        "edges": conn.execute("SELECT COUNT(*) AS n FROM artifact_lineage").fetchone()["n"],
+        "from_tool_calls": conn.execute(
+            "SELECT COUNT(*) AS n FROM artifact_lineage WHERE source_tool_call_id IS NOT NULL"
+        ).fetchone()["n"],
+        "from_artifacts": conn.execute(
+            "SELECT COUNT(*) AS n FROM artifact_lineage WHERE source_artifact_id IS NOT NULL"
+        ).fetchone()["n"],
+    }
+
+    # Amendment A3, populated for the first time. A count rather than ids: what
+    # regresses here is attribution disappearing, not which uuid it names.
+    attributed_entries = conn.execute(
+        "SELECT COUNT(*) AS n FROM ledger_entries WHERE artifact_id IS NOT NULL"
+    ).fetchone()["n"]
+
     # Charter C12 and §27.1. Both start closed, so a colony that shipped with
     # either open would diff here — which is the regression most worth catching
     # in this whole section.
@@ -1513,6 +1647,9 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "deliberations": deliberation_rows,
         "proposals": proposal_rows,
         "tool_calls": tool_call_rows,
+        "artifacts": artifact_rows,
+        "artifact_lineage": artifact_lineage_shape,
+        "artifact_attributed_ledger_entries": attributed_entries,
         "egress_allowlist": egress_domains,
         "autonomy": autonomy_flags,
         "approval_requests": approval_rows,

@@ -51,6 +51,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from . import (
+    artifacts,
     audit,
     context,
     events,
@@ -540,6 +541,24 @@ def _record_proposal(
             status=DeliberationStatus.PROPOSED,
             failure_reason=None,
         )
+
+        # §28's Phase 8: production is not gated, so this needs no approval —
+        # what is gated is *external use* (`artifacts.export`). Folded into the
+        # proposal's own transaction because a Cell that produced a deliverable
+        # and a proposal in one wake did one thing, and a crash that recorded
+        # half of it would lose the half that has no other record.
+        artifact_id = None
+        if parsed.artifact is not None:
+            artifact_id = artifacts._create_locked(
+                conn,
+                cell_id=cell.cell_id,
+                kind=parsed.artifact.kind,
+                title=parsed.artifact.title,
+                content=parsed.artifact.content,
+                source_tool_call_ids=tuple(parsed.artifact.source_tool_call_ids),
+                deliberation_id=deliberation_id,
+                now=now,
+            ).artifact_id
 
         proposal_id = ids.new_id()
         conn.execute(

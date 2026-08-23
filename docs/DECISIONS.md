@@ -1179,3 +1179,76 @@ from amendment ID to spec location is complete in one place:
   13 -> 14, **with no USD_REAL movement** — a fetch is metered in RESOURCE and never billed.
   Hand-verification found the review payload was not printing the tool's arguments, which for a
   tool request is the entire decision; that is now tested.
+
+---
+
+## ADR-035: An artifact is identified by its content, inherits its sources' rights, and is gated on export rather than production
+
+- **Status:** Accepted
+- **Spec ref:** §1, §10.3, §11.1, §11.2, §11.3, §11.4, §15.1, §15.2, §18.1, §19.3, §20.1, §20.2,
+  §28 (Phase 8), §31; Amendment A3; Charter C13; ADR-018, ADR-033, ADR-034
+- **Context:** A Cell could decide (ADR-025), be funded (ADR-029) and read the world (ADR-034). The
+  thing it *produced* had nowhere to live. `revenue.record_revenue` attributed money to a free-text
+  `source`, and `ledger_entries.artifact_id` — an **Amendment A3 required field present since
+  migration 0001** — had never been populated by anything. Fitness could see that a Cell earned but
+  not what it earned *for*, which is the edge §11.4's contribution graph is built on.
+- **Decisions, and the alternatives each displaced:**
+  1. **Identity is the content hash.** §11.3 lists "duplicated artifacts with new names" among the
+     things Auditors must inspect for. The obvious store — a uuid plus a title — makes that trivial
+     and turns detection into a permanent chore. Content addressing makes it *unrepresentable*: two
+     identical artifacts are one row, and a Cell resubmitting its own work gets its own artifact
+     back. Rejected: detection, i.e. building the duplicate-finder §11.3 describes. This is the
+     third time the repo has taken this shape — ADR-018 for genomes, ADR-033 for the closed genome
+     schema — and the principle is worth naming: **prefer making the bad state impossible over
+     detecting it**. The title is *part* of the address, so a rename is an honest new artifact
+     rather than a way to hide that two things are the same.
+  2. **Nothing counts artifacts.** §1 says the colony "is *not* successful because it ... produces
+     many artifacts", which is precisely the fitness dimension a work-product store invites. §10.3
+     makes an Explorer's value depend on *useful* artifacts and §11.2 makes usefulness strictly
+     downstream — another Cell adopts it, verification passes, the adopter progresses, it is not
+     reciprocal farming, causal contribution is recorded — none of which the producer controls.
+     `test_nothing_counts_artifacts_toward_fitness` is a structural guard on `death` and `outcome`.
+  3. **Rights propagate most-restrictive-wins; they never reset.** An artifact derived from a
+     fetched page inherits that page's §20.1 position, and taints union. Rejected: taking the
+     producing Cell's declared rights, or the first source's, either of which makes "summarise it"
+     a one-step launder from material the colony may not redistribute into apparently-clean colony
+     IP. Since every tool result is `commercial_use: unknown` by construction (ADR-034), anything
+     built on one is `unknown` too — and therefore unsellable until a person establishes the rights.
+     Colony-authored work also starts `unknown` rather than `permitted`: whether the colony may sell
+     its own output is a question for a person, not a default.
+  4. **Production is free; export is gated.** §28's Phase 8 says Cells "may produce product
+     prototypes, landing-page drafts, pricing recommendations" and that humans review all **external
+     use**; §19.3 names an "artifact-export gateway". Writing to the colony's own store is not an
+     external action. Rejected: gating production, which is worse twice — it puts a human in the
+     loop for a Cell drafting into its own store, and spends the §23 queue, a finite resource §23.5
+     warns is optimised against, on the cheapest thing a Cell does. Nothing bounds production except
+     the economics that already exist: identical content collapses to one row, varied content costs
+     metered model calls.
+  5. **The export gateway is Charter C13's mechanism, and saying so honestly matters.** C13 —
+     adversarial-taint artifacts cannot migrate to real-facing execution — is the last Charter
+     clause with no test, and artifacts are literally its subject. The gateway refuses on
+     `SIM_ADVERSARIAL`, so **C13's router is now built and tested while C13 itself remains
+     unsatisfied**: §18.2 is about lineages evolved under adversarial synthetic incentives, and
+     nothing in the kernel can produce that label until the Phase 6 shadow economy exists. The test
+     sets the label directly and says why. Counting this as "C13 done" would have been the
+     tempting, wrong move.
+  6. **`UNTRUSTED_EXTERNAL` does not block export.** Blocking it would forbid exporting anything
+     informed by research — every real deliverable. §18.2 names adversarial lineages, not everything
+     the colony did not write itself. What that label does instead is flow into `commercial_use`,
+     which blocks *commercial* export specifically. The control test matters as much as the block:
+     a gateway that refused everything would pass every refusal test and be useless.
+  7. **§15.2's artifact index shows that an artifact exists, never what it says.** The clause names
+     an artifact *index* among its five memory tiers, and this was the last one unbuilt. Content
+     inlined into context would let one long draft crowd out a Cell's own ledger record — the exact
+     failure §15.1 describes, and the reason an artifact may be 20k characters while a proposal may
+     be 2k.
+  8. **`revenue.record_revenue(artifact_id=...)` is optional.** Mandatory would force every payment
+     to name a deliverable, which is the right pressure for a sale — but a retainer, a reversal or
+     an operator correction has no artifact behind it, and a required field satisfied with a
+     placeholder is worse than an honest null. Revisit when something actually sells.
+- **Consequences:** A3's `ledger_entries.artifact_id` is populated for the first time since
+  migration 0001, giving §11.4's graph its first real edge between work and money. Golden
+  expectation 14 -> 15, and the scenario **records revenue for the first time in its history** —
+  USD_SIM, deliberately, since a golden run must never move real money. §11.2's five-condition
+  downstream credit and §11.4's decay remain unbuilt; they need experiment tracking, which does not
+  exist.

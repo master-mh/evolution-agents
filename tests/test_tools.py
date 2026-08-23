@@ -688,13 +688,27 @@ def test_an_unreadable_robots_txt_is_not_permission(monkeypatch):
 def test_the_fetcher_is_not_imported_by_the_kernel():
     """§19.3 ships the network disabled. If any kernel module imported the real
     fetcher, "disabled by default" would rest on a default argument rather than
-    on nothing being wired up."""
+    on nothing being wired up.
+
+    Scoped by AST rather than by substring. The first version searched source
+    text for "fetchers" and so failed the moment another module *mentioned* the
+    file in a docstring — a structural test that fires on prose is one people
+    learn to work around by not writing the prose.
+    """
     source_dir = Path(__file__).resolve().parents[1] / "src" / "mitosis"
-    importers = [
-        path.name
-        for path in sorted(source_dir.glob("*.py"))
-        if path.name not in ("fetchers.py", "cli.py") and "fetchers" in path.read_text()
-    ]
+    importers = []
+    for path in sorted(source_dir.glob("*.py")):
+        if path.name in ("fetchers.py", "cli.py"):
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.module in (None, "mitosis"):
+                if any(a.name == "fetchers" for a in node.names):
+                    importers.append(path.name)
+            elif isinstance(node, ast.ImportFrom) and (node.module or "").endswith("fetchers"):
+                importers.append(path.name)
+            elif isinstance(node, ast.Import):
+                if any(a.name.split(".")[-1] == "fetchers" for a in node.names):
+                    importers.append(path.name)
     assert not importers, f"{importers} import the live fetcher"
 
 

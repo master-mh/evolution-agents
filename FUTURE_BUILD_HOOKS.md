@@ -570,3 +570,29 @@ actually queued for building — this file is memory, not a backlog to work thro
   redirect refusal and the size cap were both exercised against real responses rather than fakes,
   and the redirect guard fired on a genuine 301. Left in place rather than deleted because this file
   is append-only and the original entry records why the gap mattered.
+
+- **§11.2's five-condition downstream credit is unbuilt, and needs experiment tracking.** A reusable
+  artifact earns credit only when another Cell independently uses it, the adopting run passes
+  verification, the adopter shows stage progression or measurable improvement, the adoption is not
+  reciprocal farming, and the causal contribution is recorded. Conditions 2 and 3 both need
+  experiments, which still do not exist. `artifact_lineage` holds the edges the credit would flow
+  along, so the graph is ready before the accounting is.
+- **§11.4's decay is unbuilt.** "Award credit when downstream value appears, with **decay** to avoid
+  permanent ancestral rent extraction." Without it, the first Cell to write anything reused would
+  collect forever — which is the failure the clause names. Lands with the credit path.
+- **Nothing delivers an exported artifact.** `artifacts.export` records that a human took one
+  outside the colony; there is no channel, by design (§28 Phase 8: "all external action remains
+  manual"). Delivery needs §21.2's external-action registry first — a Cell that can put something in
+  front of a customer is spending the colony's one shared reputation (§21.1).
+- **An artifact's rights can only get more restrictive, never less.** There is no path to
+  *establish* rights — an operator who confirms a source is CC-BY cannot record that, so an artifact
+  built on it stays `unknown` forever and can never be sold. A `set-rights` verb with an audit trail
+  is the obvious complement to the export gate and was left out to keep this slice to one direction.
+- **`retention_rule` and `permitted_uses` are recorded and nothing enforces them.** §20.1 asks for
+  "retention rule" and "deletion/correction requirements"; the columns hold prose that no code
+  reads. Enforcement needs a scheduler that can expire artifacts, and a stated policy on what
+  happens to a lineage whose ancestor must be deleted.
+- **The artifact index is capped at 5 with no relevance ordering.** §15.3 asks for "relevance
+  scoring, age decay, retrieval by experiment/market" — the index is newest-first and nothing more,
+  so a Cell with many artifacts loses sight of the ones that matter. Same shape as the
+  `RECENT_PROPOSALS` cap and the same eventual fix.

@@ -1,5 +1,5 @@
 {
-  "expectation_version": 14,
+  "expectation_version": 15,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "fd37edde3abdc949920621dbc9df39af46a16e6fa831acf9b5c9271e9d3bf1ba",
+  "semantic_hash": "a6bae171dab5293d09f5bc7cf216665ed8468faa5bc95988dbcc9c65c0a260c6",
   "snapshot": {
     "approval_grants": 2,
     "approval_requests": [
@@ -49,6 +49,29 @@
         "status": "approved"
       }
     ],
+    "artifact_attributed_ledger_entries": 1,
+    "artifact_lineage": {
+      "edges": 1,
+      "from_artifacts": 0,
+      "from_tool_calls": 1
+    },
+    "artifacts": [
+      {
+        "cell": "cell#4",
+        "commercial_use": "unknown",
+        "contains_personal_data": 0,
+        "content_bytes": 55,
+        "export_is_commercial": 0,
+        "exported": true,
+        "hash_prefix": "ed648fb90a0d",
+        "kind": "report",
+        "licence": "unknown",
+        "taint_labels": [
+          "UNTRUSTED_EXTERNAL"
+        ],
+        "title": "golden-run write-up of a fetched page"
+      }
+    ],
     "assessments": [
       {
         "allocated_minor_units": 30,
@@ -68,7 +91,7 @@
         "next_rung": 8,
         "observed_mean_brier": 0.03999999999999998,
         "reality_gap": null,
-        "revenue_since_minor_units": 0,
+        "revenue_since_minor_units": 40,
         "rung": 7,
         "spend_since_minor_units": 0,
         "verdict": "supports_promotion"
@@ -77,11 +100,14 @@
     "audit_event_types": {
       "approval_granted": 2,
       "approval_requested": 3,
+      "artifact_created": 1,
+      "artifact_exported": 1,
       "autonomy_flag_changed": 1,
       "capital_allocated": 1,
       "cell_deliberated": 4,
       "cell_estate_reclaimed": 1,
       "cell_lifecycle_transition": 12,
+      "cell_revenue_recorded": 1,
       "egress_domain_allowed": 1,
       "event_dead_lettered": 1,
       "model_call_reconciled": 1,
@@ -134,11 +160,12 @@
       "USD_SIM::cell:cell#1:cash": 400,
       "USD_SIM::cell:cell#3:cash": 1250,
       "USD_SIM::cell:cell#3:committed": 250,
-      "USD_SIM::cell:cell#4:cash": 530,
+      "USD_SIM::cell:cell#4:cash": 570,
       "USD_SIM::colony_treasury": 3250,
       "USD_SIM::external_capital": -100000,
       "USD_SIM::external_expense": 1550,
       "USD_SIM::promotion_pool": 470,
+      "USD_SIM::revenue": -40,
       "USD_SIM::seed_bank": 92300
     },
     "cells": [
@@ -335,7 +362,7 @@
       {
         "cell": "cell#1",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 1790,
+        "input_tokens": 1962,
         "mirror_minor_units": 0,
         "output_tokens": 181,
         "pricing_table_version": "2026-07-27",
@@ -367,7 +394,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 1910,
+        "input_tokens": 2083,
         "mirror_minor_units": 0,
         "output_tokens": 279,
         "pricing_table_version": "2026-07-27",
@@ -383,7 +410,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 1983,
+        "input_tokens": 2155,
         "mirror_minor_units": 0,
         "output_tokens": 178,
         "pricing_table_version": "2026-07-27",
@@ -399,9 +426,9 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 2365,
+        "input_tokens": 2538,
         "mirror_minor_units": 0,
-        "output_tokens": 160,
+        "output_tokens": 269,
         "pricing_table_version": "2026-07-27",
         "provider": "mock",
         "reconciled": false,
@@ -745,7 +772,7 @@
       {
         "cell": "cell#1",
         "minor_units": 1,
-        "quantity": 1790,
+        "quantity": 1962,
         "resource_type": "input_tokens"
       },
       {
@@ -769,7 +796,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 1910,
+        "quantity": 2083,
         "resource_type": "input_tokens"
       },
       {
@@ -781,7 +808,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 1983,
+        "quantity": 2155,
         "resource_type": "input_tokens"
       },
       {
@@ -799,13 +826,13 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 2365,
+        "quantity": 2538,
         "resource_type": "input_tokens"
       },
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 160,
+        "quantity": 269,
         "resource_type": "output_tokens"
       }
     ],
@@ -842,6 +869,7 @@
       "USD_SIM::cell_estate_reclaim": 1,
       "USD_SIM::cell_funding": 1,
       "USD_SIM::cell_reproduction_funding": 1,
+      "USD_SIM::cell_revenue": 1,
       "USD_SIM::colony_seed_capital": 1,
       "USD_SIM::event_side_effect": 3,
       "USD_SIM::promotion_pool_funding": 1,

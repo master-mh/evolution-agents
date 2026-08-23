@@ -280,11 +280,32 @@
   `charter_sandbox_isolation` (C12) test ships with it. 756 tests (36 new); golden expectation
   13 → 14 (**no USD_REAL movement**). Teeth-checked twenty ways; one test was genuinely weak and
   was rewritten.
-- [ ] **Nothing schedules a tool call, and nothing produces an artifact.** A Cell can now read the
-  world and propose from what it read, but every execution is operator-invoked, and there is still
-  no artifact store — so a Cell can inform a decision and cannot produce a deliverable. That is
-  what remains between a Cell that decides and one that earns. *Disproved by:* an `artifacts`
-  table, or the scheduler reaching `tools.execute_grant`.
+- [x] **The artifact store — DONE** (2026-08-23), ADR-035. `artifacts.py` + migration 0020.
+  **Identity is the content hash**, because §11.3 names "duplicated artifacts with new names" as a
+  gaming vector and content addressing makes it *unrepresentable* rather than detectable — the
+  third instance of that move after ADR-018 and ADR-033, and worth naming as a principle. **§1
+  forbids the fitness dimension a work-product store invites** ("the colony is not successful
+  because it produces many artifacts"), so nothing counts them and a structural test guards `death`
+  and `outcome`. **Rights propagate most-restrictive-wins and never reset**, closing §20.2's
+  one-step launder: everything derived from a fetched page is `commercial_use: unknown` and
+  unsellable until a person establishes the rights. **Production is free, export is gated** (§28
+  Phase 8 gates *external use*; §19.3's export gateway), the opposite of the tool surface and for a
+  stated reason. Amendment A3's `ledger_entries.artifact_id` is populated for the first time since
+  migration 0001, and §15.2's "artifact index" — its last unbuilt memory tier — now exists. 781
+  tests (23 new); golden expectation 14 → 15, and the scenario **records revenue for the first time
+  in its history** (USD_SIM; **no USD_REAL movement**). Teeth-checked sixteen ways; one structural
+  test was checking the wrong thing and was rewritten.
+- [ ] **Nothing schedules a tool call, and nothing delivers an exported artifact.** Every tool
+  execution and every export is operator-invoked. Export *records* that a human took an artifact
+  outside; there is no channel that puts it in front of anyone. Delivery is §21.2's
+  external-action-registry territory and is the next real gap between a Cell that produces and a
+  Cell that sells. *Disproved by:* an `external_action_registry` table, or the scheduler reaching
+  `tools.execute_grant`.
+- [ ] **Charter C13's router exists; C13 is still unsatisfied.** `artifacts.check_exportable`
+  refuses `SIM_ADVERSARIAL` and is tested, but nothing in the kernel can *produce* that label —
+  §18.2 is about lineages evolved under adversarial synthetic incentives, and the shadow economy is
+  Phase 6. C13 remains the one Charter clause with no `charter_*` test, now for a precise reason
+  rather than a vague one. *Disproved by:* anything that writes `SIM_ADVERSARIAL`.
 - [ ] **Three autonomy flags have columns and no tools behind them.**
   `browser_control`, `external_publish` and `external_message` (§27.1) are enforced gates guarding
   capabilities that do not exist. Each is a separate §0.4 decision, and the last two need §21.2's

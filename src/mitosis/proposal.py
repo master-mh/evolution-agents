@@ -51,6 +51,16 @@ MAX_RATIONALE_CHARS = 2_000
 MAX_CLAIM_CHARS = 300
 MAX_PREDICTIONS = 5
 
+#: An artifact's body, carried on the proposal that produced it. Far larger than
+#: `MAX_RATIONALE_CHARS` and that asymmetry is deliberate: §15's caps exist
+#: because today's proposal is tomorrow's context, and an artifact's content
+#: **never enters context** — §15.2 asks for an artifact *index*, which is what
+#: `context.py` renders. The store holds the deliverable; the Cell sees that it
+#: has one. Kept in step with `artifacts.MAX_CONTENT_CHARS` by a structural test
+#: rather than an import, since `artifacts` sits above this module.
+MAX_ARTIFACT_CONTENT_CHARS = 20_000
+MAX_ARTIFACT_TITLE_CHARS = 200
+
 #: Prediction horizons the loop will register, in days. Bounded below because a
 #: claim resolvable in minutes is not a forecast, and above because a claim
 #: resolvable after the Cell is dead cannot score it (§8.5's anti-gaming
@@ -149,6 +159,38 @@ class ToolRequestSpec(BaseModel):
         return value
 
 
+class ArtifactSpec(BaseModel):
+    """A deliverable the Cell produced during this wake (§28 Phase 8, §20).
+
+    Not an outcome claim, and the distinction is what keeps it inside §0.3: an
+    artifact is the *work*, not a statement about how the work did. Nothing
+    derives fitness from its content, nothing counts artifacts, and §11.2 makes
+    usefulness strictly downstream — another Cell has to adopt it.
+
+    `kind` is validated against `artifacts.ARTIFACT_KINDS` at record time rather
+    than here, for the same layering reason `tool_request.tool` is: `artifacts`
+    sits above this module and a back-edge would invert the dependency order.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=MAX_ARTIFACT_TITLE_CHARS)
+    content: str = Field(min_length=1, max_length=MAX_ARTIFACT_CONTENT_CHARS)
+    #: Tool calls this drew on. §20.2's laundering guard depends on these being
+    #: declared: rights propagate from cited sources, so an artifact that cites
+    #: nothing claims to be original work — which is a statement a human can
+    #: check against the Cell's tool history.
+    source_tool_call_ids: tuple[str, ...] = ()
+
+    @field_validator("title", "content")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value.strip()
+
+
 class Proposal(BaseModel):
     """The only shape a deliberation may return.
 
@@ -168,6 +210,22 @@ class Proposal(BaseModel):
     )
     #: Present exactly when `kind` is TOOL_REQUEST — see `_tool_request_matches_kind`.
     tool_request: ToolRequestSpec | None = None
+    #: What the Cell made this wake, if anything. Allowed alongside any kind
+    #: except ABSTAIN: production is not gated (§28 Phase 8 gates *external
+    #: use*), so a Cell may hand over a draft while proposing what to do next.
+    artifact: ArtifactSpec | None = None
+
+    @model_validator(mode="after")
+    def _abstaining_produces_nothing(self) -> "Proposal":
+        """A Cell that declines to work does not also hand in a deliverable.
+
+        ABSTAIN is a first-class outcome precisely so a Cell with nothing worth
+        doing can say so; attaching work to it would make abstention the
+        cheapest way to produce without proposing anything reviewable.
+        """
+        if self.kind is ProposalKind.ABSTAIN and self.artifact is not None:
+            raise ValueError("an abstaining proposal cannot carry an artifact")
+        return self
 
     @model_validator(mode="after")
     def _tool_request_matches_kind(self) -> "Proposal":
@@ -321,6 +379,13 @@ def _prompt_schema() -> dict[str, Any]:
             '{"tool": "<one of the tools listed in your context>", '
             '"arguments": {"<name>": "<scalar value>"}}. Nothing runs until a '
             "human approves the request."
+        ),
+        "artifact": (
+            "OPTIONAL, and omitted unless you actually produced something this "
+            'wake: {"kind": "<see the artifact kinds listed in your context>", '
+            '"title": "...", "content": "the deliverable itself", '
+            '"source_tool_call_ids": ["<ids of tool results you drew on>"]}. '
+            "Cite every source you used — rights carry over from them."
         ),
         "predictions": [
             {

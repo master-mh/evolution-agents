@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 # `tool_registry`, never `tools`: the executor sits above this module and
 # importing it would both close a dependency loop and give the deliberation
 # path a route to running a tool, which §19.4 forbids. See tool_registry.py.
-from . import ledger, lineage, prediction, revenue, tool_registry
+from . import artifacts, ledger, lineage, prediction, revenue, tool_registry
 from .accounts import cell_cash, cell_committed
 from .models import Cell
 
@@ -296,6 +296,41 @@ def _colony_section(conn: sqlite3.Connection, cell: Cell) -> Section:
     )
 
 
+def _artifact_index_section(conn: sqlite3.Connection, cell: Cell) -> Section | None:
+    """§15.2's "artifact index" — one of its five named memory tiers, and the
+    last one that had never been built.
+
+    An **index**, emphatically. Title, kind, size, rights position and whether it
+    has left the colony; never the content. §15.1's budget is exactly why an
+    artifact may be 20k characters while a proposal may be 2k: the store holds
+    the deliverable and the Cell sees only that it exists. Inlining content here
+    would let one long draft crowd out the Cell's own ledger record, which is
+    the failure §15.1 describes.
+
+    The rights position is included because it is the fact a Cell most needs and
+    is least able to derive: an artifact built on `unknown` sources cannot be
+    sold (§20.2), and a Cell proposing to sell one should be able to see that
+    before it spends a wake on the idea.
+    """
+    index = artifacts.index_for(conn, cell.cell_id)
+    if not index:
+        return None
+
+    lines = []
+    for item in index:
+        taints = json.loads(item["taint_labels_json"]) or ["none"]
+        state = "EXPORTED" if item["exported_at_utc"] else "internal"
+        lines.append(
+            f"- [{item['kind']}] {item['title']}\n"
+            f"    {item['content_bytes']} bytes · {state} · "
+            f"commercial use: {item['commercial_use']} · taint: {', '.join(taints)}"
+        )
+    return Section(
+        name="What you have made (index only — the store holds the content)",
+        body="\n".join(lines),
+    )
+
+
 def _observations_section(conn: sqlite3.Connection, cell: Cell) -> Section | None:
     """§19.4's fence: tool results, labelled as data and never as instructions.
 
@@ -407,6 +442,7 @@ def assemble(
         _lessons_section(conn, cell),
         _recent_proposals_section(conn, cell),
         _observations_section(conn, cell),
+        _artifact_index_section(conn, cell),
         _available_tools_section(conn),
     ):
         if optional is not None:

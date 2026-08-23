@@ -68,12 +68,26 @@ def record_revenue(
     source: str,
     book: Book = Book.USD_REAL,
     note: str = "",
+    artifact_id: str | None = None,
     idempotency_key: str | None = None,
 ) -> Transaction:
     """Credit a Cell with money it earned.
 
     `source` records who paid and for what — an invoice id, a customer
     reference, "manual". Stored on the transaction and on the audit event.
+
+    `artifact_id` names **what was sold**, populating Amendment A3's
+    `ledger_entries.artifact_id` — a required field that has existed since
+    migration 0001 and that nothing populated until the artifact store. It is
+    the edge §11.4's contribution graph needs between a Cell's work and the
+    money that followed it: without it, attribution is a free-text string and
+    fitness cannot see which deliverable earned.
+
+    **Optional, deliberately.** Making it mandatory would force every payment to
+    name a deliverable, which is the right pressure for a sale — but not every
+    receipt has an artifact behind it (a retainer, a reversal, an operator
+    correction), and a required field that people satisfy with a placeholder is
+    worse than an honest null. Revisit when something actually sells.
 
     `idempotency_key` defaults to one derived from the source, so posting the
     same attributed payment twice is refused by the ledger's own idempotency
@@ -103,6 +117,19 @@ def record_revenue(
         if cell is None:
             raise RevenueError(f"no such cell: {cell_id}")
 
+        if artifact_id is not None:
+            # Checked inside the lock like everything else here. An attribution
+            # to a nonexistent artifact is worse than none: it looks like
+            # provenance and points nowhere.
+            exists = conn.execute(
+                "SELECT 1 FROM artifacts WHERE artifact_id = ?", (artifact_id,)
+            ).fetchone()
+            if exists is None:
+                raise RevenueError(
+                    f"no such artifact: {artifact_id} — revenue cannot be attributed "
+                    "to something the colony never made"
+                )
+
         key = idempotency_key or f"{REVENUE_TRANSACTION_TYPE}:{cell_id}:{source.strip()}"
         transaction = ledger._post_transaction_locked(
             conn,
@@ -118,6 +145,7 @@ def record_revenue(
                     account_id=cell_cash(cell_id),
                     amount_minor_units=amount_minor_units,
                     cell_id=cell_id,
+                    artifact_id=artifact_id,
                 ),
             ],
         )
@@ -127,6 +155,7 @@ def record_revenue(
             cell_id=cell_id,
             metadata={
                 "amount_minor_units": amount_minor_units,
+                "artifact_id": artifact_id,
                 "book": book.value,
                 "source": source.strip(),
                 "note": note,

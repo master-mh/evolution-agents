@@ -45,6 +45,7 @@ from . import (
     reconciliation,
     reservations,
     resource_metering,
+    artifacts as artifacts_module,
     revenue,
     tool_registry,
     tools,
@@ -636,6 +637,7 @@ def cmd_record_revenue(args: argparse.Namespace) -> None:
             source=args.source,
             book=book,
             note=args.note,
+            artifact_id=args.artifact,
             idempotency_key=args.idempotency_key,
         )
     except revenue.RevenueError as exc:
@@ -951,6 +953,102 @@ def cmd_set_autonomy(args: argparse.Namespace) -> None:
         )
     ):
         raise CliError("name at least one flag to change, e.g. --public-web-read on")
+    conn.close()
+
+
+def cmd_artifacts(args: argparse.Namespace) -> None:
+    """What the colony has made."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    where, params = ("WHERE created_by_cell_id = ?", (args.cell,)) if args.cell else ("", ())
+    rows = conn.execute(
+        f"SELECT * FROM artifacts {where} ORDER BY created_at_utc DESC LIMIT ?",
+        (*params, args.limit),
+    ).fetchall()
+    if not rows:
+        print("No artifacts.")
+        conn.close()
+        return
+    for row in rows:
+        taints = json.loads(row["taint_labels_json"]) or ["none"]
+        state = "EXPORTED" if row["exported_at_utc"] else "internal"
+        print(f"{row['artifact_id']}  [{row['kind']}] {row['title']}")
+        print(f"    hash:  {row['artifact_hash'][:16]}…  ({row['content_bytes']} bytes, {state})")
+        print(f"    cell:  {row['created_by_cell_id']}")
+        print(f"    §20.1: licence={row['licence']}  commercial_use={row['commercial_use']}  "
+              f"personal_data={'yes' if row['contains_personal_data'] else 'no'}")
+        print(f"    §18.1: {', '.join(taints)}")
+    conn.close()
+
+
+def cmd_artifact(args: argparse.Namespace) -> None:
+    """One artifact in full, with its §11.4 lineage."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    artifact = artifacts_module.get(conn, args.artifact_id)
+    if artifact is None:
+        raise CliError(f"no such artifact: {args.artifact_id}")
+
+    print(f"Artifact {artifact.artifact_id}")
+    print(f"  kind:     {artifact.kind}")
+    print(f"  title:    {artifact.title}")
+    print(f"  hash:     {artifact.artifact_hash}")
+    print(f"  made by:  {artifact.created_by_cell_id}")
+    print(f"  size:     {artifact.content_bytes} bytes")
+    print()
+    print("  Data rights (§20.1) — inherited most-restrictive-wins from sources")
+    print(f"    licence:        {artifact.licence}")
+    print(f"    permitted uses: {artifact.permitted_uses}")
+    print(f"    commercial use: {artifact.commercial_use}")
+    print(f"    personal data:  {'yes' if artifact.contains_personal_data else 'no'}")
+    print(f"    retention:      {artifact.retention_rule}")
+    print(f"    sources:        {artifact.source_summary}")
+    print(f"    §18.1 taint:    {', '.join(artifact.taint_labels) or 'none'}")
+    print()
+    lineage = artifacts_module.lineage_of(conn, artifact.artifact_id)
+    print(f"  Built from (§11.4 contribution graph) — {len(lineage)} source(s)")
+    for edge in lineage:
+        which = edge["source_artifact_id"] or edge["source_tool_call_id"]
+        kind = "artifact" if edge["source_artifact_id"] else "tool call"
+        print(f"    {kind}: {which}")
+    print()
+    print("  Export (§19.3 gateway)")
+    if artifact.is_exported:
+        print(f"    exported {artifact.exported_at_utc.isoformat()} by {artifact.exported_by}")
+        print(f"    commercial: {'yes' if artifact.export_is_commercial else 'no'}")
+    else:
+        for commercial, label in ((False, "non-commercial"), (True, "commercial")):
+            try:
+                artifacts_module.check_exportable(conn, artifact.artifact_id, commercial=commercial)
+                print(f"    {label}: allowed")
+            except artifacts_module.ExportRefused as exc:
+                print(f"    {label}: REFUSED — {exc}")
+    if args.content:
+        print()
+        print("  --- content ---")
+        print(artifact.content)
+    conn.close()
+
+
+def cmd_export_artifact(args: argparse.Namespace) -> None:
+    """§19.3's artifact-export gateway. §28 Phase 8: all external use is manual."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        artifact = artifacts_module.export(
+            conn,
+            artifact_id=args.artifact_id,
+            exported_by=args.by,
+            reason=args.reason,
+            commercial=args.commercial,
+        )
+    except artifacts_module.ArtifactError as exc:
+        raise CliError(str(exc)) from exc
+    print(f"Exported {artifact.artifact_id}")
+    print(f"  {artifact.kind}: {artifact.title}")
+    print(f"  commercial:     {'yes' if artifact.export_is_commercial else 'no'}")
+    print(f"  commercial_use: {artifact.commercial_use}")
+    print("  Recorded. Nothing was delivered — §28 Phase 8 keeps external action manual.")
     conn.close()
 
 
@@ -2027,6 +2125,11 @@ def build_parser() -> argparse.ArgumentParser:
     revenue_parser.add_argument(
         "--book", default=Book.USD_REAL.value, choices=[Book.USD_REAL.value, Book.USD_SIM.value]
     )
+    revenue_parser.add_argument(
+        "--artifact", default=None,
+        help="artifact_id of what was sold (Amendment A3). Optional: a retainer or "
+             "a correction has no deliverable behind it.",
+    )
     revenue_parser.add_argument("--note", default="")
     revenue_parser.add_argument("--idempotency-key", default=None)
     revenue_parser.set_defaults(func=cmd_record_revenue)
@@ -2177,6 +2280,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="required to turn real_spending on — this removes the human from the loop",
     )
     autonomy_parser.set_defaults(func=cmd_set_autonomy)
+
+    artifacts_parser = subparsers.add_parser(
+        "artifacts", help="what the colony has made (SPEC.md §20, §31)"
+    )
+    artifacts_parser.add_argument("--cell", default=None, help="only this Cell's artifacts")
+    artifacts_parser.add_argument("--limit", type=int, default=20)
+    artifacts_parser.set_defaults(func=cmd_artifacts)
+
+    artifact_parser = subparsers.add_parser(
+        "artifact", help="one artifact: provenance, lineage, and export status"
+    )
+    artifact_parser.add_argument("artifact_id")
+    artifact_parser.add_argument(
+        "--content", action="store_true", help="also print the content itself"
+    )
+    artifact_parser.set_defaults(func=cmd_artifact)
+
+    export_parser = subparsers.add_parser(
+        "export-artifact", help="§19.3's export gateway — record taking one outside"
+    )
+    export_parser.add_argument("artifact_id")
+    export_parser.add_argument("--by", default="operator")
+    export_parser.add_argument("--reason", required=True, help="why — §28 measures human review")
+    export_parser.add_argument(
+        "--commercial", action="store_true",
+        help="this export is for commercial use, which §20.2 gates on established rights",
+    )
+    export_parser.set_defaults(func=cmd_export_artifact)
 
     tools_parser = subparsers.add_parser(
         "tools", help="registered tools, their gates, and the egress allowlist (§19)"

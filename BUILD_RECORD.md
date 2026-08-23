@@ -5,108 +5,93 @@ Earlier slices (1–10, plus CI wiring, seeded ids, reproduction/lineage, the fu
 arc, real-spend type registration, the first real paid call, revenue + Ollama, the `spend_by_book`
 account fix, the prediction register, death criteria, §9.3 displacement, the agent loop, the
 scheduler, the §23 approval queue, the dead-Cell estate, the rung-7 promotion path, the §25.2
-read-back, §9.2's birth cap, Auditor Cells, and genome content,
+read-back, §9.2's birth cap, Auditor Cells, genome content, and the tool surface,
 2026-07-21 through 2026-08-23):
-[docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).## 2026-08-23 — The tool surface: a Cell reads the world, under grant
+[docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-`tools.py` + `tool_registry.py` + `fetchers.py` + migration 0019 (ADR-034). A Cell could think, be
-reviewed and be funded, and could do nothing else. ADR-033 sharpened the gap rather than closing it:
-a Cell could describe a business it had no way to act on.
+## 2026-08-23 — The artifact store: what a Cell made, and what it may do with it
 
-### §25.1 says this is a rung the colony skipped, not a step up
+`artifacts.py` + migration 0020 (ADR-035). A Cell could decide, be funded, and read the world. The
+thing it *produced* had nowhere to live — so `revenue.record_revenue` attributed money to a
+free-text string, and `ledger_entries.artifact_id`, an **Amendment A3 required field present since
+migration 0001**, had never been populated by anything.
 
-The ladder puts "read-only real-world observation" at rung 4 and "shadow prediction with no action"
-at rung 5, and the agent loop has been at rung 5 since ADR-025. **Reading the world is *below* where
-the colony already stood.** Getting that right changed the gating: the instinct is to treat "the
-kernel can reach the internet" as the biggest step yet and armour it accordingly, when the genuinely
-large step is *acting*, which is rungs 8-9 and has no registry entry. `ToolSpec.read_only` makes the
-split structural — an acting tool has to break a named test.
+### §11.3 forbids the obvious identity, and this is the third time
 
-### §19.4 shaped everything, and its sharpest consequence is easy to miss
+> Auditors inspect ... **duplicated artifacts with new names**
 
-> no webpage content treated as a trusted tool command
+A uuid plus a title makes that trivial to do and turns detection into a permanent chore. **Content
+addressing makes it unrepresentable** — two identical artifacts are one row, and a Cell resubmitting
+its own work gets its own artifact back. Same move as ADR-018 for genomes and ADR-033 for the closed
+genome schema, and at three instances the principle is worth naming outright: *prefer making the bad
+state impossible over detecting it*. The title is part of the address, so a rename is an honest new
+artifact rather than a way to hide that two things are the same.
 
-The obvious readings — label the content, fence it in the prompt — are necessary and insufficient.
-The one that actually holds is: **a tool result can never cause another tool call.** Execution needs
-a grant, a grant needs a human decision on a §23 request, so a fetched page saying "now fetch
-evil.example" can at most produce a *proposal*, whose URL a person reads. The human is the
-loop-breaker. That is why the proposal → approval → grant route was chosen over letting a Cell call
-tools inline while it thinks: inline tool use puts fetched content in the same conversation as the
-instructions, which is the exact configuration §19.4 exists to prevent.
+### §1 names the fitness dimension a work-product store invites
 
-### The layering constraint and the safety constraint wanted the same cut
+> The colony is *not* successful because it ... **produces many artifacts**
 
-`context` has to render what a Cell may request and what a previous call returned — but `tools`
-imports `approval` → `deliberation` → `context`, so a direct import closed a loop. Splitting
-`tool_registry` (readable by both layers) from `tools` (the executor) resolves the cycle, and it is
-*exactly* the boundary §19.4 needs: reading is not executing. When a dependency-order problem and a
-prompt-injection rule independently demand the same seam, the seam is real rather than convenient.
+So nothing counts them. §10.3 makes an Explorer's value depend on *useful* artifacts, and §11.2 puts
+usefulness strictly downstream — another Cell adopts it, verification passes, the adopter
+progresses, it is not reciprocal farming, causal contribution recorded. None of those five are
+things the producer controls, which is the whole point. A structural test guards `death` and
+`outcome` against ever mentioning artifacts.
 
-### Three things the build found that the design did not
+### Rights propagate; they never reset
 
-- **Redirects defeat the allowlist.** Charter C12 is checked against the URL a human approved, and
-  `urllib` follows redirects by default — so an allowlisted page answering `302` would carry the
-  fetch off the allowlist *after* the check passed. An open redirect on an otherwise reputable host
-  is enough. `fetchers.py` refuses redirects, which turns it into a failed call the Cell may propose
-  to follow explicitly.
-- **The review payload never printed the tool's arguments.** Found by hand-verification, not by any
-  test: the field was on the payload and the CLI rendered a summary. For a tool request **the URL is
-  the decision** — approving "read the wholesaler's price list" without seeing which host is
-  approving nothing in particular.
-- **A third copy of the §13/liability error.** The audit two commits ago corrected `PRIORITIES.md`
-  and `approval.py`; the same wrong claim was also in `cli.py`, twice. Corrected.
+An artifact derived from a fetched page inherits that page's §20.1 position most-restrictive-wins,
+and taints union. Without it, "summarise it into an artifact" is a one-step launder: since every
+tool result is `commercial_use: unknown` by construction (ADR-034), anything built on one is
+`unknown` too, and therefore unsellable until a person establishes the rights. Colony-authored work
+also starts `unknown` rather than `permitted` — whether the colony may sell its own output is a
+question for a person, not a default.
 
-### Better than the gateway on purpose
+### Production is free, export is gated — the opposite of the tool surface
 
-The `tool_calls` row is written **before** the external call, in the transaction that consumes the
-grant and reserves the RESOURCE. That is the forward recovery ADR-022 deferred: a crash mid-call
-leaves a diagnosable row instead of a reservation with nothing explaining it. Cheap to do here
-because the module is new and has no in-flight state to migrate.
+§28's Phase 8 gates *external use*, not production, and §19.3 names an "artifact-export gateway".
+Writing to the colony's own store is not an external action. Gating production instead would put a
+human in the loop for a Cell drafting into its own store, and spend the §23 queue — a finite
+resource §23.5 warns is optimised against — on the cheapest thing a Cell does.
+
+### Charter C13's router is built; C13 is not satisfied, and that distinction is the point
+
+C13 is the last Charter clause with no test, and artifacts are literally its subject. The gateway
+refuses on `SIM_ADVERSARIAL`, so **the router that clause describes now exists and is tested** —
+while C13 itself stays unsatisfied, because §18.2 is about lineages evolved under adversarial
+synthetic incentives and nothing can produce that label until the Phase 6 shadow economy. The test
+sets the label directly and says why. Calling this "C13 done" was the tempting, wrong move.
+
+`UNTRUSTED_EXTERNAL` deliberately does **not** block export — that would forbid exporting anything
+informed by research, i.e. every real deliverable. Its effect flows through `commercial_use`
+instead, which blocks *commercial* export specifically. The control test matters as much as the
+block: a gateway refusing everything passes every refusal test and is useless.
 
 ### Verification
 
-- **756 tests passing** (36 new, 0 removed; up from 719), including the **first
-  `charter_sandbox_isolation` (C12) property test** — generated hostnames rather than examples,
-  because the two plausible wrong allowlist implementations (substring, bare `endswith`) both pass a
-  hand-picked case. C13 `charter_taint_quarantine` is now the only Charter clause without a test,
-  honestly so: §18.2 is about adversarial lineages and the shadow economy is Phase 6.
-- **Golden expectation 13 → 14.** The scenario gains the whole arc — propose, approve, fetch, wake —
-  with a deterministic offline fetcher. **No USD_REAL moves and `external_expense` is unchanged in
-  every book**; the only balance movement is 9 RESOURCE. The USD_REAL reservations reserve and
-  *release* in pairs, which is the tell that the new model calls cost nothing. `egress_allowlist` and
-  `autonomy` are pinned because both start closed — a colony that ever shipped either open by
-  default diffs there, which is the most valuable regression in the section.
-- **The taint flag is pinned non-uniformly** (`[false, false, false, true]`), which needed an extra
-  wake *after* the fetch. A uniformly-false column passes just as happily against a kernel that
-  hardcodes false — the trap ADR-031's `born_in_epoch` nearly shipped with.
-- **Teeth-checked twenty ways**, each failing its named test: allowlist bypassed, substring match,
-  bare `endswith` match, autonomy gate skipped, grant never consumed, expiry unchecked, any proposal
-  kind executing, a dead Cell executing, errors unredacted, a refused fetch stranding its
-  reservation, an uncertain outcome released, results untruncated, the taint flag hardcoded, the
-  fence gutted, `context` importing the executor, a tool marked non-read-only, the default fetcher
-  answering, an unreadable robots.txt read as consent, and redirects followed.
-- **One MISS was the mutation's fault and one test was genuinely weak** — both true at once. The
-  fence mutation replaced half the warning, and the assertions passed anyway *via the section
-  title*, so a fence with a gutted body and a reassuring heading would have passed. The test now
-  asserts against the section body; re-run with a complete mutation, it has teeth.
-- **Hand-verified on a live colony**, offline throughout: both gates refusing independently, a
-  prompt-injection payload arriving fenced and labelled as data, the attacker URL in it unreachable
-  because it is not allowlisted, conservation green in all three books, both chains valid,
-  `external_expense` 0, one grant consumed of one, and the Cell woken.
-- **Verified live against a real host** (2026-08-23, `example.com` — IANA's reserved documentation
-  domain). The full path ran end to end: propose → approve → open both gates → `run-tool --live` →
-  HTTP 200, 559 bytes, `UNTRUSTED_EXTERNAL`, sha256 recorded, licence and commercial_use both
-  `unknown` per §20.2, robots.txt checked and permitting. 5 RESOURCE metered as one
-  `network_requests` unit, `external_expense` 0, conservation green in all three books, ledger chain
-  valid. The page rendered into the Cell's context inside the fence.
-  **Two pieces of fetcher logic that only had fake coverage were exercised against the real
-  network:** the size cap (asked for 100 bytes, got exactly 100 from a live response), and the
-  redirect refusal, which fired correctly on IANA's own 301 —
-  `refused to follow a 301 redirect to 'http://www.iana.org/help/example-domains'`. That is the
-  Charter C12 bypass being closed against real-world behaviour rather than a mock.
-  Mildly surprising and worth knowing: `http://example.com/` serves 200 over plain HTTP rather than
-  redirecting to HTTPS, so the obvious "any http:// URL will exercise the redirect path" assumption
-  is false.
-- Next: nothing schedules a tool call, `browser_control`/`external_publish`/`external_message` have
-  columns and no tools behind them, and §21.2's external-action registry must exist before any tool
-  that changes the world does.
+- **781 tests passing** (23 new, 0 removed; up from 758).
+- **Golden expectation 14 → 15**, and the scenario **records revenue for the first time in its
+  history** — `USD_SIM::cell_revenue: 1`, deliberately not USD_REAL. The diff is small on purpose:
+  the artifact rides on the deliberation that already existed, so `deliberations`, `proposals`,
+  `model_calls`, `resource_usage` and `reservations` are unchanged in count. **No USD_REAL moves and
+  `external_expense` is unchanged in both books.** The scenario **requires a commercial export to be
+  refused** before exporting non-commercially — a run that only exported successfully would pass
+  identically against a gateway that refused nothing.
+- **Teeth-checked sixteen ways**, each failing its named test: content addressing abandoned, title
+  excluded from the address, least-restrictive source winning, a derived artifact resetting rights,
+  the personal-data flag dropped, colony-authored defaulting to sellable, the C13 block removed,
+  researched work blocked from export, the §20.2 commercial gate removed, export repeatable, export
+  needing no reason, a phantom source accepted, revenue attributed to a nonexistent artifact, A3
+  attribution never written, abstention carrying work, and the index inlining content.
+- **A structural test was checking the wrong thing and was rewritten.**
+  `test_the_fetcher_is_not_imported_by_the_kernel` substring-matched "fetchers" in source, so it
+  failed the moment `artifacts.py` *mentioned* the file in a docstring. Now scoped by AST — a
+  structural test that fires on prose is one people learn to work around by not writing the prose.
+- **Hand-verified on a live colony against a genuinely fetched page** (the `example.com` response
+  from the previous slice). The artifact inherited `commercial_use: unknown` and
+  `UNTRUSTED_EXTERNAL` from real data rather than a fixture; commercial export was refused citing
+  §20.2; non-commercial export recorded; resubmitting identical content returned the same row and
+  left the colony at one artifact; A3 attribution written to `ledger_entries`; conservation green in
+  all three books, chain valid, `external_expense` 0.
+- Next: §11.2's five-condition downstream credit and §11.4's decay both need experiment tracking,
+  which still does not exist. Nothing delivers an exported artifact anywhere — export records that a
+  human took it, and there is no channel.
