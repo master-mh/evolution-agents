@@ -723,9 +723,13 @@ actually queued for building — this file is memory, not a backlog to work thro
   injection isolation is why `scheduler.py` may not import `tools` at all. So either that entry is
   asking for ADR-034's guard to be overturned (a large argued change, not a backlog item) or its
   real resolution is something else — most likely a vacation-mode policy for grants that expire
-  while nobody is there, which needs no scheduler-side execution. The entry should say which; it
-  currently reads as though automating tool execution is the obvious next step, and it is the one
-  thing §19.4 rules out. The other seven pointers name symbols or commands and are sound.
+  while nobody is there, which needs no scheduler-side execution. **Resolved the same day:** the
+  entry was retitled "nothing handles the operator being away" and repointed at
+  `approval.expire_due`. Two concrete gaps turned up while doing it — an unconsumed grant expires
+  and nothing regenerates it, though both executors carry a comment promising that it does, and
+  `expire_due` has exactly one caller (`mitosis expire-approvals`), so the machinery built for an
+  absent operator only runs when the operator is present. The other seven pointers name symbols or
+  commands and are sound.
 - **§19.3's controls are a list of thirteen and roughly one is implemented.** "No host filesystem;
   no raw secrets; no privileged execution; no Docker socket; CPU/memory/runtime/disk limits;
   network disabled by default; egress domain allowlist; DNS control; stdout/stderr capture;
