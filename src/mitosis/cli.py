@@ -20,6 +20,7 @@ from pathlib import Path
 from . import (
     approval,
     auditor,
+    channel_registry,
     clock,
     context,
     db,
@@ -27,6 +28,7 @@ from . import (
     deliberation,
     displacement,
     events,
+    external_actions,
     gateway,
     genome,
     golden,
@@ -1129,6 +1131,181 @@ def cmd_run_tool(args: argparse.Namespace) -> None:
     print(f"  bytes:     {call.result_bytes}")
     print(f"  http:      {call.http_status}")
     print("  The Cell has been woken; the result enters its next context fenced.")
+    conn.close()
+
+
+def cmd_channels(args: argparse.Namespace) -> None:
+    """What the colony can do to the outside world, and what stands in front."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    print("Channels (SPEC.md §21, §28 Phase 8). A PERSON performs every action:")
+    for spec in sorted(channel_registry.REGISTRY.values(), key=lambda c: c.channel_id):
+        on = tool_registry.autonomy_enabled(conn, spec.autonomy_flag)
+        frozen, reason = channel_registry.channel_frozen(conn, spec.channel_id)
+        print(f"  {spec.channel_id}")
+        print(f"    {spec.description}")
+        print(f"    autonomy.{spec.autonomy_flag}: {'on' if on else 'OFF'}")
+        print(f"    addresses one counterparty: {'yes' if spec.requires_counterparty else 'no'}")
+        print(
+            f"    colony-wide caps: {spec.max_actions_per_window} per "
+            f"{channel_registry.CONTACT_WINDOW_SECONDS}s, "
+            f"{spec.max_open_claims} unfinished at once"
+        )
+        if frozen:
+            print(f"    FROZEN (§21.1): {reason}")
+
+    open_claims = channel_registry.open_claims(conn)
+    print()
+    print(f"Open claims: {len(open_claims)}")
+    for claim in open_claims:
+        print(
+            f"  {claim['action_id']}  {claim['channel']}  {claim['intent']}  "
+            f"(claimed by {claim['claimed_by']} at {claim['claimed_at_utc']})"
+        )
+    print()
+    print(f"Human minutes recorded (§28 Phase 8): {channel_registry.human_minutes_total(conn)}")
+    conn.close()
+
+
+def cmd_external_check(args: argparse.Namespace) -> None:
+    """§21.2's "prevent", asked *before* anything is done.
+
+    The whole point of a registry that claims before it acts: this answers
+    "would this collide" while the answer can still change what happens.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        channel_registry.check_action(
+            conn, channel=args.channel, counterparty=args.counterparty
+        )
+    except channel_registry.ChannelError as exc:
+        print(f"REFUSED: {exc}")
+        conn.close()
+        raise SystemExit(1)
+    print(f"Allowed: nothing on record collides with a {args.channel} action.")
+    print("  This is a check, not a claim — run claim-external-action to hold it.")
+    conn.close()
+
+
+def cmd_claim_external_action(args: argparse.Namespace) -> None:
+    """Hold a channel (and a counterparty) before a person acts.
+
+    Operator-invoked, and structurally so: §28's Phase 8 acceptance is "all
+    external action remains manual", and the scheduler is forbidden from
+    importing this path at all.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        action = external_actions.claim(
+            conn,
+            grant_id=args.grant,
+            claimed_by="cli",
+            counterparty=args.counterparty,
+            domain=args.domain,
+            platform_account=args.account,
+        )
+    except channel_registry.ChannelError as exc:
+        raise CliError(str(exc)) from exc
+
+    print(f"External action {action.action_id} CLAIMED — nothing has been sent.")
+    print(f"  channel:  {action.channel}")
+    print(f"  intent:   {action.intent}")
+    print(f"  artifact: {action.artifact_id or '(none)'}")
+    print(f"  cell:     {action.cell_id} (lineage {action.founder_cell_id})")
+    if args.counterparty:
+        print("  counterparty: recorded as a salted hash only (§16.3) — not stored")
+    print()
+    print("  Now do it by hand, then run complete-external-action with the outcome")
+    print("  and the minutes it took. Abandon it if you decide not to.")
+    conn.close()
+
+
+def cmd_complete_external_action(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        action = external_actions.complete(
+            conn,
+            action_id=args.action,
+            completed_by="cli",
+            outcome=args.outcome,
+            human_minutes=args.minutes,
+            reference=args.reference,
+        )
+    except channel_registry.ChannelError as exc:
+        raise CliError(str(exc)) from exc
+
+    print(f"External action {action.action_id} completed")
+    print(f"  outcome:       {action.outcome}")
+    print(f"  human minutes: {action.human_minutes} (metered as HUMAN_MINUTES, §2.2)")
+    frozen, reason = channel_registry.channel_frozen(conn, action.channel)
+    if frozen:
+        print(f"  §21.1: channel {action.channel} is now FROZEN — {reason}")
+        print("         nothing else goes out on it until unfreeze-channel is run")
+        print("         the counterparty is permanently on the do-not-contact list")
+    print("  The Cell has been woken; it will see the outcome in its next context.")
+    conn.close()
+
+
+def cmd_abandon_external_action(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        action = external_actions.abandon(
+            conn, action_id=args.action, abandoned_by="cli", reason=args.reason
+        )
+    except channel_registry.ChannelError as exc:
+        raise CliError(str(exc)) from exc
+    print(f"External action {action.action_id} abandoned — the claim is released.")
+    print("  The grant is NOT restored: claiming took a slot another lineage could use.")
+    conn.close()
+
+
+def cmd_unfreeze_channel(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        channel_registry.acknowledge_channel(
+            conn, channel=args.channel, acknowledged_by="cli", note=args.note
+        )
+    except channel_registry.ChannelError as exc:
+        raise CliError(str(exc)) from exc
+    print(f"Channel {args.channel} unfrozen. Recorded with your stated reason.")
+    conn.close()
+
+
+def cmd_external_actions(args: argparse.Namespace) -> None:
+    """The registry itself (§21.2). Note what it cannot show you: who."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    rows = conn.execute(
+        """
+        SELECT action_id, cell_id, channel, intent, status, outcome, human_minutes,
+               claimed_at_utc, artifact_id
+          FROM external_action_registry ORDER BY claimed_at_utc DESC LIMIT ?
+        """,
+        (args.limit,),
+    ).fetchall()
+    if not rows:
+        print("No external actions on record.")
+        conn.close()
+        return
+    for row in rows:
+        print(f"{row['action_id']}  [{row['channel']}] {row['status']}")
+        print(f"    cell {row['cell_id']} · {row['claimed_at_utc']}")
+        print(f"    {row['intent']}")
+        if row["outcome"]:
+            print(f"    outcome: {row['outcome']} · {row['human_minutes']} human minutes")
+        if row["artifact_id"]:
+            print(f"    delivered artifact {row['artifact_id']}")
+    blocks = conn.execute(
+        "SELECT COUNT(*) AS n FROM counterparty_blocks"
+    ).fetchone()["n"]
+    print()
+    print(f"Do-not-contact list: {blocks} counterparties (hashes only — §16.3)")
     conn.close()
 
 
@@ -2337,6 +2514,75 @@ def build_parser() -> argparse.ArgumentParser:
              "call refuses (§19.3 ships the network disabled)",
     )
     run_tool_parser.set_defaults(func=cmd_run_tool)
+
+    channels_parser = subparsers.add_parser(
+        "channels", help="external channels, their gates and caps (§21)"
+    )
+    channels_parser.set_defaults(func=cmd_channels)
+
+    ext_check_parser = subparsers.add_parser(
+        "external-check",
+        help="would this external action collide? (§21.2 'prevent' — ask before acting)",
+    )
+    ext_check_parser.add_argument("--channel", required=True)
+    ext_check_parser.add_argument(
+        "--counterparty", default=None,
+        help="who it would go to. Hashed to ask the question; never stored by this verb",
+    )
+    ext_check_parser.set_defaults(func=cmd_external_check)
+
+    claim_parser = subparsers.add_parser(
+        "claim-external-action",
+        help="hold a channel against an approved grant, before a person acts (§21.2)",
+    )
+    claim_parser.add_argument("--grant", required=True, help="approved grant_id")
+    claim_parser.add_argument(
+        "--counterparty", default=None,
+        help="who the action addresses. Stored as a salted hash only (§16.3)",
+    )
+    claim_parser.add_argument("--domain", default=None, help="§21.2 'domain used'")
+    claim_parser.add_argument("--account", default=None, help="§21.2 'platform account'")
+    claim_parser.set_defaults(func=cmd_claim_external_action)
+
+    complete_parser = subparsers.add_parser(
+        "complete-external-action", help="record what a person did, and what it cost them"
+    )
+    complete_parser.add_argument("--action", required=True, help="action_id from the claim")
+    complete_parser.add_argument(
+        "--outcome", required=True,
+        choices=sorted(channel_registry.OUTCOMES),
+        help="what was observed. 'complaint'/'blocked' freeze the channel (§21.1)",
+    )
+    complete_parser.add_argument(
+        "--minutes", required=True, type=int,
+        help="human minutes it actually took — §28 Phase 8 measures human labour",
+    )
+    complete_parser.add_argument(
+        "--reference", default=None, help="your own external reference (message id, URL)"
+    )
+    complete_parser.set_defaults(func=cmd_complete_external_action)
+
+    abandon_parser = subparsers.add_parser(
+        "abandon-external-action", help="release a claim without having acted on it"
+    )
+    abandon_parser.add_argument("--action", required=True)
+    abandon_parser.add_argument("--reason", required=True, help="why — recorded")
+    abandon_parser.set_defaults(func=cmd_abandon_external_action)
+
+    unfreeze_parser = subparsers.add_parser(
+        "unfreeze-channel", help="clear a channel frozen by §21.1 reputation damage"
+    )
+    unfreeze_parser.add_argument("--channel", required=True)
+    unfreeze_parser.add_argument(
+        "--note", required=True, help="why it is safe to continue; recorded"
+    )
+    unfreeze_parser.set_defaults(func=cmd_unfreeze_channel)
+
+    ext_actions_parser = subparsers.add_parser(
+        "external-actions", help="the §21.2 registry: what the colony did outside itself"
+    )
+    ext_actions_parser.add_argument("--limit", type=int, default=20)
+    ext_actions_parser.set_defaults(func=cmd_external_actions)
 
     ack_parser = subparsers.add_parser(
         "ack-alarm", help="acknowledge and clear a raised metabolic alarm (§23.3)"

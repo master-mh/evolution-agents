@@ -60,11 +60,13 @@ from pathlib import Path
 from . import (
     approval,
     artifacts,
+    channel_registry,
     auditor,
     clock,
     deliberation,
     db,
     events,
+    external_actions,
     gateway,
     ids,
     ledger,
@@ -417,7 +419,70 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           every book (20 / 1550).** The revenue is deliberately USD_SIM: a
 #           golden run must never move real money, and `record_revenue` is the
 #           one verb that brings money in.
-EXPECTATION_VERSION = 15
+#   15 -> 16 (the external-action registry, §21/§23.4/§16.3/§28 Phase 8;
+#           ADR-036). The largest diff since the gateway, and most of it is one
+#           cause: the scenario gains **three deliberations** (two granted
+#           external actions plus the one whose claim is refused), and every
+#           section that counts wakes moves with them.
+#           (a) **`external_actions` (new)**: two rows, both `completed`, both
+#               on `email`, both `addressed: true`, both `delivers_artifact:
+#               true`. Outcomes are deliberately `no_response` and `complaint`
+#               — a run where nothing ever went wrong would pass identically
+#               against a kernel that recorded damage and acted on none of it.
+#               **There is no `counterparty_hash` field and there must never
+#               be**: the salt is generated per colony, so the value is
+#               volatile — but the real reason is that a snapshot is a file
+#               people read, and a stable per-person token in one would undo in
+#               the readable artifact what §16.3 asked the schema not to hold.
+#           (b) **`channel_frozen` (new)**: `{email: true, ...}`. The complaint
+#               froze the channel colony-wide (§21.1) and nothing in the
+#               scenario clears it, so the run ends with a halted channel —
+#               which is the honest end state and pins that a complaint does
+#               something rather than merely being written down.
+#           (c) **`counterparty_blocks` (new)**: `["complaint"]` — reasons, not
+#               hashes. The do-not-contact list is the strongest thing hashing
+#               buys and this is the line that proves it is populated.
+#           (d) **`human_minutes` (new)**: `{reported: 38, billed: 34}`, and
+#               **the two differ on purpose**. §2.2's `HUMAN_MINUTES` had been
+#               declared since Phase 1 and metered by nothing. The first action
+#               runs 4 minutes past what the email channel bills a Cell for, so
+#               the Cell pays 30 and the registry records 34 — §1's "hidden
+#               human labour and subsidy", exposed rather than capped away. A
+#               snapshot with only one figure could not distinguish a colony
+#               that measures its human cost from one that quietly truncates it.
+#           (e) `approval_requests` 3 -> 6 and `approval_grants` 2 -> 5. All
+#               three new requests are `reversible: false`, `HIGH`, and carry
+#               **no signals**, and every part of that is load-bearing.
+#               `exposure_minor_units: 0` beside a HIGH tier is the tell that
+#               this kind is dangerous for a reason that has nothing to do with
+#               money. The empty `signals` list is the *second* draft: the
+#               first claimed MEDIUM and tripped `understated_risk` on all
+#               three, which looked like a working detector and was the
+#               opposite — a §23.4 signal that fires on every external action
+#               ever proposed distinguishes nothing. The context now states the
+#               tier, so an understated claim is a real one again.
+#           (f) `resource_usage` gains two `human_minutes` rows (30 and 4) and
+#               `transaction_types` gains `RESOURCE::reservation_release: 1` —
+#               one claim settles fully (its 30 billable minutes exactly
+#               exhaust the reservation) and one settles partially and releases
+#               the rest, so both branches of the settle/release pair replay.
+#           (g) `deliberations` `context_tokens` rise across the board (381 ->
+#               554 on cell#1) because every Cell now sees a "Channels you may
+#               request" section. The first draft of that section cost 318 of
+#               a 1200-token budget — a quarter of every wake, on a capability
+#               whose flags ship off — and was cut to ~150; §15.1's budget is
+#               the reason the registry ships a `short_description` at all.
+#           (h) `autonomy` gains `external_message: true` — opened inside the
+#               scenario rather than in setup, so a colony that ever shipped
+#               the flag open by default diffs here.
+#           **No USD_REAL balance moves and `external_expense` is unchanged in
+#           every book (20 / 1550).** `USD_REAL::reservation_reserve` 8 -> 11
+#           and `release` 6 -> 9 move as a pair — the three new wakes reserve
+#           and release, never settle, which is the tell that they cost nothing.
+#           `cells`, `predictions`, `artifacts`, `coroner_reports` and
+#           `promotions` are byte-identical: an external action reaches outside
+#           the colony and changes nothing about who exists inside it.
+EXPECTATION_VERSION = 16
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -522,6 +587,41 @@ def _post_fetch_reply(tool_call_id: str) -> str:
                 "title": "golden-run write-up of a fetched page",
                 "content": "Fixed scenario artifact. Derived from one fetched page.",
                 "source_tool_call_ids": [tool_call_id],
+            },
+        },
+        sort_keys=True,
+    )
+
+
+# The §21 external-action request. Built per-run because it delivers the
+# artifact the scenario actually produced — a hard-coded id would pin the shape
+# of delivery while proving nothing about the export gate in front of it.
+def _external_action_reply(artifact_id: str, *, intent: str) -> str:
+    """Note what is *not* here: anyone's name. A Cell names a channel and a
+    purpose; the operator names the counterparty at claim time and the kernel
+    stores a salted hash of it (§16.3). A reply carrying an address would fail
+    `proposal.parse` outright, which is the point of the tripwire."""
+    return json.dumps(
+        {
+            "kind": "external_action",
+            "summary": "golden-run outreach on a fixed channel",
+            "rationale": (
+                "fixed scenario external action; exists to pin §21.2's registry "
+                "and the refusals in front of it"
+            ),
+            # HIGH because the kernel assesses every external action HIGH and
+            # the context now says so. A MEDIUM claim here would trip
+            # `understated_risk` on every single external action ever proposed,
+            # which is a signal that fires unconditionally and therefore
+            # carries no information — the §23.4 detections are only worth
+            # having while they distinguish something.
+            "risk_tier": "HIGH",
+            "estimated_cost_minor_units": 0,
+            "predictions": [],
+            "external_action": {
+                "channel": "email",
+                "intent": intent,
+                "artifact_id": artifact_id,
             },
         },
         sort_keys=True,
@@ -1237,7 +1337,132 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         idempotency_key="golden:revenue:artifact",
     )
 
-    # 19. Simulated clock.
+    # 19. The external-action registry (§21, §28 Phase 8; ADR-036). The Cell
+    #     proposes a channel and a purpose — never a person — a human approves
+    #     it, and a human claims the channel, does the thing, and records what
+    #     happened. **Nothing in this step sends anything**, which is why it is
+    #     safe in a replay at all.
+    #
+    #     Three things are pinned that a happier scenario would miss:
+    #
+    #     (a) **A refusal that fires.** A second lineage claiming the same
+    #         counterparty is rejected as a §21.3 sibling collision. Without it
+    #         the run would pass identically against a registry that refused
+    #         nothing, which is the same trap ADR-035's commercial-export step
+    #         was built to avoid.
+    #     (b) **Both damage states.** One action completes `no_response` and one
+    #         completes `complaint`, so the snapshot contains a frozen channel
+    #         *and* an unfrozen history rather than a column that is uniformly
+    #         one value — the failure mode ADR-031's `born_in_epoch` nearly
+    #         shipped with.
+    #     (c) **Human minutes.** §2.2's `HUMAN_MINUTES` has been declared since
+    #         Phase 1 and metered by nothing; a replay that never records any
+    #         cannot tell whether Phase 8's North Star is computable.
+    tools.set_autonomy(
+        conn, flag="external_message", enabled=True, changed_by="golden-operator"
+    )
+
+    def _granted_external_action(cell, *, wake_key: str, intent: str):
+        deliberation.deliberate(
+            conn,
+            cell_id=cell.cell_id,
+            provider=providers.MockProvider(
+                reply=_external_action_reply(golden_artifact, intent=intent)
+            ),
+            wake_key=wake_key,
+            wake_reason=deliberation.WAKE_SCHEDULED_RESEARCH,
+            model="mock-1",
+            proposal_sink=approval.QueueSink(),
+        )
+        request = next(
+            r
+            for r in approval.queue(conn)
+            if r.cell_id == cell.cell_id and r.status == approval.RequestStatus.PENDING
+        )
+        return approval.approve(
+            conn,
+            request_id=request.request_id,
+            decided_by="golden-operator",
+            reason="fixed scenario approval; §21 external action, performed by hand",
+        )
+
+    first_grant = _granted_external_action(
+        auditor_child,
+        wake_key="golden:wake:external-action",
+        intent="introduce the write-up",
+    )
+    first_action = external_actions.claim(
+        conn,
+        grant_id=first_grant.grant_id,
+        claimed_by="golden-operator",
+        counterparty="golden-first@golden.test",
+        domain="golden.test",
+        platform_account="golden-operator",
+    )
+
+    #     (a) The sibling collision. The explorer is a different lineage, so a
+    #         lineage-keyed window would see nothing at all here — which is
+    #         precisely §21.2's "many lineages, one counterparty". It also has no
+    #         RESOURCE cash, and the refusal still lands as a collision rather
+    #         than an insufficient balance: the §21.2 checks run *before* the
+    #         reservation, so being refused a channel never costs a Cell budget.
+    second_grant = _granted_external_action(
+        explorer,
+        wake_key="golden:wake:external-action-collision",
+        intent="introduce the same write-up to the same person",
+    )
+    try:
+        external_actions.claim(
+            conn,
+            grant_id=second_grant.grant_id,
+            claimed_by="golden-operator",
+            counterparty="golden-first@golden.test",
+        )
+        raise AssertionError("§21.3 should have refused a second lineage's contact")
+    except channel_registry.SiblingCollision:
+        pass
+
+    #     (c) Deliberately *over* the email channel's billable ceiling. The Cell
+    #         pays 30 minutes' worth and the registry records 34, and the
+    #         4-minute gap is §1's subsidy figure — the quantity that clause
+    #         asks to be exposed rather than prevented. A run where every action
+    #         came in under the ceiling would pass identically against a kernel
+    #         that silently capped what it recorded. It also settles the
+    #         reservation *fully* while the second settles partially, so both
+    #         branches of the settle/release pair are replayed.
+    external_actions.complete(
+        conn,
+        action_id=first_action.action_id,
+        completed_by="golden-operator",
+        outcome="no_response",
+        human_minutes=34,
+        reference="golden-run message reference",
+    )
+
+    #     (b) The damaging outcome. The grant refused above is spent, so this
+    #         uses a third one against a different counterparty — a complaint
+    #         freezes the channel colony-wide and blocks that counterparty
+    #         permanently, and both are visible in the snapshot.
+    third_grant = _granted_external_action(
+        auditor_child,
+        wake_key="golden:wake:external-action-complaint",
+        intent="a second introduction, which goes badly",
+    )
+    third_action = external_actions.claim(
+        conn,
+        grant_id=third_grant.grant_id,
+        claimed_by="golden-operator",
+        counterparty="golden-second@golden.test",
+    )
+    external_actions.complete(
+        conn,
+        action_id=third_action.action_id,
+        completed_by="golden-operator",
+        outcome="complaint",
+        human_minutes=4,
+    )
+
+    # 20. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
 
@@ -1492,6 +1717,59 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "SELECT COUNT(*) AS n FROM ledger_entries WHERE artifact_id IS NOT NULL"
     ).fetchone()["n"]
 
+    # §21.2's registry. **`counterparty_hash` is deliberately absent**, and for
+    # once the reason is not that the value is volatile — though it is, since
+    # the colony's salt is generated per run. It is that a snapshot is a
+    # human-readable artifact checked into the repository, and putting a stable
+    # per-person token into one would undo, in the place people actually read,
+    # the thing §16.3 asked the schema not to hold. `addressed` says whether
+    # there *was* a counterparty; that is the whole of what a replay needs.
+    #
+    # `human_minutes` and `billed_human_minutes` are both pinned because they
+    # differ when a person spends more than the Cell can pay for, and the gap is
+    # §1's subsidy figure. A snapshot carrying only one of them could not tell a
+    # colony that measured its human cost from one that quietly capped it.
+    external_action_rows = [
+        {
+            "cell": aliases.get(row["cell_id"], "cell#?"),
+            "channel": row["channel"],
+            "intent": row["intent"],
+            "addressed": row["counterparty_hash"] is not None,
+            "domain": row["domain"],
+            "platform_account": row["platform_account"],
+            "delivers_artifact": row["artifact_id"] is not None,
+            "status": row["status"],
+            "outcome": row["outcome"],
+            "human_minutes": row["human_minutes"],
+        }
+        for row in conn.execute(
+            "SELECT * FROM external_action_registry ORDER BY rowid"
+        ).fetchall()
+    ]
+
+    # §21.1. A frozen channel and a non-empty do-not-contact list are what a
+    # complaint *does*; a replay in which neither ever fires would pass against
+    # a kernel that recorded the outcome and acted on nothing.
+    channel_freeze_state = {
+        channel: bool(channel_registry.channel_frozen(conn, channel)[0])
+        for channel in sorted(channel_registry.REGISTRY)
+    }
+    counterparty_block_reasons = sorted(
+        row["reason"]
+        for row in conn.execute("SELECT reason FROM counterparty_blocks").fetchall()
+    )
+
+    # §2.2's `human_minutes`, metered for the first time. Colony-wide totals
+    # rather than per-Cell: Phase 8's North Star is "human minutes/artifact",
+    # and the denominator is already pinned by `artifacts` above.
+    human_minutes = {
+        "reported": channel_registry.human_minutes_total(conn),
+        "billed": conn.execute(
+            "SELECT COALESCE(SUM(quantity), 0) AS q FROM resource_usage "
+            "WHERE resource_type = 'human_minutes'"
+        ).fetchone()["q"],
+    }
+
     # Charter C12 and §27.1. Both start closed, so a colony that shipped with
     # either open would diff here — which is the regression most worth catching
     # in this whole section.
@@ -1649,6 +1927,10 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "tool_calls": tool_call_rows,
         "artifacts": artifact_rows,
         "artifact_lineage": artifact_lineage_shape,
+        "external_actions": external_action_rows,
+        "channel_frozen": channel_freeze_state,
+        "counterparty_blocks": counterparty_block_reasons,
+        "human_minutes": human_minutes,
         "artifact_attributed_ledger_entries": attributed_entries,
         "egress_allowlist": egress_domains,
         "autonomy": autonomy_flags,

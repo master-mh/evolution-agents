@@ -32,6 +32,10 @@ single highest-value habit in this repo. Some precedents:
 - **§0.3** — "a Cell may *explain* a result; it may never *define* the canonical result" — is why
   the proposal schema has no field for what a Cell earned or achieved (`proposal.py`).
 - **§25.1**'s promotion ladder is why the agent loop proposes but cannot act.
+- **§16.3** makes "customer identity" non-inheritable, so the external-action registry stores a
+  salted *hash* of a counterparty and never the counterparty — a `customers` table is the obvious
+  design and the one the clause warns about (`channel_registry.py`). Dedupe needs equality, not
+  identity, so everything §21.2 asks still works.
 
 Before designing a slice, `grep -n` SPEC.md for the section and read that range. **Never read
 SPEC.md wholesale** — it is large, and the relevant slice is usually 20 lines.
@@ -84,6 +88,12 @@ injected seam rather than an import**. Established examples: `sweeper.ExternalOp
 (implemented by `gateway.GatewayOperationChecker`) and `population.Displacer` (implemented by
 `displacement.ObjectiveDisplacer`). Follow this pattern rather than adding a back-edge or a
 function-local import.
+
+The other established move is a **registry/executor split**: `tool_registry` / `tools` and
+`channel_registry` / `external_actions`. Everything that *reads or refuses* sits low enough for
+`context` to import; the part that *consumes a grant* sits above `approval`. In both cases the
+layering cut and a safety boundary want the same line — `context` can list capabilities and read
+results, and has no path to running one.
 
 Some seams are shaped by a *constraint*, not just by layering: `population.Displacer` takes no
 information about the child being born, because §9.3 forbids a child's forecast triggering a kill

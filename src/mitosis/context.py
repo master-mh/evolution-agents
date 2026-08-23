@@ -51,7 +51,15 @@ from dataclasses import dataclass, field
 # `tool_registry`, never `tools`: the executor sits above this module and
 # importing it would both close a dependency loop and give the deliberation
 # path a route to running a tool, which §19.4 forbids. See tool_registry.py.
-from . import artifacts, ledger, lineage, prediction, revenue, tool_registry
+from . import (
+    artifacts,
+    channel_registry,
+    ledger,
+    lineage,
+    prediction,
+    revenue,
+    tool_registry,
+)
 from .accounts import cell_cash, cell_committed
 from .models import Cell
 
@@ -385,6 +393,77 @@ def _observations_section(conn: sqlite3.Connection, cell: Cell) -> Section | Non
     )
 
 
+def _external_history_section(conn: sqlite3.Connection, cell: Cell) -> Section | None:
+    """What came of the external actions this Cell asked for (§21.2, §25.2).
+
+    The feedback half of the registry, and the reason it is worth having one. A
+    Cell that proposes outreach and is never told that nobody replied will
+    propose the same outreach forever — §25.2's read-back exists for exactly
+    this shape of blindness, one rung further down.
+
+    **The counterparty is not here, in any form.** `history_for` does not select
+    the hash, and that is not squeamishness: a stable per-person token in a
+    prompt is a re-identifiable handle a Cell could correlate across wakes,
+    which would reconstruct by inference the identity §16.3 stopped the colony
+    from storing. What a Cell needs is the channel, the outcome, and what it
+    cost a person — all of which are here.
+    """
+    history = channel_registry.history_for(conn, cell.cell_id)
+    if not history:
+        return None
+
+    lines = []
+    for item in history:
+        outcome = item["outcome"] or "not yet done by anyone"
+        minutes = item["human_minutes"]
+        cost = f" · {minutes} human minutes" if minutes else ""
+        lines.append(
+            f"- [{item['channel']}] {item['intent']}\n"
+            f"    {item['status']} · outcome: {outcome}{cost}"
+        )
+    return Section(
+        name="External actions taken on your behalf (by a person)",
+        body="\n".join(lines),
+    )
+
+
+def _available_channels_section(conn: sqlite3.Connection) -> Section | None:
+    """What a Cell may *ask* a person to do (§21, §28 Phase 8).
+
+    Same shape as the tool section above and the same disclaimer, plus one that
+    only applies here: **a Cell does not choose who is contacted.** Saying so in
+    the body is cheaper than refusing a proposal that names someone, and it is
+    the difference between a Cell that asks for "an introduction on the email
+    channel" and one that spends a wake inventing an address from a page it
+    read — which is the §19.4 failure wearing commercial clothes.
+    """
+    if not channel_registry.REGISTRY:
+        return None
+    # Kept tight on purpose. The first draft spent 318 of a 1200-token budget
+    # here — a quarter of every wake, on a section a Cell mostly cannot act on
+    # because the flags ship off. §15.1's budget is a real constraint and this
+    # section competes with the Cell's own record for it.
+    lines = [
+        "PROPOSE an external_action naming one of these. A PERSON does it by "
+        "hand; nothing is ever sent automatically. You do not choose the "
+        "recipient — name the channel and the purpose, and never put a name or "
+        "an address in a proposal. Caps are colony-wide, shared by every Cell. "
+        "Every external_action is assessed HIGH risk whatever you claim, so "
+        "claim HIGH: the colony's reputation is shared and unrepairable.",
+    ]
+    for spec in sorted(channel_registry.REGISTRY.values(), key=lambda c: c.channel_id):
+        enabled = tool_registry.autonomy_enabled(conn, spec.autonomy_flag)
+        frozen, _ = channel_registry.channel_frozen(conn, spec.channel_id)
+        state = "on" if enabled else "OFF, will be refused"
+        if frozen:
+            state = "FROZEN after a complaint"
+        lines.append(
+            f"- {spec.channel_id} ({state}): {spec.short_description}; "
+            f"{spec.max_actions_per_window}/day, {spec.max_open_claims} open"
+        )
+    return Section(name="Channels you may request", body="\n".join(lines))
+
+
 def _available_tools_section(conn: sqlite3.Connection) -> Section | None:
     """What a Cell may *ask* for (§0.4).
 
@@ -443,7 +522,9 @@ def assemble(
         _recent_proposals_section(conn, cell),
         _observations_section(conn, cell),
         _artifact_index_section(conn, cell),
+        _external_history_section(conn, cell),
         _available_tools_section(conn),
+        _available_channels_section(conn),
     ):
         if optional is not None:
             candidates.append(optional)

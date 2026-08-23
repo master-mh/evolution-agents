@@ -144,85 +144,20 @@ def request(
     `provider` tags the reservation for §5.1's per-provider real-spend cap
     and is set only by the model gateway.
     """
-    existing = get_reservation_by_idempotency_key(conn, idempotency_key)
-    if existing is not None:
-        return existing
-
-    if maximum_amount <= 0:
-        raise ReservationError("maximum_amount must be positive")
-    if expires_at.tzinfo is None:
-        raise ReservationError("expires_at must be timezone-aware UTC (Charter C11)")
-
-    reservation_id = ids.new_id()
-    now = datetime.now(timezone.utc)
-
     conn.execute("BEGIN IMMEDIATE")
     try:
-        # Checked inside the write-locked transaction, not before it: two
-        # concurrent USD_REAL requests must not both pass this check before
-        # either commits (Charter C5 under concurrency). USD_SIM/RESOURCE
-        # reservations are untouched — the breaker is real-spend only.
-        if book == Book.USD_REAL:
-            real_spend_breaker.check(
-                conn, requested_amount=maximum_amount, now=now, provider=provider
-            )
-
-        # Charter C4, all books: a Cell cannot reserve more than it
-        # currently holds in cash. Checked under the same write lock as the
-        # C5 breaker above, for the same concurrency reason.
-        available = ledger.get_balance(conn, cell_cash(cell_id), book)
-        if maximum_amount > available:
-            raise InsufficientBalanceError(
-                f"cell {cell_id} has {available} available in {book.value}, "
-                f"cannot reserve {maximum_amount} (Charter C4)"
-            )
-
-        ledger._write_transaction(
+        reservation = _request_locked(
             conn,
+            cell_id=cell_id,
             book=book,
             currency=currency,
-            transaction_type="reservation_reserve",
-            idempotency_key=f"reservation_reserve:{reservation_id}",
-            description=f"reserve {maximum_amount} for cell {cell_id}",
-            entries=[
-                EntrySpec(
-                    account_id=cell_cash(cell_id),
-                    amount_minor_units=-maximum_amount,
-                    cell_id=cell_id,
-                    experiment_id=experiment_id,
-                ),
-                EntrySpec(
-                    account_id=cell_committed(cell_id),
-                    amount_minor_units=maximum_amount,
-                    cell_id=cell_id,
-                    experiment_id=experiment_id,
-                ),
-            ],
-        )
-        conn.execute(
-            """
-            INSERT INTO reservations (
-                reservation_id, cell_id, experiment_id, book, currency,
-                maximum_amount, settled_amount, reserved_at, expires_at,
-                external_operation_type, external_operation_id, status,
-                idempotency_key, provider
-            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                reservation_id,
-                cell_id,
-                experiment_id,
-                book.value,
-                currency,
-                maximum_amount,
-                now.isoformat(),
-                expires_at.astimezone(timezone.utc).isoformat(),
-                external_operation_type,
-                external_operation_id,
-                ReservationStatus.RESERVED.value,
-                idempotency_key,
-                provider,
-            ),
+            maximum_amount=maximum_amount,
+            expires_at=expires_at,
+            idempotency_key=idempotency_key,
+            experiment_id=experiment_id,
+            external_operation_type=external_operation_type,
+            external_operation_id=external_operation_id,
+            provider=provider,
         )
         conn.execute("COMMIT")
     except sqlite3.IntegrityError as exc:
@@ -235,6 +170,114 @@ def request(
     except Exception:
         conn.execute("ROLLBACK")
         raise
+    return reservation
+
+
+def _request_locked(
+    conn: sqlite3.Connection,
+    *,
+    cell_id: str,
+    book: Book,
+    currency: str,
+    maximum_amount: int,
+    expires_at: datetime,
+    idempotency_key: str,
+    experiment_id: str | None = None,
+    external_operation_type: str | None = None,
+    external_operation_id: str | None = None,
+    provider: str | None = None,
+) -> Reservation:
+    """Non-transactional core of `request`. Caller holds the write lock.
+
+    Extracted so a caller with nothing to keep *outside* a transaction can fold
+    the reservation into its own atomic step — `external_actions.claim` consumes
+    a grant, claims a counterparty and reserves the human minutes together, and
+    a partially-applied version of that is either a held counterparty with
+    nothing metered behind it or a charge against a claim nobody holds.
+
+    The gateway and the tool surface deliberately do **not** use this: ADR-022
+    requires their reservation to be committed *before* anything leaves the
+    machine, so for them a separate transaction is the guarantee rather than a
+    limitation. The difference is that this path makes no external call at all.
+    """
+    existing = get_reservation_by_idempotency_key(conn, idempotency_key)
+    if existing is not None:
+        return existing
+
+    if maximum_amount <= 0:
+        raise ReservationError("maximum_amount must be positive")
+    if expires_at.tzinfo is None:
+        raise ReservationError("expires_at must be timezone-aware UTC (Charter C11)")
+
+    reservation_id = ids.new_id()
+    now = datetime.now(timezone.utc)
+
+    # Checked inside the write-locked transaction, not before it: two
+    # concurrent USD_REAL requests must not both pass this check before
+    # either commits (Charter C5 under concurrency). USD_SIM/RESOURCE
+    # reservations are untouched — the breaker is real-spend only.
+    if book == Book.USD_REAL:
+        real_spend_breaker.check(
+            conn, requested_amount=maximum_amount, now=now, provider=provider
+        )
+
+    # Charter C4, all books: a Cell cannot reserve more than it
+    # currently holds in cash. Checked under the same write lock as the
+    # C5 breaker above, for the same concurrency reason.
+    available = ledger.get_balance(conn, cell_cash(cell_id), book)
+    if maximum_amount > available:
+        raise InsufficientBalanceError(
+            f"cell {cell_id} has {available} available in {book.value}, "
+            f"cannot reserve {maximum_amount} (Charter C4)"
+        )
+
+    ledger._write_transaction(
+        conn,
+        book=book,
+        currency=currency,
+        transaction_type="reservation_reserve",
+        idempotency_key=f"reservation_reserve:{reservation_id}",
+        description=f"reserve {maximum_amount} for cell {cell_id}",
+        entries=[
+            EntrySpec(
+                account_id=cell_cash(cell_id),
+                amount_minor_units=-maximum_amount,
+                cell_id=cell_id,
+                experiment_id=experiment_id,
+            ),
+            EntrySpec(
+                account_id=cell_committed(cell_id),
+                amount_minor_units=maximum_amount,
+                cell_id=cell_id,
+                experiment_id=experiment_id,
+            ),
+        ],
+    )
+    conn.execute(
+        """
+        INSERT INTO reservations (
+            reservation_id, cell_id, experiment_id, book, currency,
+            maximum_amount, settled_amount, reserved_at, expires_at,
+            external_operation_type, external_operation_id, status,
+            idempotency_key, provider
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            reservation_id,
+            cell_id,
+            experiment_id,
+            book.value,
+            currency,
+            maximum_amount,
+            now.isoformat(),
+            expires_at.astimezone(timezone.utc).isoformat(),
+            external_operation_type,
+            external_operation_id,
+            ReservationStatus.RESERVED.value,
+            idempotency_key,
+            provider,
+        ),
+    )
 
     result = get_reservation(conn, reservation_id)
     assert result is not None

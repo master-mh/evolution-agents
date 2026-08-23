@@ -605,3 +605,51 @@ actually queued for building — this file is memory, not a backlog to work thro
   Earlier ones: `promotion_pool` and §17.2's wake reasons. **Grep for the socket before designing
   the subsystem** — twice this session the "missing" thing was half-built already, and once
   (`liability_reserve`) a PRIORITIES entry had been wrong about it for weeks.
+
+- **The salt lives beside the hashes, and that bound is worth restating rather than forgetting.**
+  `counterparty_salt` is a row in the same database as `external_action_registry`, so hashing does
+  not protect a counterparty from someone who holds the file and has a particular person in mind.
+  What it buys is that the *colony* cannot enumerate its contacts — no Cell, Auditor, inherited
+  genome, coroner report or idle table read produces a list of people. A colony that ever needs the
+  stronger property wants the salt outside the database (an env var, a keyring), which trades a
+  real guarantee for an operational failure mode: lose the salt and the do-not-contact list
+  silently empties, with no error anywhere.
+- **No `set-rights` complement, still.** ADR-035 noted an artifact's rights can only get more
+  restrictive; delivery makes that bite harder, because an artifact built on a fetched page is
+  `commercial_use: unknown` forever and can therefore never be exported commercially — so the
+  channel can carry it to a person but never sell it. The gap is the same one; the cost is now
+  visible at the end of the pipeline rather than in the middle.
+- **A claim held before acting is a lock, and nothing sweeps it.** `abandon` is the only release,
+  and it is manual. A claim whose operator walks away holds its counterparty and a channel quota
+  slot until someone notices — the reservation expires after 8 hours and the sweeper reclaims *it*,
+  but the registry row stays `claimed` forever. The obvious complement is expiring a claim the way
+  §23.3 expires an approval (regenerate rather than drop), and it was left out because the policy
+  question — does an expired claim free the counterparty, given that the person may in fact have
+  sent something — deserves an argument rather than a default.
+- **There is no unblock, deliberately, and no way to record a person asking to be contacted again.**
+  §21.1's damage is not the colony's to undo, so `counterparty_blocks` has no delete path. That is
+  right for a complaint and possibly wrong for a `blocked` outcome that later gets resolved out of
+  band. Whatever fills it has to be a §3.6-shaped signed act, not a DELETE.
+- **`external_publish` gates two registered channels and no decision.** `marketplace_listing` and
+  `web_publish` exist in the registry with caps and refusals; §0.4 grants autonomy capability by
+  capability and nobody has argued for either. Registering a channel is cheap and turning the flag
+  on is not — keep those two facts separated.
+- **§21.2's "spend" was cut rather than stubbed.** The clause lists spend among what a registry
+  tracks; a `spend_minor_units` column that never moves the ledger is a fiction, and one that does
+  belongs in the existing `spend_request` path with its breaker and its books. Phase 9's merchant
+  channel is where external spend becomes real, and that is where the link belongs.
+- **Reputation is recorded and never scored, and the counting is one-directional.** `outcome` is a
+  closed set of observations, and nothing aggregates them into a per-channel or per-lineage health
+  number. That was deliberate — a score nothing can validate is theatre — but it means a lineage
+  with a poor record carries no cost until it produces an actual complaint. Real feedback (bounce
+  rates, reply rates over a real volume) is what would make a score honest, and none exists yet.
+- **`human_minutes` is now measured for external actions only.** Phase 8's North Star is "human
+  minutes/artifact" and the denominator is complete, but the numerator counts only the minutes a
+  person spent *acting outside the colony*. Approving a §23 request, resolving a prediction and
+  disputing a charge are all real human minutes that `outcome.py` still counts as *events*. Wiring
+  those to the same meter is the rest of the metric.
+- **A ceiling that reads as prudent can be an off switch, and only the golden run could see it.**
+  The first draft reserved a theoretical worst case of 240 human minutes per action, which cost
+  more RESOURCE than a Cell actually holds — every unit fixture funds generously enough to hide it,
+  and the fixed scenario funds like a real colony. Worth remembering the next time a cap is chosen
+  from first principles rather than from a real balance.

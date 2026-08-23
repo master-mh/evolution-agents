@@ -1252,3 +1252,132 @@ from amendment ID to spec location is complete in one place:
   USD_SIM, deliberately, since a golden run must never move real money. §11.2's five-condition
   downstream credit and §11.4's decay remain unbuilt; they need experiment tracking, which does not
   exist.
+
+## ADR-036: The colony records external actions it cannot take, and never learns who it contacted
+
+- **Status:** Accepted
+- **Spec ref:** §21 (all of), §23.4, §16.3, §20.1, §19.3, §25.1, §27.1, §28 Phases 8–9, §31; Amendment A11; Charter C4, C8; ADR-027, ADR-034, ADR-035
+- **Context:** ADR-035 gave a Cell somewhere to put what it made and a gate for taking it out of
+  the colony. What it did not give it was anywhere for the artifact to *go* — `artifacts.export`
+  records that a human took something outside and there is no channel behind it. §21.2 reserves
+  `external_action_registry` in §31's table list and names the gap precisely: track customer
+  contacted, offer made, channel, domain, platform account, listing, message; prevent duplicate
+  contact, sibling bidding wars, conflicting offers, cannibalisation, account-rate-limit
+  collisions, reputation damage. The design was settled in discussion on 2026-08-23 and recorded
+  in PRIORITIES before it evaporated; this is that design, built.
+- **Decisions, and the alternatives each displaced:**
+  1. **Build the registry, not a sender. Nothing here transmits.** §28's Phase 8 acceptance is
+     "all external action remains manual", and §21.2's own two verbs are *track* and *prevent* —
+     neither is *send*. A person performs the action; the kernel records it and refuses what would
+     collide. Rejected: a channel adapter behind a feature flag, which would have made Phase 8's
+     acceptance a runtime setting rather than a property of the code.
+     `test_nothing_in_the_registry_transmits` is structural — neither module may import anything
+     that opens a socket — because the behavioural version of that test ("assert no email was
+     sent") passes trivially against code that would send one.
+  2. **The counterparty is stored as a salted hash and never as itself.** §16.3 makes "customer
+     identity" and "private customer data" non-inheritable; §20.1 tracks personal data because
+     holding it is a liability. Every question §21.2 asks is a question about *equality* — have we
+     contacted this person, did a sibling get there first, did they ask us to stop — and equality
+     survives hashing. "Who have we contacted" does not, which is the point. Rejected: a
+     `customers` table, which is the obvious design and the one §16.3 warns about.
+     **The strongest argument for it is the do-not-contact list**, not privacy in the abstract:
+     "never contact this person again" is honoured permanently *without the colony ever holding a
+     list of the people who asked*, which a customers table with an opt-out flag cannot do.
+     Stated plainly in the migration: a salt beside the hashes does not defeat someone holding the
+     file with a particular person in mind. What it defeats is the colony enumerating its own
+     contacts — by a Cell, an Auditor, an inherited genome, or an operator reading a table.
+  3. **A Cell names a channel and a purpose; the operator names the person.** This fell out of
+     decision 2 and then reshaped decision 4. A counterparty in `payload_json` is a personal
+     identifier in the Cell's own record, in every later §15 context assembled from it, and in its
+     coroner report — so `ExternalActionSpec` has no field for one, and
+     `FORBIDDEN_COUNTERPARTY_FIELDS` is a tripwire in the style of `FORBIDDEN_FIELD_SENSE` so that
+     adding one has to be an argued change to §16.3. It also means a Cell *naming* a counterparty
+     is itself the finding: the only way it could learn a real address today is from a fetched
+     page, which is `UNTRUSTED_EXTERNAL` and usually personal data.
+  4. **§23.4's aggregation splits in two, each keyed where its dimension is knowable.** ADR-027
+     chose `lineage:{founder}:{kind}` as an explicit stand-in "until counterparty/domain/channel
+     exist". They exist now — but the counterparty does not exist *at approval time* (decision 3),
+     so the approval queue keys an `external_action` on `channel:{id}` and the counterparty
+     aggregation lives in `channel_registry.check_action` at claim time. The gap this closes is
+     not cosmetic: §21.2's worry is *many lineages, one counterparty*, and every splitter a
+     lineage-keyed window can catch shares a founder by construction. Rejected: keying on the
+     counterparty at approval time, which would require the Cell to name a person.
+  5. **Claim before acting, not record after.** The registry row is written first, holding the
+     counterparty and the channel while a person does the work, and settled afterwards with the
+     outcome. Rejected: recording completed actions, which is the obvious shape and makes "prevent"
+     impossible — the second email is already sent by the time the kernel can object. The cost is
+     that an abandoned claim blocks its counterparty until abandoned explicitly, which is the right
+     way round: a pending send is still a pending send. Abandoning does **not** restore the grant —
+     claiming took a slot another lineage could have used, and giving it back would make a claim a
+     free way to reconnoitre who has already been contacted.
+  6. **Refusals here refuse; they do not annotate.** ADR-027 took the opposite line one layer up
+     and it still holds there: a §23.4 signal escalates a tier and never auto-rejects, because risk
+     is a judgement and an automatic rejector is the next thing to optimise against. A collision is
+     not a judgement. "This counterparty was contacted four hours ago by another lineage" is a
+     fact, the operator's judgement was spent at approval time on a world where it had not happened
+     yet, and a refused claim costs nothing irreversible — nothing has been sent.
+  7. **Per-channel rate and quota caps, colony-wide, and no spend cap.** §21.1's shared assets —
+     sending reputation, merchant identity, brand — are the first thing at risk that money cannot
+     repair, and every existing guard (Charter C4, C5, the real-spend breaker, the promotion pool,
+     the metabolic alarm) bounds money only. A refund does not undo a spam complaint. The caps are
+     the *colony's* and not the Cell's, because §9 reproduction makes a per-Cell cap free to escape
+     — the same reasoning ADR-027 used for its aggregation key.
+  8. **A complaint freezes the channel and blocks the counterparty, automatically.** Shaped like
+     §23.3's metabolic alarm: it halts, and only a person with a stated reason restarts it. The
+     colony must not be able to discover that complaints are survivable at a rate it sets itself.
+     `negative_reply` is deliberately *not* damage — being told no is a normal commercial outcome,
+     and treating it as reputational damage would make the colony unable to learn from rejection.
+     There is no unblock verb: §21.1's damage is not the colony's to undo.
+  9. **Reputation is recorded as raw events, never scored.** §21.2 asks for "reputation impact".
+     A number nothing can validate is theatre, so `outcome` is a closed set of observations and
+     nothing derives a score from it. **`spend` was cut from the table entirely** for the same
+     reason: a spend that does not move the ledger is a fiction, and one that does belongs in the
+     existing `spend_request` path with its breaker and its books.
+  10. **Human minutes are metered, and minutes beyond the ceiling are recorded as subsidy rather
+      than refused.** `ResourceType.HUMAN_MINUTES` had been declared since Phase 1 and consumed by
+      nothing, while §1 says autonomy-adjusted profit exists "to expose hidden human labour and
+      subsidy" and `outcome.py` counts intervention *events* but never time. A Cell now pays for
+      the attention it consumes, up to its channel's `max_billable_human_minutes`; the registry
+      records the true figure; and the gap is an audit event. Rejected: refusing an over-ceiling
+      completion — the minutes were already spent, so refusing to write them down does not un-spend
+      them, it only makes the colony's account of its own human cost quieter than reality.
+      **Rejected: a separate ledger account for human supervision.** `resource_usage.resource_type`
+      already carries that distinction and is what `total_quantity_by_type` groups by; a second
+      copy of one fact eventually disagrees with the first.
+  11. **Delivery composes with §19.3's export gateway rather than re-deriving it.** An artifact
+      must already be exported before a channel can deliver it: export decides *whether* something
+      may leave the colony (Charter C13, §20.2), a channel decides only where it goes. Rejected:
+      checking taint and rights again at claim time, which would make delivery a second and
+      inevitably laxer way out of the colony.
+- **Consequences:**
+  - `_is_reversible` gains its second irreversible case. Until now only USD_REAL spend was
+    irreversible; an external action is worse, and reading one as reversible would have let it be
+    batch-approved alongside a USD_SIM experiment.
+  - `reservations` gains the `_request_locked` core it never had, so a caller with nothing to keep
+    outside a transaction can fold a reservation into its own atomic step. The gateway and the tool
+    surface deliberately keep their separate transaction — ADR-022 requires their reservation to
+    commit *before* anything leaves the machine — and the difference is that this path makes no
+    external call at all.
+  - **The colony's ladder position does not change.** §25.1's rung 8 is "Expanded pilot" and rung 7
+    is where ADR-028 already put it. Reaching a real counterparty looks like a climb past both and
+    is not one: the ladder measures what the colony does *unattended*, and unattended this path
+    does nothing. The audit event records rung 6 — §28 Phase 8 by name — and
+    `test_only_the_promotion_module_consumes_a_grant` was loosened a third time to say so.
+  - `external_publish` still has nothing behind it that a Cell can reach: `marketplace_listing` and
+    `web_publish` are registered but every gate ships closed, and the flag is one §0.4 decision per
+    capability.
+- **Found while building, and both changed the design:**
+  - **A ceiling that reads as prudent can be an off switch.** Reserving a theoretical worst case
+    (240 minutes) made one email cost more RESOURCE than a Cell has, and no unit test could see it
+    because every fixture funds generously. The golden run caught it. Hence
+    `max_billable_human_minutes` per channel and `test_a_claim_costs_less_than_a_cell_s_whole_budget`.
+  - **A §23.4 signal that fires unconditionally distinguishes nothing.** The first draft had a Cell
+    claiming MEDIUM against a kernel that assesses every external action HIGH, so
+    `understated_risk` fired on every external action ever proposed — which looks like a working
+    detector and is the opposite. The §15 context now states the tier outright, so an understated
+    claim is a real one again.
+  - **A refusal that misidentifies what went wrong is worse than a blunter one**, because the
+    operator acts on the diagnosis. Found on a live colony: `external-check` supplies no lineage,
+    the sibling query was NULL-safe and so matched the asker's *own* claim, and the message accused
+    a second lineage of interference. The strictness was right and is unchanged; only the diagnosis
+    moved.

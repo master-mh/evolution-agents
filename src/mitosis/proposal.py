@@ -51,6 +51,12 @@ MAX_RATIONALE_CHARS = 2_000
 MAX_CLAIM_CHARS = 300
 MAX_PREDICTIONS = 5
 
+#: What an external action is for, as the operator will read it in the §23.2
+#: payload before deciding whether a person should do it. Short on purpose: an
+#: intent that needs a page to state is a plan, and the plan belongs in the
+#: rationale where a reviewer already reads it.
+MAX_INTENT_CHARS = 300
+
 #: An artifact's body, carried on the proposal that produced it. Far larger than
 #: `MAX_RATIONALE_CHARS` and that asymmetry is deliberate: §15's caps exist
 #: because today's proposal is tomorrow's context, and an artifact's content
@@ -84,6 +90,14 @@ class ProposalKind(StrEnum):
     #: and importing it would invert the layering the kernel keeps everywhere.
     #: `tools.validate_request` checks it at proposal-record and execute time.
     TOOL_REQUEST = "tool_request"
+    #: Ask that a *person* take one action outside the colony on the Cell's
+    #: behalf (§21, §28 Phase 8). Like the two above it is a request and not an
+    #: action — and unlike them, nothing in the kernel can ever execute it: §28
+    #: Phase 8's acceptance is "all external action remains manual", so an
+    #: approved grant authorises a human to act and to record what they did.
+    #: The channel id is validated by `channel_registry.validate_request` at
+    #: record time for the same layering reason `tool_request.tool` is.
+    EXTERNAL_ACTION = "external_action"
     #: A first-class outcome, not a failure. A Cell with nothing worth doing
     #: should say so; the alternative is a Cell that invents work because the
     #: schema gave it no way to decline. (Abstaining is still not free — §10.5
@@ -159,6 +173,38 @@ class ToolRequestSpec(BaseModel):
         return value
 
 
+class ExternalActionSpec(BaseModel):
+    """One action a person is being asked to take outside the colony (§21, §28).
+
+    **There is no field for who.** A Cell names a channel and a purpose; the
+    operator names the counterparty at claim time and the kernel stores only a
+    salted hash of it. Three reasons, in `external_actions.py` — the shortest is
+    that §16.3 makes customer identity non-inheritable, and a proposal is
+    inherited context: an address written here would sit in the Cell's own
+    record, in every later §15 context assembled from it, and in its coroner
+    report. `FORBIDDEN_COUNTERPARTY_FIELDS` makes adding one trip an alarm.
+
+    **`artifact_id` cites the Cell's own work, and citing it is not permission
+    to send it.** §19.3's export gateway still has to have let the artifact out
+    of the colony first; a channel decides only where an already-exported thing
+    goes.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    channel: str = Field(min_length=1, max_length=64)
+    intent: str = Field(min_length=1, max_length=MAX_INTENT_CHARS)
+    #: An artifact this Cell produced, if the action delivers one.
+    artifact_id: str | None = None
+
+    @field_validator("intent")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value.strip()
+
+
 class ArtifactSpec(BaseModel):
     """A deliverable the Cell produced during this wake (§28 Phase 8, §20).
 
@@ -210,6 +256,8 @@ class Proposal(BaseModel):
     )
     #: Present exactly when `kind` is TOOL_REQUEST — see `_tool_request_matches_kind`.
     tool_request: ToolRequestSpec | None = None
+    #: Present exactly when `kind` is EXTERNAL_ACTION — same rule, same reason.
+    external_action: ExternalActionSpec | None = None
     #: What the Cell made this wake, if anything. Allowed alongside any kind
     #: except ABSTAIN: production is not gated (§28 Phase 8 gates *external
     #: use*), so a Cell may hand over a draft while proposing what to do next.
@@ -243,6 +291,26 @@ class Proposal(BaseModel):
         if self.kind is not ProposalKind.TOOL_REQUEST and self.tool_request is not None:
             raise ValueError(
                 f"only a tool_request proposal may carry a tool_request, not {self.kind.value}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _external_action_matches_kind(self) -> "Proposal":
+        """An external_action proposal carries one, and nothing else does.
+
+        The second half is the load-bearing one here, more so than for
+        `tool_request`. An `experiment` is the kind a reviewer reads as "yes, go
+        think about that"; letting one carry an external action would mean the
+        colony's single shared reputation (§21.1) could be spent under an
+        approval nobody read as being about that. `external_actions.claim`
+        refuses the pairing again at claim time.
+        """
+        if self.kind is ProposalKind.EXTERNAL_ACTION and self.external_action is None:
+            raise ValueError("an external_action proposal must carry an external_action")
+        if self.kind is not ProposalKind.EXTERNAL_ACTION and self.external_action is not None:
+            raise ValueError(
+                "only an external_action proposal may carry an external_action, not "
+                f"{self.kind.value}"
             )
         return self
 
@@ -289,6 +357,29 @@ FORBIDDEN_FIELD_SENSE: dict[str, str] = {
     "calibration": "comes from resolved predictions in the hash-chained register",
     "authorised": "authorisation is the kernel's, never the Cell's to assert",
     "approved": "§23 approval is the operator's; a Cell cannot approve itself",
+}
+
+
+#: Field names an `ExternalActionSpec` must never carry. A second tripwire in
+#: the same style as `FORBIDDEN_FIELD_SENSE` above, guarding a different
+#: boundary: §0.3 keeps a Cell from defining its own *result*, and this keeps it
+#: from naming a *person*.
+#:
+#: `extra="forbid"` already rejects every one of these today, so this is not a
+#: blocklist the parser consults. It exists so that `test_a_cell_cannot_name_a
+#: _counterparty` fails the moment one becomes a real field — widening the
+#: schema toward a Cell-supplied identity has to be an argued change to §16.3
+#: rather than a plausible-looking commit that makes outreach "easier".
+FORBIDDEN_COUNTERPARTY_FIELDS: dict[str, str] = {
+    "counterparty": "the operator names who; §16.3 makes customer identity non-inheritable",
+    "recipient": "as above, by another name",
+    "customer": "as above; a `customers` table is the design §16.3 warns about",
+    "to": "as above",
+    "email": "a personal identifier in a record every later context inherits",
+    "address": "as above",
+    "phone": "as above",
+    "contact": "as above",
+    "name": "as above — and the artifact's title is where a deliverable is named",
 }
 
 
@@ -379,6 +470,14 @@ def _prompt_schema() -> dict[str, Any]:
             '{"tool": "<one of the tools listed in your context>", '
             '"arguments": {"<name>": "<scalar value>"}}. Nothing runs until a '
             "human approves the request."
+        ),
+        "external_action": (
+            "REQUIRED only when kind is external_action, and forbidden otherwise: "
+            '{"channel": "<one of the channels listed in your context>", '
+            '"intent": "what this action is for", '
+            '"artifact_id": "<optional, an artifact of yours that has been exported>"}. '
+            "A PERSON performs the action by hand — nothing is sent automatically, "
+            "and you do not choose who it goes to."
         ),
         "artifact": (
             "OPTIONAL, and omitted unless you actually produced something this "

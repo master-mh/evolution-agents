@@ -696,13 +696,21 @@ def test_only_the_promotion_module_consumes_a_grant():
     *below* the rung 5 the agent loop already occupies, so a read-only tool is
     filling a skipped rung rather than climbing one.
 
-    What it still forbids is the *next* unargued step. Only `promotion.py` and
-    `tools.py` may write a grant's `consumed_at_utc`, and nothing scheduled may
-    reach either — the scheduler must not import them, or "a human runs each
-    execution" quietly becomes rung 9's bounded autonomy.
+    The third is ADR-036's `external_actions.py`, and it is the weakest climb of
+    the three because it is not one. A human approves the request *and* performs
+    the action; the module reserves a counterparty, refuses collisions, and
+    records what a person did. §28's Phase 8 acceptance is "all external action
+    remains manual", so the rung stamped on the audit event is 6 — the same one
+    §28 Phase 8 names — and not the 8 that reaching a real counterparty
+    superficially suggests.
+
+    What it still forbids is the *next* unargued step. Only these three may
+    write a grant's `consumed_at_utc`, and nothing scheduled may reach any of
+    them — the scheduler must not import them, or "a human runs each execution"
+    quietly becomes rung 9's bounded autonomy.
     """
     source_dir = Path(__file__).resolve().parents[1] / "src" / "mitosis"
-    allowed = {"promotion.py", "tools.py"}
+    allowed = {"promotion.py", "tools.py", "external_actions.py"}
 
     consumers = []
     for path in sorted(source_dir.glob("*.py")):
@@ -730,6 +738,13 @@ def test_only_the_promotion_module_consumes_a_grant():
     assert "import tools" not in scheduler_source and "from .tools" not in scheduler_source, (
         "scheduler.py must not reach the tool executor — an unattended fetch is "
         "not rung 4 observation, whatever the tool is"
+    )
+    # And sharper still for external actions: §28's Phase 8 acceptance is "all
+    # external action remains manual", so a timer that could claim a channel
+    # would contradict the phase the colony is in, not merely a rung on a ladder.
+    assert "external_actions" not in scheduler_source, (
+        "scheduler.py must not reach the external-action registry — §28 Phase 8 "
+        "requires every external action be taken by a person"
     )
 
 

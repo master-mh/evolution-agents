@@ -1,5 +1,5 @@
 {
-  "expectation_version": 15,
+  "expectation_version": 16,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,9 +10,9 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "a6bae171dab5293d09f5bc7cf216665ed8468faa5bc95988dbcc9c65c0a260c6",
+  "semantic_hash": "b2cd16aa67a27639abfaf38c9a178fa1ee194674580f4ef32848fcc90652af6d",
   "snapshot": {
-    "approval_grants": 2,
+    "approval_grants": 5,
     "approval_requests": [
       {
         "assessed_tier": "MEDIUM",
@@ -45,6 +45,36 @@
         "signals": [
           "understated_risk"
         ],
+        "sla_seconds": 3600,
+        "status": "approved"
+      },
+      {
+        "assessed_tier": "HIGH",
+        "cell": "cell#4",
+        "claimed_tier": "HIGH",
+        "exposure_minor_units": 0,
+        "reversible": false,
+        "signals": [],
+        "sla_seconds": 3600,
+        "status": "approved"
+      },
+      {
+        "assessed_tier": "HIGH",
+        "cell": "cell#1",
+        "claimed_tier": "HIGH",
+        "exposure_minor_units": 0,
+        "reversible": false,
+        "signals": [],
+        "sla_seconds": 3600,
+        "status": "approved"
+      },
+      {
+        "assessed_tier": "HIGH",
+        "cell": "cell#4",
+        "claimed_tier": "HIGH",
+        "exposure_minor_units": 0,
+        "reversible": false,
+        "signals": [],
         "sla_seconds": 3600,
         "status": "approved"
       }
@@ -82,9 +112,9 @@
         "forecasts_resolved_since": 3,
         "forecasts_still_open": 1,
         "funded_mean_brier": null,
-        "human_interventions": 4,
+        "human_interventions": 6,
         "intervention_kinds": {
-          "approval_granted": 1,
+          "approval_granted": 3,
           "prediction_resolved": 3
         },
         "liability_minor_units": null,
@@ -98,20 +128,24 @@
       }
     ],
     "audit_event_types": {
-      "approval_granted": 2,
-      "approval_requested": 3,
+      "approval_granted": 5,
+      "approval_requested": 6,
       "artifact_created": 1,
       "artifact_exported": 1,
-      "autonomy_flag_changed": 1,
+      "autonomy_flag_changed": 2,
       "capital_allocated": 1,
-      "cell_deliberated": 4,
+      "cell_deliberated": 7,
       "cell_estate_reclaimed": 1,
       "cell_lifecycle_transition": 12,
       "cell_revenue_recorded": 1,
+      "channel_frozen": 1,
       "egress_domain_allowed": 1,
       "event_dead_lettered": 1,
+      "external_action_claimed": 2,
+      "external_action_completed": 2,
+      "human_minutes_subsidised": 1,
       "model_call_reconciled": 1,
-      "model_call_settled": 6,
+      "model_call_settled": 9,
       "prediction_registered": 8,
       "prediction_resolved": 5,
       "promotion_pool_funded": 1,
@@ -133,20 +167,20 @@
     ],
     "autonomy": {
       "browser_control": false,
-      "external_message": false,
+      "external_message": true,
       "external_publish": false,
       "public_web_read": true,
       "real_spending": false
     },
     "balances": {
-      "RESOURCE::cell:cell#1:cash": 4996,
+      "RESOURCE::cell:cell#1:cash": 4994,
       "RESOURCE::cell:cell#1:committed": 0,
       "RESOURCE::cell:cell#2:cash": 5000,
       "RESOURCE::cell:cell#2:committed": 1150,
-      "RESOURCE::cell:cell#4:cash": 1987,
+      "RESOURCE::cell:cell#4:cash": 1643,
       "RESOURCE::cell:cell#4:committed": 0,
       "RESOURCE::external_capital": -50000,
-      "RESOURCE::infrastructure_reserve": 1867,
+      "RESOURCE::infrastructure_reserve": 2213,
       "RESOURCE::seed_bank": 35000,
       "USD_REAL::cell:cell#1:cash": 965,
       "USD_REAL::cell:cell#1:committed": 15,
@@ -225,6 +259,11 @@
         "status": "alive"
       }
     ],
+    "channel_frozen": {
+      "email": true,
+      "marketplace_listing": false,
+      "web_publish": false
+    },
     "clock": {
       "mode": "paused",
       "simulated_at": "2026-01-09T00:00:00+00:00"
@@ -244,11 +283,14 @@
         "stage_reached": null
       }
     ],
+    "counterparty_blocks": [
+      "complaint"
+    ],
     "deliberations": [
       {
         "cell": "cell#1",
         "context_dropped": [],
-        "context_tokens": 381,
+        "context_tokens": 554,
         "failure_reason": null,
         "made_model_call": true,
         "status": "proposed",
@@ -257,7 +299,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 442,
+        "context_tokens": 615,
         "failure_reason": null,
         "made_model_call": true,
         "status": "proposed",
@@ -266,7 +308,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 445,
+        "context_tokens": 618,
         "failure_reason": null,
         "made_model_call": true,
         "status": "proposed",
@@ -275,11 +317,38 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 621,
+        "context_tokens": 794,
         "failure_reason": null,
         "made_model_call": true,
         "status": "proposed",
         "wake_reason": "tool result available"
+      },
+      {
+        "cell": "cell#4",
+        "context_dropped": [],
+        "context_tokens": 839,
+        "failure_reason": null,
+        "made_model_call": true,
+        "status": "proposed",
+        "wake_reason": "scheduled research cycle"
+      },
+      {
+        "cell": "cell#1",
+        "context_dropped": [],
+        "context_tokens": 555,
+        "failure_reason": null,
+        "made_model_call": true,
+        "status": "proposed",
+        "wake_reason": "scheduled research cycle"
+      },
+      {
+        "cell": "cell#4",
+        "context_dropped": [],
+        "context_tokens": 860,
+        "failure_reason": null,
+        "made_model_call": true,
+        "status": "proposed",
+        "wake_reason": "scheduled research cycle"
       }
     ],
     "egress_allowlist": [
@@ -333,6 +402,18 @@
         "event_type": "cell_wake",
         "priority": 100,
         "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
       }
     ],
     "event_outbox": [
@@ -342,6 +423,36 @@
         "published": true
       }
     ],
+    "external_actions": [
+      {
+        "addressed": true,
+        "cell": "cell#4",
+        "channel": "email",
+        "delivers_artifact": true,
+        "domain": "golden.test",
+        "human_minutes": 34,
+        "intent": "introduce the write-up",
+        "outcome": "no_response",
+        "platform_account": "golden-operator",
+        "status": "completed"
+      },
+      {
+        "addressed": true,
+        "cell": "cell#4",
+        "channel": "email",
+        "delivers_artifact": true,
+        "domain": null,
+        "human_minutes": 4,
+        "intent": "a second introduction, which goes badly",
+        "outcome": "complaint",
+        "platform_account": null,
+        "status": "completed"
+      }
+    ],
+    "human_minutes": {
+      "billed": 34,
+      "reported": 38
+    },
     "model_calls": [
       {
         "cell": "cell#1",
@@ -362,7 +473,7 @@
       {
         "cell": "cell#1",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 1962,
+        "input_tokens": 2527,
         "mirror_minor_units": 0,
         "output_tokens": 181,
         "pricing_table_version": "2026-07-27",
@@ -394,7 +505,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 2083,
+        "input_tokens": 2647,
         "mirror_minor_units": 0,
         "output_tokens": 279,
         "pricing_table_version": "2026-07-27",
@@ -410,7 +521,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 2155,
+        "input_tokens": 2720,
         "mirror_minor_units": 0,
         "output_tokens": 178,
         "pricing_table_version": "2026-07-27",
@@ -426,9 +537,57 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 2538,
+        "input_tokens": 3102,
         "mirror_minor_units": 0,
         "output_tokens": 269,
+        "pricing_table_version": "2026-07-27",
+        "provider": "mock",
+        "reconciled": false,
+        "reconciled_micro_usd": null,
+        "reconciliation_source": null,
+        "requested_model": "mock-1",
+        "resolved_model": "mock-1",
+        "settled_minor_units": 0,
+        "status": "succeeded"
+      },
+      {
+        "cell": "cell#4",
+        "cost_actual_micro_usd": 0,
+        "input_tokens": 3225,
+        "mirror_minor_units": 0,
+        "output_tokens": 216,
+        "pricing_table_version": "2026-07-27",
+        "provider": "mock",
+        "reconciled": false,
+        "reconciled_micro_usd": null,
+        "reconciliation_source": null,
+        "requested_model": "mock-1",
+        "resolved_model": "mock-1",
+        "settled_minor_units": 0,
+        "status": "succeeded"
+      },
+      {
+        "cell": "cell#1",
+        "cost_actual_micro_usd": 0,
+        "input_tokens": 2593,
+        "mirror_minor_units": 0,
+        "output_tokens": 228,
+        "pricing_table_version": "2026-07-27",
+        "provider": "mock",
+        "reconciled": false,
+        "reconciled_micro_usd": null,
+        "reconciliation_source": null,
+        "requested_model": "mock-1",
+        "resolved_model": "mock-1",
+        "settled_minor_units": 0,
+        "status": "succeeded"
+      },
+      {
+        "cell": "cell#4",
+        "cost_actual_micro_usd": 0,
+        "input_tokens": 3295,
+        "mirror_minor_units": 0,
+        "output_tokens": 225,
         "pricing_table_version": "2026-07-27",
         "provider": "mock",
         "reconciled": false,
@@ -568,6 +727,30 @@
         "kind": "strategy",
         "risk_tier": "LOW",
         "summary": "golden-run strategy note written after reading a page"
+      },
+      {
+        "cell": "cell#4",
+        "derived_from_untrusted": true,
+        "estimated_cost_minor_units": 0,
+        "kind": "external_action",
+        "risk_tier": "HIGH",
+        "summary": "golden-run outreach on a fixed channel"
+      },
+      {
+        "cell": "cell#1",
+        "derived_from_untrusted": false,
+        "estimated_cost_minor_units": 0,
+        "kind": "external_action",
+        "risk_tier": "HIGH",
+        "summary": "golden-run outreach on a fixed channel"
+      },
+      {
+        "cell": "cell#4",
+        "derived_from_untrusted": true,
+        "estimated_cost_minor_units": 0,
+        "kind": "external_action",
+        "risk_tier": "HIGH",
+        "summary": "golden-run outreach on a fixed channel"
       }
     ],
     "reservations": [
@@ -730,6 +913,70 @@
         "maximum_amount": 2,
         "settled_amount": 2,
         "status": "settled"
+      },
+      {
+        "book": "USD_REAL",
+        "cell": "cell#4",
+        "external_operation_type": "model_call",
+        "maximum_amount": 1,
+        "settled_amount": 0,
+        "status": "released"
+      },
+      {
+        "book": "RESOURCE",
+        "cell": "cell#4",
+        "external_operation_type": "model_call",
+        "maximum_amount": 2,
+        "settled_amount": 2,
+        "status": "settled"
+      },
+      {
+        "book": "RESOURCE",
+        "cell": "cell#4",
+        "external_operation_type": "external_action",
+        "maximum_amount": 300,
+        "settled_amount": 300,
+        "status": "settled"
+      },
+      {
+        "book": "USD_REAL",
+        "cell": "cell#1",
+        "external_operation_type": "model_call",
+        "maximum_amount": 1,
+        "settled_amount": 0,
+        "status": "released"
+      },
+      {
+        "book": "RESOURCE",
+        "cell": "cell#1",
+        "external_operation_type": "model_call",
+        "maximum_amount": 2,
+        "settled_amount": 2,
+        "status": "settled"
+      },
+      {
+        "book": "USD_REAL",
+        "cell": "cell#4",
+        "external_operation_type": "model_call",
+        "maximum_amount": 1,
+        "settled_amount": 0,
+        "status": "released"
+      },
+      {
+        "book": "RESOURCE",
+        "cell": "cell#4",
+        "external_operation_type": "model_call",
+        "maximum_amount": 2,
+        "settled_amount": 2,
+        "status": "settled"
+      },
+      {
+        "book": "RESOURCE",
+        "cell": "cell#4",
+        "external_operation_type": "external_action",
+        "maximum_amount": 300,
+        "settled_amount": 40,
+        "status": "released"
       }
     ],
     "resource_usage": [
@@ -772,7 +1019,7 @@
       {
         "cell": "cell#1",
         "minor_units": 1,
-        "quantity": 1962,
+        "quantity": 2527,
         "resource_type": "input_tokens"
       },
       {
@@ -796,7 +1043,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 2083,
+        "quantity": 2647,
         "resource_type": "input_tokens"
       },
       {
@@ -808,7 +1055,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 2155,
+        "quantity": 2720,
         "resource_type": "input_tokens"
       },
       {
@@ -826,7 +1073,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 2538,
+        "quantity": 3102,
         "resource_type": "input_tokens"
       },
       {
@@ -834,6 +1081,54 @@
         "minor_units": 1,
         "quantity": 269,
         "resource_type": "output_tokens"
+      },
+      {
+        "cell": "cell#4",
+        "minor_units": 1,
+        "quantity": 3225,
+        "resource_type": "input_tokens"
+      },
+      {
+        "cell": "cell#4",
+        "minor_units": 1,
+        "quantity": 216,
+        "resource_type": "output_tokens"
+      },
+      {
+        "cell": "cell#1",
+        "minor_units": 1,
+        "quantity": 2593,
+        "resource_type": "input_tokens"
+      },
+      {
+        "cell": "cell#1",
+        "minor_units": 1,
+        "quantity": 228,
+        "resource_type": "output_tokens"
+      },
+      {
+        "cell": "cell#4",
+        "minor_units": 300,
+        "quantity": 30,
+        "resource_type": "human_minutes"
+      },
+      {
+        "cell": "cell#4",
+        "minor_units": 1,
+        "quantity": 3295,
+        "resource_type": "input_tokens"
+      },
+      {
+        "cell": "cell#4",
+        "minor_units": 1,
+        "quantity": 225,
+        "resource_type": "output_tokens"
+      },
+      {
+        "cell": "cell#4",
+        "minor_units": 40,
+        "quantity": 4,
+        "resource_type": "human_minutes"
       }
     ],
     "tool_calls": [
@@ -856,13 +1151,14 @@
       "RESOURCE::cell_birth_funding": 1,
       "RESOURCE::cell_funding": 2,
       "RESOURCE::colony_seed_capital": 1,
-      "RESOURCE::reservation_reserve": 8,
-      "RESOURCE::reservation_settle": 8,
+      "RESOURCE::reservation_release": 1,
+      "RESOURCE::reservation_reserve": 13,
+      "RESOURCE::reservation_settle": 13,
       "USD_REAL::cell_birth_funding": 1,
       "USD_REAL::cell_funding": 1,
       "USD_REAL::colony_seed_capital": 1,
-      "USD_REAL::reservation_release": 6,
-      "USD_REAL::reservation_reserve": 8,
+      "USD_REAL::reservation_release": 9,
+      "USD_REAL::reservation_reserve": 11,
       "USD_REAL::reservation_settle": 1,
       "USD_SIM::capital_allocation": 1,
       "USD_SIM::cell_birth_funding": 2,

@@ -77,6 +77,11 @@ WAKE_HUMAN_DECISION = "human decision"
 #: the Cell's context. Emitted by `tools.execute_grant`, never by a tool result
 #: itself — see tools.py on why nothing a tool returns may cause another call.
 WAKE_TOOL_RESULT = "tool result available"
+#: §17.2. A person finished an external action this Cell proposed, and the
+#: registry now records what came of it. Emitted by
+#: `external_actions.complete` — the outcome is an observation a person made,
+#: never something the Cell reported about itself (§0.3).
+WAKE_EXTERNAL_ACTION_RESULT = "external action result"
 
 #: The event type the loop consumes.
 WAKE_EVENT_TYPE = "cell_wake"

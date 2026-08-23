@@ -34,8 +34,15 @@ action-splitting, and the cheapest splitting mechanism *this* colony offers is
 not one Cell making many requests: it is §9 reproduction. A Cell can birth
 children and have each child request a fraction of one risky thing. Keying on
 `cell_id` would miss exactly the split this system makes easiest, so the key is
-`{founder_cell_id}:{kind}`. Counterparty/domain/channel join it when external
-actions land.
+`{founder_cell_id}:{kind}`.
+
+**External actions landed (ADR-036), and they key on the channel instead.**
+§21.2's worry is *many lineages, one counterparty* — which a lineage-keyed
+window structurally cannot see, because every splitter it catches shares a
+founder. The counterparty half of §23.4's key is not here and is not missing: a
+Cell never names a person, so the operator supplies one at claim time and
+`channel_registry.check_action` aggregates on it there. Each dimension is keyed
+at the point it becomes real.
 
 **Two clocks, deliberately not merged (§23.3).** An SLA breach makes an item
 *overdue* — "overdue items surface distinctly" is a reporting requirement, so
@@ -74,7 +81,16 @@ from datetime import datetime, timedelta, timezone
 # `tool_registry`, not `tools`: the executor imports this module, so the
 # dependency only runs one way. Reading a tool's spec to assess its risk must
 # not give the review path a route to running it.
-from . import audit, deliberation, genome, ids, lifecycle, prediction, tool_registry
+from . import (
+    audit,
+    channel_registry,
+    deliberation,
+    genome,
+    ids,
+    lifecycle,
+    prediction,
+    tool_registry,
+)
 from .models import Book, CellStatus
 from .proposal import ProposalKind, RiskTier
 
@@ -377,7 +393,10 @@ def _enqueue_locked(
     estimated = int(row["estimated_cost_minor_units"])
     now = now or _now()
 
-    aggregation_key = _aggregation_key(founder_cell_id=cell.founder_cell_id, kind=kind)
+    channel = _channel_of(row)
+    aggregation_key = _aggregation_key(
+        founder_cell_id=cell.founder_cell_id, kind=kind, channel=channel
+    )
     prior = _window_requests(conn, aggregation_key=aggregation_key, now=now)
     exposure = sum(int(r["exposure_delta"]) for r in prior) + estimated
 
@@ -389,6 +408,7 @@ def _enqueue_locked(
         exposure_minor_units=exposure,
         alarm_cents_per_epoch=_metabolic_alarm_cents(conn),
         tool_id=_tool_id_of(row),
+        channel=channel,
     )
 
     signals = _detect_signals(
@@ -517,20 +537,45 @@ def enqueue_missing(conn: sqlite3.Connection) -> list[ApprovalRequest]:
 # --- classification ----------------------------------------------------------
 
 
-def _aggregation_key(*, founder_cell_id: str, kind: ProposalKind) -> str:
-    """§23.4's key. Lineage plus kind — see the module docstring on why the
-    lineage founder rather than the Cell."""
+def _aggregation_key(
+    *, founder_cell_id: str, kind: ProposalKind, channel: str | None = None
+) -> str:
+    """§23.4's key: "counterparty/domain/channel over a rolling window".
+
+    **Two keys, each used where its dimension is knowable.** ADR-027 chose the
+    lineage founder as an explicit stand-in "until counterparty/domain/channel
+    exist", and for an external action the channel now does — so an
+    `external_action` aggregates on `channel:{id}` and everything else keeps the
+    lineage key that catches §9 reproduction-splitting.
+
+    The counterparty is deliberately *not* part of this key, and not because it
+    was forgotten. It does not exist at enqueue time: a Cell never names a
+    person (see `proposal.ExternalActionSpec`), so the operator supplies one at
+    claim time and `channel_registry.check_action` does the counterparty
+    aggregation there. Keying on it here would require the Cell to name someone,
+    which is the thing §16.3 is protecting.
+    """
+    if kind is ProposalKind.EXTERNAL_ACTION and channel:
+        return f"channel:{channel}"
     return f"lineage:{founder_cell_id}:{kind.value}"
 
 
 def _is_reversible(*, kind: ProposalKind, book: Book) -> bool:
     """Kernel-derived, never asserted by the Cell (§23.1).
 
-    Real money leaving the colony is the only thing here that cannot be undone.
-    §3.6 forbids editing history to correct something — the remedy is a signed
-    adjustment, and an adjustment does not bring the money back. Everything else
-    a proposal can ask for is simulated or internal, and therefore reversible.
+    Two things here cannot be undone, and until ADR-036 only one of them
+    existed. Real money leaving the colony is the first: §3.6 forbids editing
+    history to correct something, and a signed adjustment does not bring the
+    money back.
+
+    **An external action is the second, and it is worse.** §21.1's shared
+    assets — sending reputation, merchant identity, brand — are what is at risk,
+    and a refund does not undo a spam complaint. Reading an external action as
+    reversible would have let it be batch-approved alongside a USD_SIM
+    experiment, which is §23.1's tiering working exactly backwards.
     """
+    if kind is ProposalKind.EXTERNAL_ACTION:
+        return False
     return not (kind is ProposalKind.SPEND_REQUEST and book is Book.USD_REAL)
 
 
@@ -555,6 +600,21 @@ def _tool_id_of(proposal_row) -> str | None:
     return tool if isinstance(tool, str) else None
 
 
+def _channel_of(proposal_row) -> str | None:
+    """The channel an `external_action` names, or None. Tolerant, like
+    `_tool_request_of` — a proposal a reviewer cannot parse is still one they
+    should be able to see and reject."""
+    try:
+        payload = json.loads(proposal_row["payload_json"])
+    except (json.JSONDecodeError, TypeError):
+        return None
+    request = payload.get("external_action")
+    if not isinstance(request, dict):
+        return None
+    channel = request.get("channel")
+    return channel if isinstance(channel, str) else None
+
+
 def _kernel_tier(
     *,
     kind: ProposalKind,
@@ -563,6 +623,7 @@ def _kernel_tier(
     exposure_minor_units: int,
     alarm_cents_per_epoch: int,
     tool_id: str | None = None,
+    channel: str | None = None,
 ) -> RiskTier:
     """The tier the kernel assesses, from facts the Cell does not control.
 
@@ -593,6 +654,19 @@ def _kernel_tier(
             # naming something that does not exist, must not arrive in the
             # queue looking routine.
             tier = _max_tier(tier, RiskTier.HIGH)
+
+    if kind is ProposalKind.EXTERNAL_ACTION:
+        # §21.1: the colony has one sending reputation, one merchant identity
+        # and one brand, and this is the only request kind that can spend them.
+        # HIGH rather than MEDIUM because it is irreversible in the way money is
+        # not — `_is_reversible` says so — and §23.1 tiers on exactly that.
+        tier = _max_tier(tier, RiskTier.HIGH)
+        if channel not in channel_registry.REGISTRY:
+            # Failing closed on the unknown case, as the tool path does. A
+            # reviewer cannot judge an action on a channel that does not exist,
+            # and CRITICAL is what stops it being approved in a batch alongside
+            # things they did read.
+            tier = _max_tier(tier, RiskTier.CRITICAL)
 
     if status is CellStatus.QUARANTINED:
         # §18.2. A Cell under restriction cannot deliberate, so it cannot reach

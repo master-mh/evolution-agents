@@ -295,53 +295,43 @@
   tests (23 new); golden expectation 14 → 15, and the scenario **records revenue for the first time
   in its history** (USD_SIM; **no USD_REAL movement**). Teeth-checked sixteen ways; one structural
   test was checking the wrong thing and was rewritten.
-- [ ] **The delivery channel — design approved 2026-08-23, unbuilt.** §21.2's central
-  external-action registry. **Build the registry, not a sender**: §28 Phase 8's acceptance is "all
-  external action remains manual", and §21.2's own verbs are *track* and *prevent*. Nothing
-  transmits; the kernel records what a human did and refuses what would collide. That is also
-  Phase 9's acceptance criterion ("no duplicate or conflicting customer contact") built a phase
-  early. Four decisions already taken:
-  - **Store a salted hash of the counterparty, never the counterparty.** §16.3 makes "customer
-    identity" and "private customer data" non-inheritable and §20.1 tracks personal data because
-    holding it is a liability. Dedupe needs equality, not identity: "have we contacted this person"
-    stays answerable while "who have we contacted" does not, from the kernel's own tables. A
-    `customers` table is the obvious design and the one the spec warns about.
-  - **Counterparty/channel aggregation for external actions; lineage stays for internal ones.**
-    ADR-027 chose `lineage:{founder}:{kind}` as an explicit stand-in because §23.4's named
-    dimensions did not exist. They do after this slice — and the gap is not cosmetic: §21.2's
-    worries ("duplicate contact, sibling bidding wars") are *many lineages, one counterparty*, which
-    a lineage-keyed window structurally cannot see. §21.3: "Cells are internally separate but
-    externally may appear to be one business."
-  - **Per-channel rate and quota caps, not spend caps.** §21.1's shared assets — sending
-    reputation, merchant identity, brand — are the first thing at risk that money cannot repair. A
-    refund does not undo a spam complaint, and every existing guard (C4, C5, the breaker, the pool)
-    bounds money only.
-  - **Meter `ResourceType.HUMAN_MINUTES`.** Declared in `models.py` since Phase 1, used nowhere —
-    another reserved socket. Phase 8's North Star is "human minutes/artifact" and §1's
-    autonomy-adjusted profit exists "to expose hidden human labour and subsidy"; `outcome.py` counts
-    intervention *events* but never time. Every action in this slice is manual by construction, so
-    this is where the current phase's headline metric becomes measurable at all.
-  A Cell proposes through the existing proposal → approval → grant path, and "execution" writes a
-  registry entry rather than sending anything. Out of scope: any transmission, Phase 9's legal
-  identity and liability reserves, and reputation *scoring* (a number nothing can validate is
-  theatre — record raw events, leave the score to real feedback).
-  *Disproved by:* an `external_action_registry` table.
-- [ ] **Nothing schedules a tool call, and nothing delivers an exported artifact.** Every tool
-  execution and every export is operator-invoked. Export *records* that a human took an artifact
-  outside; there is no channel that puts it in front of anyone. Delivery is §21.2's
-  external-action-registry territory and is the next real gap between a Cell that produces and a
-  Cell that sells. *Disproved by:* an `external_action_registry` table, or the scheduler reaching
-  `tools.execute_grant`.
+- [x] **The delivery channel — DONE** (2026-08-23), ADR-036. `channel_registry.py` +
+  `external_actions.py` + migration 0021. All four design decisions survived contact; a fifth
+  emerged from building. **The registry, not a sender** — `test_nothing_in_the_registry_transmits`
+  is structural, since the behavioural version ("assert no email was sent") passes against code
+  that would send one. **Counterparty as a salted hash**, and the argument turned out to be the
+  do-not-contact list rather than privacy in the abstract: "never contact this person again" is
+  honoured permanently *without the colony ever holding a list of the people who asked*.
+  **Aggregation split in two** — the queue keys `channel:{id}` and the counterparty aggregation
+  lives at claim time, because a Cell never names a person, so the counterparty does not exist at
+  approval time. **Per-channel rate and quota caps, colony-wide**, plus a complaint that freezes
+  the channel (§23.3's alarm shape) — the first guard in this kernel bounding something money
+  cannot repair. **`HUMAN_MINUTES` metered at last**, with minutes past the billable ceiling
+  recorded as *subsidy* rather than refused: the minutes were already spent, and refusing to write
+  them down only makes the colony's account of its own human cost quieter than reality. The fifth
+  decision: **claim before acting**, because recording completed actions makes "prevent"
+  impossible — the second email is already sent by the time the kernel can object. 815 tests
+  (34 new); golden expectation 15 → 16, **no USD_REAL movement**. Teeth-checked 31 ways;
+  hand-verified end to end on a live colony, where the pre-send check was found misattributing a
+  same-lineage duplicate as a §21.3 sibling collision.
+- [ ] **Nothing schedules a tool call.** **Narrowed 2026-08-23:** the delivery half of this entry
+  is done — `external_actions` delivers an exported artifact on a channel, by hand. What remains is
+  that every tool execution, export and claim is operator-invoked, which for external actions is
+  §28 Phase 8's acceptance criterion rather than a gap. For *tools* it is a real one: an approved
+  fetch waits on a human with no policy for what happens when the operator is away (§23.3's
+  vacation mode is the precedent). *Disproved by:* the scheduler reaching `tools.execute_grant`.
 - [ ] **Charter C13's router exists; C13 is still unsatisfied.** `artifacts.check_exportable`
   refuses `SIM_ADVERSARIAL` and is tested, but nothing in the kernel can *produce* that label —
   §18.2 is about lineages evolved under adversarial synthetic incentives, and the shadow economy is
   Phase 6. C13 remains the one Charter clause with no `charter_*` test, now for a precise reason
   rather than a vague one. *Disproved by:* anything that writes `SIM_ADVERSARIAL`.
-- [ ] **Three autonomy flags have columns and no tools behind them.**
-  `browser_control`, `external_publish` and `external_message` (§27.1) are enforced gates guarding
-  capabilities that do not exist. Each is a separate §0.4 decision, and the last two need §21.2's
-  external-action registry first — a Cell that can publish or message is sharing the colony's one
-  reputation. *Disproved by:* a registry entry naming one of those flags.
+- [ ] **One autonomy flag has a column and nothing behind it; one has channels and no decision.**
+  **Corrected 2026-08-23:** `external_message` now gates the `email` channel and is exercised
+  end to end (ADR-036), so it is off this list. `external_publish` gates two *registered* channels
+  — `marketplace_listing` and `web_publish` — which is not the same as being decided: §0.4 grants
+  autonomy capability by capability, and nobody has argued that one yet. `browser_control` still
+  guards a capability that does not exist at all. *Disproved by:* a completed external action on a
+  publish channel, or any tool declaring `browser_control`.
 - [ ] **§23.2's liability figure is unmodelled — but the account is not missing.** Corrected
   2026-08-22: the previous wording ("no liability reserve exists (§13 is Phase 6+)") was wrong on
   both counts. §13 is Novelty Evaluation; liability is not a §13 concept. And `liability_reserve`
