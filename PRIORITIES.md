@@ -265,10 +265,31 @@
   (23 new); golden expectation 12 → 13, where the child's assessed tier rises *above its own
   claim* on inherited `risk_class` (**no money moves**). Teeth-checked eleven ways; one new test
   was vacuous (`GENOME_FIELDS` derived from its own classification) and was rewritten.
-- [ ] **Nothing lets a Cell act on the business its genome names.** Genome content makes a Cell's
-  proposals about a market instead of its own books, but there is still no artifact store, no tool
-  surface, and `allowed_tools` names capabilities the kernel does not have. This is the gap between
-  a Cell that decides and one that earns. *Disproved by:* an `artifacts` or `tool_calls` table.
+- [x] **The tool surface — DONE** (2026-08-23), ADR-034. `tools.py` + `tool_registry.py` +
+  `fetchers.py` + migration 0019. **§25.1 reframed the risk: read-only observation is rung 4 and
+  the agent loop has been at rung 5 since ADR-025**, so reading the world is *below* where the
+  colony stood — the large step is acting, which is rungs 8-9 and has no registry entry
+  (`ToolSpec.read_only`, enforced by a named test). **§19.4's sharpest consequence is that a tool
+  result can never cause another tool call**: execution needs a grant, a grant needs a human on a
+  §23 request, so an injected page can at most produce a *proposal* whose URL a person reads —
+  which is why the proposal→approval→grant route beat inline tool use. **The layering constraint
+  and the injection rule wanted the same seam**, splitting `tool_registry` (readable by `context`)
+  from `tools` (the executor `context` must not reach). Both §27.1 gates are checked at execution;
+  the allowlist matches exactly or on a dotted suffix; **redirects are refused**, because following
+  one carries the fetch off the allowlist after the check passed. First
+  `charter_sandbox_isolation` (C12) test ships with it. 756 tests (36 new); golden expectation
+  13 → 14 (**no USD_REAL movement**). Teeth-checked twenty ways; one test was genuinely weak and
+  was rewritten.
+- [ ] **Nothing schedules a tool call, and nothing produces an artifact.** A Cell can now read the
+  world and propose from what it read, but every execution is operator-invoked, and there is still
+  no artifact store — so a Cell can inform a decision and cannot produce a deliverable. That is
+  what remains between a Cell that decides and one that earns. *Disproved by:* an `artifacts`
+  table, or the scheduler reaching `tools.execute_grant`.
+- [ ] **Three autonomy flags have columns and no tools behind them.**
+  `browser_control`, `external_publish` and `external_message` (§27.1) are enforced gates guarding
+  capabilities that do not exist. Each is a separate §0.4 decision, and the last two need §21.2's
+  external-action registry first — a Cell that can publish or message is sharing the colony's one
+  reputation. *Disproved by:* a registry entry naming one of those flags.
 - [ ] **§23.2's liability figure is unmodelled — but the account is not missing.** Corrected
   2026-08-22: the previous wording ("no liability reserve exists (§13 is Phase 6+)") was wrong on
   both counts. §13 is Novelty Evaluation; liability is not a §13 concept. And `liability_reserve`

@@ -1097,3 +1097,85 @@ from amendment ID to spec location is complete in one place:
   teeth-checking, not by review. Golden expectation 12 → 13, with **no money moving**: the seeded
   auditor's child inherits `risk_class: HIGH` and its assessed tier rises above the MEDIUM its own
   proposal claimed, which is both halves of the slice visible in one line of the diff.
+
+---
+
+## ADR-034: A tool runs from an approved grant, and its output is data the deliberation path cannot act on
+
+- **Status:** Accepted
+- **Spec ref:** §19.3, §19.4, §18.1, §20.1, §20.2, §0.4, §23, §25.1, §27.1, §31; Charter C8, C12,
+  C14; ADR-022, ADR-025, ADR-027, ADR-029, ADR-033
+- **Context:** A Cell could think, be reviewed, and be funded, and could do nothing else. The
+  gateway spends money at a model provider; nothing else in the kernel reached outside itself. The
+  genome slice (ADR-033) gave a Cell a market to reason about and thereby made the absence sharper:
+  it could describe a business it had no way to act on. §31's data model has named `tool_calls` and
+  `permissions` since Phase 0, and §27.1's `autonomy:` block has named four unimplemented per-tool
+  flags alongside the one `real_spending` flag that was built.
+- **Decisions, and the alternatives each displaced:**
+  1. **Read-only tools fill a rung the colony skipped; they are not an escalation.** §25.1 puts
+     "read-only real-world observation" at rung 4 and "shadow prediction with no action" at rung 5,
+     and the agent loop has been at rung 5 since ADR-025. Naming this correctly mattered, because
+     the instinct is to treat "the kernel can reach the internet" as the largest step yet taken and
+     gate it accordingly. The genuinely large step is *acting* on the world, which is rungs 8-9.
+     `ToolSpec.read_only` makes the split structural and `test_no_registered_tool_acts_on_the_world`
+     fails on any registry entry that sets it False.
+  2. **Execution runs from an approved §23 grant, not inline during deliberation.** Rejected:
+     letting a Cell call tools while it thinks, which is the design that would feel most like
+     autonomy. It puts fetched content in the same conversation as the instructions, which is the
+     exact configuration §19.4 exists to prevent, and it breaks rung 5's "no action" while rung 4
+     is still unfilled. Also rejected: operator-invoked fetches with no proposal, which is safe but
+     leaves the Cell unable to decide what is worth reading.
+  3. **A tool result can never cause another tool call, and the human is the loop-breaker.** This
+     is the whole §19.4 story. Execution requires a grant; a grant requires a human decision on a
+     §23 request; so a fetched page saying "now fetch evil.example" can at most produce a
+     *proposal*, whose URL a person reads. Enforced structurally:
+     `test_nothing_in_the_deliberation_path_executes_a_tool` fails if `context`, `deliberation` or
+     `scheduler` imports the executor.
+  4. **The registry split from the executor, and the layering wanted the same cut as §19.4.**
+     `context` must render what a Cell may request and what a previous call returned, but `tools`
+     imports `approval` -> `deliberation` -> `context`, so a direct import closed a loop. Splitting
+     `tool_registry` (readable by both) from `tools` (the executor) resolves the cycle *and* is
+     exactly the boundary the injection rule needs: reading is not executing. When a layering
+     constraint and a safety constraint independently want the same seam, the seam is real.
+  5. **Both gates are checked at execution, not at proposal time.** §27.1's autonomy flag and
+     §19.3's egress allowlist are read at the moment the request would leave the machine, because
+     an operator may close either between approval and execution and the state that matters is the
+     state now. Charter C12 stops being a Phase-5 abstraction here: no generated code runs, but the
+     kernel can open a socket on a Cell's behalf, so "unapproved networks" is live. The first
+     `charter_sandbox_isolation` property test ships with it; the filesystem and secret halves stay
+     deferred as a named gap.
+  6. **The allowlist matches exactly or on a dotted suffix.** A substring test passes
+     `evil-example.com` against `example.com`; a bare `endswith` passes `notexample.com`. Both are
+     one-character mistakes that read as correct, so the property test generates hostnames rather
+     than listing examples.
+  7. **Redirects are refused rather than followed.** `urllib` follows them by default, so an
+     allowlisted page answering `302 https://anywhere.example/` would carry the fetch off the
+     allowlist *after* the check had passed — an open redirect on an otherwise reputable host is
+     enough to defeat Charter C12 entirely. Refusing turns it into a failed call the Cell may
+     propose to follow explicitly, which puts the destination back in front of a human.
+  8. **The `tool_calls` row is written before the external call.** ADR-022 deferred forward
+     recovery for the gateway, so a crashed model call loses the provider's reported usage and
+     needs a human. This module records grant, tool, frozen arguments and a `requested` status in
+     the same transaction that consumes the grant and reserves the RESOURCE, then commits — so a
+     crash mid-call leaves a diagnosable row rather than a reservation with nothing explaining it.
+     Doing it here rather than retrofitting the gateway is the cheap version: no in-flight state to
+     migrate.
+  9. **The grant is consumed before the call, not after.** A grant left unconsumed across an
+     external call is one two concurrent executions can both claim — the check-then-lock class,
+     costing two requests against one approval. The single-use grant is the mutual exclusion. The
+     cost is that a crash burns the grant; the `requested` row is what makes that recoverable.
+  10. **§20.1's rights metadata is recorded as `unknown`, never defaulted.** §20.2 is explicit that
+      public visibility does not imply the right to store, resell, or train. A fetcher that wrote
+      `permitted` would manufacture a rights position the colony does not hold, and a Cell
+      reasoning about reuse would believe it.
+  11. **Taint propagates one step, into the review payload.** A proposal made from a context
+      containing UNTRUSTED_EXTERNAL content is flagged, and §23.2 shows it. A confident rationale
+      reads identically whether the Cell reasoned it out or read it on a page; without the flag the
+      operator cannot tell which. Full information-flow taint (§18) is not attempted.
+- **Consequences:** Charter C12 has its first test and C13 (`charter_taint_quarantine`) is now the
+  only clause without one — honestly so, since §18.2 is about adversarial *lineages* and the shadow
+  economy is Phase 6. `autonomy.browser_control`, `external_publish` and `external_message` exist as
+  columns with no tool behind them, deliberately: each is a separate decision. Golden expectation
+  13 -> 14, **with no USD_REAL movement** — a fetch is metered in RESOURCE and never billed.
+  Hand-verification found the review payload was not printing the tool's arguments, which for a
+  tool request is the entire decision; that is now tested.

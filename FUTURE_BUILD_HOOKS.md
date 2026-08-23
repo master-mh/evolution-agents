@@ -534,3 +534,34 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **`allowed_tools` is a request against an empty registry.** Nothing enumerates what tools exist,
   so a genome can request `send_email` and the kernel has no way to say the tool is unknown rather
   than merely ungranted. A tool registry would let the request be validated instead of only recorded.
+
+- **Charter C13 (`charter_taint_quarantine`) is now the only clause with no test.** §18.2's rule is
+  that adversarial-lineage artifacts may never reach real-facing environments, and the taint
+  *labels* now exist (`tool_calls.taint_label`, `cell_genomes.taint_labels`) with a real-facing
+  surface to protect. What is still missing is any notion of an adversarial lineage — the shadow
+  economy is Phase 6 — so the clause stays untestable rather than untested. Worth revisiting the
+  moment SIM_ADVERSARIAL is producible.
+- **Taint propagates exactly one step.** A proposal made from a context containing
+  UNTRUSTED_EXTERNAL content is flagged; a proposal made from *that* proposal is not. Full
+  information-flow taint (§18.5's "formal taint propagation", "provenance lattices") is the real
+  answer and is a large slice; the one-step flag is what §23.2's reviewer actually needs today.
+- **Nothing schedules a tool call.** `WAKE_TOOL_RESULT` is emitted, but every execution is
+  operator-invoked because a fetch reaches outside the colony. Auto-execution of approved grants is
+  the obvious next step and is deliberately not taken: it removes the second human from rung 4 and
+  would need a stated policy on what happens when a grant is approved and the operator is away
+  (§23.3's vacation mode is the existing precedent).
+- **`allowed_tools` is now checkable but still unchecked at proposal time.** `tools.validate_request`
+  can say whether a tool exists, and a genome's `allowed_tools` list is still purely a request that
+  nothing compares against the registry or against what was granted. Wiring it would let a Cell be
+  told at deliberation time that it is asking for something it will never get.
+- **The response cap is a blunt truncation.** `MAX_RESULT_BYTES` cuts mid-document, so a Cell may
+  reason from half a price list without knowing it. Recording a `truncated` flag, or summarising
+  server-side before the result enters context, would make the loss visible to the Cell rather than
+  silent.
+- **`run-tool --live` has never been pointed at a real host.** The redirect refusal, robots.txt
+  handling and size cap are unit-tested against fakes; the actual socket path is not. One real
+  fetch against a public page is the cheapest way to find out what the fetcher gets wrong.
+- **§20.1's rights metadata is recorded and nothing consumes it.** Every result carries
+  licence/permitted_uses/commercial_use, all `unknown` from a web fetch. Nothing refuses to reuse
+  content whose commercial_use is not `permitted`, which is the check the columns exist for and
+  which matters the first time a Cell's output is sold.

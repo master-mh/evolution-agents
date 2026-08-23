@@ -72,6 +72,10 @@ WAKE_SCHEDULED_RESEARCH = "scheduled research cycle"
 WAKE_CAPITAL_ALLOCATION = "capital allocation"
 WAKE_AUDIT_REQUEST = "audit request"
 WAKE_HUMAN_DECISION = "human decision"
+#: §17.2. A tool call finished and its (UNTRUSTED_EXTERNAL) result is now in
+#: the Cell's context. Emitted by `tools.execute_grant`, never by a tool result
+#: itself — see tools.py on why nothing a tool returns may cause another call.
+WAKE_TOOL_RESULT = "tool result available"
 
 #: The event type the loop consumes.
 WAKE_EVENT_TYPE = "cell_wake"
@@ -542,8 +546,9 @@ def _record_proposal(
             """
             INSERT INTO proposals (
                 proposal_id, deliberation_id, cell_id, kind, summary, rationale,
-                risk_tier, estimated_cost_minor_units, payload_json, created_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                risk_tier, estimated_cost_minor_units, derived_from_untrusted,
+                payload_json, created_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 proposal_id,
@@ -554,6 +559,11 @@ def _record_proposal(
                 parsed.rationale,
                 parsed.risk_tier.value,
                 parsed.estimated_cost_minor_units,
+                # §18/§19.4: recorded from the *context that produced it*, not
+                # from anything the Cell said. A Cell repeating a web page has
+                # no incentive to mention that it is, and §0.3 would not let it
+                # define the answer anyway.
+                1 if assembled.contains_untrusted_external else 0,
                 parsed.model_dump_json(),
                 now.isoformat(),
             ),

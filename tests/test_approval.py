@@ -680,7 +680,7 @@ def test_evidence_comes_from_the_register_not_the_proposal(conn):
 
 def test_only_the_promotion_module_consumes_a_grant():
     """§25.1's ladder, enforced structurally — and this test has been
-    *deliberately loosened once*, which is the point of it existing.
+    *deliberately loosened twice*, which is the point of it existing.
 
     ADR-027 shipped it as "no module consumes a grant", pinning the loop at rung
     6 ("human-reviewed prototype"). ADR-028's successor, `promotion.py`, is the
@@ -689,13 +689,20 @@ def test_only_the_promotion_module_consumes_a_grant():
     cost an explicit edit to a named guarantee, not slip in as a plausible
     commit.
 
-    What it still forbids is the *next* unargued step. Only `promotion.py` may
-    write a grant's `consumed_at_utc`, and nothing scheduled may reach it — the
-    scheduler must not import promotion, or rung 7's "a human runs each
-    allocation" quietly becomes rung 9's bounded autonomy.
+    The second loosening is ADR-034's `tools.py`, which consumes a grant to run
+    an approved tool. It is the same argued shape as the first: a human approves
+    each §23 request individually, and a human runs the execution — nothing
+    fires on a timer. §25.1 puts "read-only real-world observation" at rung 4,
+    *below* the rung 5 the agent loop already occupies, so a read-only tool is
+    filling a skipped rung rather than climbing one.
+
+    What it still forbids is the *next* unargued step. Only `promotion.py` and
+    `tools.py` may write a grant's `consumed_at_utc`, and nothing scheduled may
+    reach either — the scheduler must not import them, or "a human runs each
+    execution" quietly becomes rung 9's bounded autonomy.
     """
     source_dir = Path(__file__).resolve().parents[1] / "src" / "mitosis"
-    allowed = {"promotion.py"}
+    allowed = {"promotion.py", "tools.py"}
 
     consumers = []
     for path in sorted(source_dir.glob("*.py")):
@@ -716,6 +723,13 @@ def test_only_the_promotion_module_consumes_a_grant():
     assert "promotion" not in scheduler_source, (
         "scheduler.py must not reach the promotion path — an allocation that fires "
         "on a timer is rung 9 (bounded autonomy), not rung 7"
+    )
+    # Same reasoning for the tool executor, and one degree sharper: a fetch that
+    # fires on a timer is an unattended process reaching the public internet.
+    # (`tools` imports `scheduler`, not the reverse — this pins that direction.)
+    assert "import tools" not in scheduler_source and "from .tools" not in scheduler_source, (
+        "scheduler.py must not reach the tool executor — an unattended fetch is "
+        "not rung 4 observation, whatever the tool is"
     )
 
 

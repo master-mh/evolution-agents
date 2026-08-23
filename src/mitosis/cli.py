@@ -46,6 +46,8 @@ from . import (
     reservations,
     resource_metering,
     revenue,
+    tool_registry,
+    tools,
     scheduler,
     sweeper,
 )
@@ -915,18 +917,120 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
 
 
 def cmd_set_autonomy(args: argparse.Namespace) -> None:
-    """§27.1 `autonomy.real_spending`. The single most consequential switch here:
-    it is what lets an unattended scheduler spend real money."""
+    """§27.1's `autonomy:` block. Each flag is turned on separately, because
+    §0.4 grants autonomy "tool by tool, phase by phase" — there is deliberately
+    no switch that opens more than one."""
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
-    enabled = args.real_spending == "on"
-    if enabled and not args.yes_spend_real_money:
-        raise CliError(
-            "enabling real_spending lets the scheduler spend real money with no "
-            "human in the loop — re-run with --yes-spend-real-money to confirm"
+
+    if args.real_spending is not None:
+        enabled = args.real_spending == "on"
+        if enabled and not args.yes_spend_real_money:
+            raise CliError(
+                "enabling real_spending lets the scheduler spend real money with no "
+                "human in the loop — re-run with --yes-spend-real-money to confirm"
+            )
+        state = scheduler.set_real_spending(conn, enabled)
+        print(
+            f"autonomy.real_spending = "
+            f"{'ENABLED' if state.real_spending_enabled else 'disabled'}"
         )
-    state = scheduler.set_real_spending(conn, enabled)
-    print(f"autonomy.real_spending = {'ENABLED' if state.real_spending_enabled else 'disabled'}")
+
+    for flag in ("public_web_read", "browser_control", "external_publish", "external_message"):
+        value = getattr(args, flag)
+        if value is None:
+            continue
+        tools.set_autonomy(conn, flag=flag, enabled=value == "on", changed_by="cli")
+        print(f"autonomy.{flag} = {'ENABLED' if value == 'on' else 'disabled'}")
+
+    if all(
+        getattr(args, f) is None
+        for f in (
+            "real_spending", "public_web_read", "browser_control",
+            "external_publish", "external_message",
+        )
+    ):
+        raise CliError("name at least one flag to change, e.g. --public-web-read on")
+    conn.close()
+
+
+def cmd_tools(args: argparse.Namespace) -> None:
+    """What the colony can do, and which gates stand in front of each."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    print("Registered tools (SPEC.md §19, §0.4):")
+    for spec in sorted(tool_registry.REGISTRY.values(), key=lambda s: s.tool_id):
+        on = tool_registry.autonomy_enabled(conn, spec.autonomy_flag)
+        print(f"  {spec.tool_id}")
+        print(f"    {spec.description}")
+        print(f"    read-only (§25.1 rung 4): {'yes' if spec.read_only else 'NO — rung 8+'}")
+        print(f"    autonomy.{spec.autonomy_flag}: {'on' if on else 'OFF'}")
+        for name, description in sorted(spec.parameters.items()):
+            print(f"    arg {name}: {description}")
+
+    domains = tool_registry.allowed_domains(conn)
+    print()
+    print("Egress allowlist (§19.3, Charter C12):")
+    if not domains:
+        print("  (empty — the network is disabled by default)")
+    for domain in domains:
+        print(f"  {domain}")
+    conn.close()
+
+
+def cmd_allow_domain(args: argparse.Namespace) -> None:
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        if args.remove:
+            tool_registry.deny_domain(conn, domain=args.domain, removed_by="cli")
+            print(f"Removed {args.domain} from the egress allowlist")
+        else:
+            tool_registry.allow_domain(
+                conn, domain=args.domain, added_by="cli", reason=args.reason
+            )
+            print(f"Added {args.domain} to the egress allowlist")
+    except tool_registry.ToolError as exc:
+        raise CliError(str(exc)) from exc
+    print(f"  now allowed: {', '.join(tool_registry.allowed_domains(conn)) or '(nothing)'}")
+    conn.close()
+
+
+def cmd_run_tool(args: argparse.Namespace) -> None:
+    """Execute an approved tool grant.
+
+    Operator-invoked, and that is rung 4's "a human runs each execution" — the
+    scheduler is structurally forbidden from reaching this path.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    fetcher = None
+    if args.live:
+        from .fetchers import UrlLibFetcher
+
+        fetcher = UrlLibFetcher()
+
+    try:
+        call = tools.execute_grant(
+            conn,
+            grant_id=args.grant,
+            executed_by="cli",
+            reason=args.reason,
+            fetcher=fetcher,
+        )
+    except tools.ToolError as exc:
+        raise CliError(str(exc)) from exc
+
+    print(f"Tool call {call.tool_call_id}")
+    print(f"  tool:      {call.tool}")
+    print(f"  arguments: {json.dumps(call.arguments)}")
+    print(f"  status:    {call.status}")
+    print(f"  taint:     {call.taint_label} (§18.1 — data, never instruction)")
+    print(f"  bytes:     {call.result_bytes}")
+    print(f"  http:      {call.http_status}")
+    print("  The Cell has been woken; the result enters its next context fenced.")
     conn.close()
 
 
@@ -1022,6 +1126,19 @@ def cmd_approval_show(args: argparse.Namespace) -> None:
     print(f"    summary:     {proposal['summary']}")
     print(f"    cell:        {request.cell_id}  (currently {detail.current_cell_status.value})")
     print(f"    book:        {detail.book.value}")
+    if detail.tool_request:
+        # Verbatim, and above the risk block. For a tool request the arguments
+        # *are* the decision — approving "read the wholesaler's price list"
+        # without seeing which URL is approving nothing in particular.
+        print(f"    TOOL:        {detail.tool_request.get('tool')}")
+        for name, value in sorted((detail.tool_request.get("arguments") or {}).items()):
+            print(f"      {name}: {value}")
+    if detail.derived_from_untrusted:
+        print(
+            "    NOTE:        this proposal was made from a context containing "
+            "UNTRUSTED_EXTERNAL content (§18/§19.4) — the Cell may be repeating "
+            "something it read"
+        )
     print()
     print("  Risk classification")
     print(f"    cell claimed:    {request.claimed_tier.value}")
@@ -1038,7 +1155,8 @@ def cmd_approval_show(args: argparse.Namespace) -> None:
         f"across {detail.related_request_count} request(s) on {request.aggregation_key}"
     )
     liability = (
-        "not modelled (no liability reserve exists yet — §13 is Phase 6+)"
+        "not modelled (the liability_reserve account exists per §31; no policy "
+        "provisions one yet)"
         if detail.liability_minor_units is None
         else str(detail.liability_minor_units)
     )
@@ -1230,7 +1348,10 @@ def cmd_allocate(args: argparse.Namespace) -> None:
     print(f"    reality gap (mean Brier):  {gap}")
     print(f"    predictions:               {result.resolved_predictions} resolved, "
           f"{result.unresolved_predictions} unresolved")
-    print("    liability:                 not modelled (§13 is Phase 6+)")
+    print(
+        "    liability:                 not modelled (account exists per §31; "
+        "no policy provisions one)"
+    )
     degradation = (
         "n/a (no earlier promotion to degrade from)"
         if result.transfer_degradation is None
@@ -2045,12 +2166,46 @@ def build_parser() -> argparse.ArgumentParser:
     autonomy_parser = subparsers.add_parser(
         "set-autonomy", help="enable/disable unattended real spending (§27.1)"
     )
-    autonomy_parser.add_argument("--real-spending", required=True, choices=["on", "off"])
+    autonomy_parser.add_argument("--real-spending", default=None, choices=["on", "off"])
+    for flag in ("public-web-read", "browser-control", "external-publish", "external-message"):
+        autonomy_parser.add_argument(
+            f"--{flag}", default=None, choices=["on", "off"],
+            help=f"§27.1 autonomy.{flag.replace('-', '_')} (ships off)",
+        )
     autonomy_parser.add_argument(
         "--yes-spend-real-money", action="store_true",
         help="required to turn real_spending on — this removes the human from the loop",
     )
     autonomy_parser.set_defaults(func=cmd_set_autonomy)
+
+    tools_parser = subparsers.add_parser(
+        "tools", help="registered tools, their gates, and the egress allowlist (§19)"
+    )
+    tools_parser.set_defaults(func=cmd_tools)
+
+    domain_parser = subparsers.add_parser(
+        "allow-domain", help="add or remove a domain on the §19.3 egress allowlist"
+    )
+    domain_parser.add_argument("--domain", required=True, help="bare domain, e.g. example.com")
+    domain_parser.add_argument(
+        "--reason", default="", help="why this domain may be reached — required to add"
+    )
+    domain_parser.add_argument("--remove", action="store_true", help="remove instead of add")
+    domain_parser.set_defaults(func=cmd_allow_domain)
+
+    run_tool_parser = subparsers.add_parser(
+        "run-tool", help="execute an approved tool grant (SPEC.md §19, §23)"
+    )
+    run_tool_parser.add_argument("--grant", required=True, help="approved grant_id")
+    run_tool_parser.add_argument(
+        "--reason", required=True, help="why this is being run now — recorded"
+    )
+    run_tool_parser.add_argument(
+        "--live", action="store_true",
+        help="actually reach the network. Without it no fetcher is supplied and the "
+             "call refuses (§19.3 ships the network disabled)",
+    )
+    run_tool_parser.set_defaults(func=cmd_run_tool)
 
     ack_parser = subparsers.add_parser(
         "ack-alarm", help="acknowledge and clear a raised metabolic alarm (§23.3)"

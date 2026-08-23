@@ -39,7 +39,7 @@ from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, precondition, rule
 
 import mitosis
-from mitosis import db, events, gateway, genome, ledger, lifecycle, lineage, money, population, providers, real_spend_breaker, reservations, resource_metering
+from mitosis import db, events, gateway, genome, ledger, lifecycle, lineage, money, population, providers, real_spend_breaker, reservations, resource_metering, tool_registry
 from mitosis.accounts import cell_cash, cell_committed
 from mitosis.models import (
     Book,
@@ -802,3 +802,57 @@ def test_charter_no_secret_in_cell_no_kernel_module_persists_the_environment():
         source = path.read_text()
         assert "ANTHROPIC_API_KEY" not in source, path.name
         assert "api_key" not in source, path.name
+
+
+# --- charter_sandbox_isolation (C12), tool-surface slice ---------------------
+# "Generated code cannot reach host files, secrets, or unapproved networks."
+# This clause had no test and was deferred to Phase 5, correctly: no generated
+# code runs. But the tool surface makes the *network* half live right now — the
+# kernel can open a socket on a Cell's behalf — and "unapproved networks" is a
+# guarantee whether or not the caller happens to be generated code. So the
+# egress allowlist is tested here, and the filesystem/secret halves stay
+# deferred to the sandbox slice with a named gap rather than a silent one.
+
+
+@given(
+    host=st.text(
+        alphabet=st.characters(whitelist_categories=("Ll", "Nd"), whitelist_characters="-"),
+        min_size=1,
+        max_size=20,
+    )
+)
+@settings(deadline=None, max_examples=50)
+def test_charter_sandbox_isolation_unapproved_networks_are_refused(host):
+    """No host reaches the network unless a human put it on the allowlist.
+
+    Property, not example: for *any* hostname, egress is refused unless it
+    equals an allowlisted domain or is a dotted subdomain of one. The two
+    plausible wrong implementations — substring matching, and a bare
+    `endswith` — both pass a hand-picked example and fail this.
+    """
+    conn = db.connect_and_migrate()
+    tool_registry.allow_domain(
+        conn, domain="allowed.test", added_by="operator", reason="charter property"
+    )
+    candidate = f"{host}.evil"
+
+    assume(candidate != "allowed.test" and not candidate.endswith(".allowed.test"))
+
+    with pytest.raises(tool_registry.EgressRefused):
+        tool_registry._check_egress_locked(conn, f"https://{candidate}/path")
+    conn.close()
+
+
+def test_charter_sandbox_isolation_the_allowlist_starts_empty():
+    """§19.3: "network disabled by default". A colony that shipped with a
+    populated allowlist would have granted egress nobody asked for."""
+    conn = db.connect_and_migrate()
+    assert tool_registry.allowed_domains(conn) == ()
+    conn.close()
+
+
+def test_charter_sandbox_isolation_no_fetcher_means_no_network():
+    """The default fetcher refuses. A default that quietly worked would mean
+    every test in this suite could make real requests."""
+    with pytest.raises(tool_registry.ToolError):
+        tool_registry.RefusingFetcher().fetch("https://allowed.test/x", max_bytes=100)

@@ -78,6 +78,8 @@ from . import (
     reconciliation,
     reservations,
     resource_metering,
+    tool_registry,
+    tools,
 )
 from .models import (
     Book,
@@ -326,7 +328,60 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           to version 12, and `external_expense` stays 0 in every book.** The
 #           unseeded explorer's request is unchanged, which is the check against
 #           a genome claim leaking onto a Cell that never made one.
-EXPECTATION_VERSION = 13
+#   13 -> 14 (the tool surface, §19/§18.1/§20.1/§0.4; ADR-034). The scenario
+#           gains §25.1's rung 4: cell#4 proposes a read-only fetch, a human
+#           approves it, the grant runs the tool, and the Cell is woken once
+#           more so the result is in its context. Three sections are new and
+#           the rest follow from two extra deliberations plus one tool call.
+#           (a) **`tool_calls` (new)**: one succeeded `http_get`, taint
+#               UNTRUSTED_EXTERNAL, licence and commercial_use both `unknown`.
+#               The rights columns are pinned in full on purpose — a slice that
+#               began defaulting a licence to "permitted" would be
+#               manufacturing a rights position (§20.2), and this is the only
+#               place that would show. `result_bytes` is pinned and the text is
+#               not: the fixture's wording is not an economic fact, but how much
+#               of a page reaches a Cell is.
+#           (b) **`egress_allowlist` (new)**: exactly `golden.test`, added
+#               mid-scenario. **`autonomy` (new)**: four flags false, one true.
+#               Both start closed and are opened by an explicit step, so a
+#               colony that ever shipped either open by default diffs here.
+#               That is the single most valuable regression in this section.
+#           (c) `proposals` 2 -> 4, and the rows gain `derived_from_untrusted`.
+#               The values are `[false, false, false, true]` and the last one is
+#               the reason the scenario wakes cell#4 *again* after the fetch: a
+#               column that is uniformly false passes just as happily against a
+#               kernel that hardcodes false, which is how ADR-031's
+#               `born_in_epoch` nearly shipped untested. The `true` is §18/§19.4
+#               taint propagation working.
+#           (d) `approval_requests` 2 -> 3, `approval_grants` 1 -> 2. The new
+#               request is the tool request: claimed LOW, **assessed HIGH**,
+#               signal `understated_risk`. HIGH rather than the MEDIUM a
+#               read-only tool alone earns, because cell#4 inherited
+#               `risk_class: HIGH` from the seeded auditor genome — ADR-033 and
+#               ADR-034 composing, and worth pinning as such.
+#           (e) `deliberations` 2 -> 4 and `model_calls` 4 -> 6: the tool
+#               request and the post-fetch wake. Existing rows' `context_tokens`
+#               and `input_tokens` rise (282 -> 381, 343 -> 442; 1450 -> 1790,
+#               1570 -> 1910) from one cause — every Cell's context now carries
+#               the "Tools you may request" section (§0.4), which is what makes
+#               a tool_request proposal possible at all.
+#           (f) `resource_usage` 12 -> 17 and `reservations` 15 -> 20. Four rows
+#               belong to the two new model calls; the fifth is the tool call's
+#               `network_requests` quantity 1 / 5 minor units, with a matching
+#               RESOURCE reservation tagged `external_operation_type=tool_call`.
+#               A fetch is metered and never billed.
+#           (g) `balances`: **RESOURCE only** — cell#4 cash 1996 -> 1987 and
+#               `infrastructure_reserve` 1858 -> 1867, the same 9 units.
+#               `transaction_types` gains RESOURCE reserve/settle 5 -> 8 and
+#               USD_REAL reserve 6 -> 8 / release 4 -> 6. **The USD_REAL pair
+#               moves together — reserved and released, never settled — which is
+#               the tell that the new model calls cost nothing.**
+#           **No USD_REAL balance moves and `external_expense` is unchanged in
+#           every book (20 / 1550).** `cells`, `predictions`, `audits`,
+#           `promotions`, `assessments` and `coroner_reports` are byte-identical:
+#           a tool call observes, and changes nothing about who exists, what
+#           anyone forecast, or what anyone was paid.
+EXPECTATION_VERSION = 14
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -387,6 +442,46 @@ GOLDEN_SPEND_REQUEST_REPLY = json.dumps(
 )
 
 
+# The tool request for the §19 step. `predictions: []` on purpose: the read-back
+# above is scoped by claim text, and a forecast here would put a fourth claim in
+# cell#4's register for a reader to mistake for part of the funding evidence.
+GOLDEN_TOOL_REQUEST_REPLY = json.dumps(
+    {
+        "kind": "tool_request",
+        "summary": "golden-run read of a fixed public page",
+        "rationale": "fixed scenario tool request; exists to pin rung 4, not to be clever",
+        "risk_tier": "LOW",
+        "estimated_cost_minor_units": 0,
+        "predictions": [],
+        "tool_request": {
+            "tool": "http_get",
+            "arguments": {"url": "https://golden.test/pricing"},
+        },
+    },
+    sort_keys=True,
+)
+
+
+# The wake *after* the fetch. Deliberately a strategy rather than another tool
+# request: what is being pinned is that the taint flag propagates, and reusing
+# `tool_request` would confuse "the Cell read something" with "the Cell wants to
+# read something else".
+GOLDEN_POST_FETCH_REPLY = json.dumps(
+    {
+        "kind": "strategy",
+        "summary": "golden-run strategy note written after reading a page",
+        "rationale": (
+            "fixed scenario; exists to pin that a proposal made from a context "
+            "containing external content is flagged as such"
+        ),
+        "risk_tier": "LOW",
+        "estimated_cost_minor_units": 0,
+        "predictions": [],
+    },
+    sort_keys=True,
+)
+
+
 # The Auditor's reply for the §23.2 step. A `concern` at p=0.3 — coherent with
 # its verdict, which the kernel checks: a flag that quietly predicts success
 # would be a costless flag (§10.4).
@@ -425,6 +520,28 @@ def run_scenario(conn: sqlite3.Connection) -> None:
     """
     with ids.seeded(GOLDEN_RUN_ID_SEED):
         _run_scenario_body(conn)
+
+
+class _GoldenFetcher:
+    """Deterministic, offline. A golden run must never touch a network.
+
+    The same argument as the mock provider being priced at zero: a replay that
+    reached out would make the run depend on somebody else's uptime, and a
+    replay that started *billing* someone would be the worst regression this
+    file could miss. The §20.1 metadata is fixed too, so a change in what the
+    kernel records about data rights shows up as a diff rather than as noise.
+    """
+
+    def fetch(self, url: str, *, max_bytes: int):
+        return tool_registry.FetchResult(
+            text="Golden fixture page. Widgets are listed at 4 units.",
+            http_status=200,
+            source=url,
+            licence="unknown",
+            permitted_uses="review only; no storage, redistribution or training",
+            commercial_use="unknown",
+            contains_personal_data=False,
+        )
 
 
 def _run_scenario_body(conn: sqlite3.Connection) -> None:
@@ -967,7 +1084,68 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
             occurred=True,
             source=f"golden-run observation {index}",
         )
-    # 16. Simulated clock.
+    # 16. The tool surface (§19, §25.1 rung 4; ADR-034). The Cell proposes a
+    #     read-only fetch, a human approves it, and the grant runs the tool —
+    #     the same proposal -> review -> grant path capital already uses, which
+    #     is the point: nothing new decides anything.
+    #
+    #     Both gates are opened here rather than in setup, so the snapshot's
+    #     `egress_allowlist` and `autonomy` sections are non-empty and a
+    #     regression that shipped either open by default is visible as a diff
+    #     against a colony that starts closed.
+    tools.allow_domain(
+        conn,
+        domain="golden.test",
+        added_by="golden-operator",
+        reason="fixed scenario; the fetcher is deterministic and offline",
+    )
+    tools.set_autonomy(conn, flag="public_web_read", enabled=True, changed_by="golden-operator")
+
+    deliberation.deliberate(
+        conn,
+        cell_id=auditor_child.cell_id,
+        provider=providers.MockProvider(reply=GOLDEN_TOOL_REQUEST_REPLY),
+        wake_key="golden:wake:tool-request",
+        wake_reason=deliberation.WAKE_SCHEDULED_RESEARCH,
+        model="mock-1",
+        proposal_sink=approval.QueueSink(),
+    )
+    tool_request = next(
+        r
+        for r in approval.queue(conn)
+        if r.cell_id == auditor_child.cell_id and r.status == approval.RequestStatus.PENDING
+    )
+    tool_grant = approval.approve(
+        conn,
+        request_id=tool_request.request_id,
+        decided_by="golden-operator",
+        reason="fixed scenario approval; exists to pin rung 4",
+    )
+    tools.execute_grant(
+        conn,
+        grant_id=tool_grant.grant_id,
+        executed_by="golden-operator",
+        reason="fixed scenario tool call",
+        fetcher=_GoldenFetcher(),
+    )
+
+    #     One more wake, *after* the fetch, and it is the point of the step
+    #     rather than a flourish. §18/§19.4's taint flag is only meaningful if
+    #     the snapshot contains both values: a column that is uniformly false
+    #     passes just as happily against a kernel that hardcodes false, which is
+    #     exactly how ADR-031's `born_in_epoch` nearly shipped untested. This
+    #     Cell's context now carries an UNTRUSTED_EXTERNAL observation, so its
+    #     next proposal must come back flagged.
+    deliberation.deliberate(
+        conn,
+        cell_id=auditor_child.cell_id,
+        provider=providers.MockProvider(reply=GOLDEN_POST_FETCH_REPLY),
+        wake_key="golden:wake:after-tool-result",
+        wake_reason=deliberation.WAKE_TOOL_RESULT,
+        model="mock-1",
+    )
+
+    # 18. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
 
@@ -1151,9 +1329,51 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
             "summary": row["summary"],
             "risk_tier": row["risk_tier"],
             "estimated_cost_minor_units": row["estimated_cost_minor_units"],
+            # §18/§19.4. Pinned because a regression that stopped propagating
+            # taint would leave every reviewer's payload looking clean.
+            "derived_from_untrusted": bool(row["derived_from_untrusted"]),
         }
         for row in conn.execute("SELECT * FROM proposals ORDER BY rowid").fetchall()
     ]
+
+    # §19's tool surface. The result *text* is deliberately excluded and its
+    # length pinned instead: the fixture's wording is not an economic fact, but
+    # a change in how much of a page reaches a Cell is. The §20.1 rights
+    # columns are pinned in full, because a slice that started defaulting a
+    # licence to "permitted" would be manufacturing a rights position and the
+    # diff is the only place that would show.
+    tool_call_rows = [
+        {
+            "cell": aliases.get(row["cell_id"], "cell#?"),
+            "tool": row["tool"],
+            "arguments": json.loads(row["arguments_json"]),
+            "status": row["status"],
+            "taint_label": row["taint_label"],
+            "licence": row["licence"],
+            "commercial_use": row["commercial_use"],
+            "contains_personal_data": row["contains_personal_data"],
+            "result_bytes": row["result_bytes"],
+            "http_status": row["http_status"],
+        }
+        for row in conn.execute("SELECT * FROM tool_calls ORDER BY rowid").fetchall()
+    ]
+
+    # Charter C12 and §27.1. Both start closed, so a colony that shipped with
+    # either open would diff here — which is the regression most worth catching
+    # in this whole section.
+    egress_domains = [
+        row["domain"]
+        for row in conn.execute("SELECT domain FROM egress_allowlist ORDER BY domain")
+    ]
+    autonomy_row = conn.execute("SELECT * FROM operator_state WHERE id = 1").fetchone()
+    autonomy_flags = (
+        {
+            flag: bool(autonomy_row[column])
+            for flag, column in sorted(tool_registry._AUTONOMY_COLUMNS.items())
+        }
+        if autonomy_row is not None
+        else {}
+    )
 
     # §23's review queue. Ids, timestamps and the aggregation key's embedded
     # cell id are all volatile, so what is pinned is the *classification*: what
@@ -1292,6 +1512,9 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "predictions": prediction_rows,
         "deliberations": deliberation_rows,
         "proposals": proposal_rows,
+        "tool_calls": tool_call_rows,
+        "egress_allowlist": egress_domains,
+        "autonomy": autonomy_flags,
         "approval_requests": approval_rows,
         "approval_grants": approval_grant_count,
         "audits": audit_rows,

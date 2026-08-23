@@ -71,7 +71,10 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from . import audit, deliberation, genome, ids, lifecycle, prediction
+# `tool_registry`, not `tools`: the executor imports this module, so the
+# dependency only runs one way. Reading a tool's spec to assess its risk must
+# not give the review path a route to running it.
+from . import audit, deliberation, genome, ids, lifecycle, prediction, tool_registry
 from .models import Book, CellStatus
 from .proposal import ProposalKind, RiskTier
 
@@ -290,6 +293,15 @@ class ApprovalPayload:
     unresolved_prediction_count: int
     overdue_prediction_count: int
     mean_brier_score: float | None
+    #: The tool and arguments a `tool_request` asks for, or None. Shown
+    #: verbatim because this *is* the action under review: for a tool request,
+    #: the URL is the decision, and a summary of it is not.
+    tool_request: dict | None
+    #: §18/§19.4. True when the context that produced this proposal contained
+    #: UNTRUSTED_EXTERNAL content — i.e. the Cell may be repeating what a web
+    #: page told it. A confident rationale reads identically either way, so
+    #: without this the reviewer cannot tell whose idea the request was.
+    derived_from_untrusted: bool
     #: §23.2 "policy classification".
     signals: tuple[Signal, ...]
     current_cell_status: CellStatus
@@ -376,6 +388,7 @@ def _enqueue_locked(
         status=cell.status,
         exposure_minor_units=exposure,
         alarm_cents_per_epoch=_metabolic_alarm_cents(conn),
+        tool_id=_tool_id_of(row),
     )
 
     signals = _detect_signals(
@@ -521,6 +534,27 @@ def _is_reversible(*, kind: ProposalKind, book: Book) -> bool:
     return not (kind is ProposalKind.SPEND_REQUEST and book is Book.USD_REAL)
 
 
+def _tool_request_of(proposal_row) -> dict | None:
+    """The (tool, arguments) pair a proposal asks for, or None.
+
+    Tolerant of a malformed payload rather than raising: a proposal that cannot
+    be rendered is still a proposal a human should be able to *see* and reject,
+    and a review queue that throws on bad input is one a Cell can jam.
+    """
+    try:
+        payload = json.loads(proposal_row["payload_json"])
+    except (json.JSONDecodeError, TypeError):
+        return None
+    request = payload.get("tool_request")
+    return request if isinstance(request, dict) else None
+
+
+def _tool_id_of(proposal_row) -> str | None:
+    request = _tool_request_of(proposal_row)
+    tool = request.get("tool") if request else None
+    return tool if isinstance(tool, str) else None
+
+
 def _kernel_tier(
     *,
     kind: ProposalKind,
@@ -528,6 +562,7 @@ def _kernel_tier(
     status: CellStatus,
     exposure_minor_units: int,
     alarm_cents_per_epoch: int,
+    tool_id: str | None = None,
 ) -> RiskTier:
     """The tier the kernel assesses, from facts the Cell does not control.
 
@@ -544,6 +579,19 @@ def _kernel_tier(
         tier = _max_tier(tier, RiskTier.MEDIUM)
         if book is Book.USD_REAL:
             # Real, and irreversible. Nothing a Cell can say lowers this.
+            tier = _max_tier(tier, RiskTier.HIGH)
+
+    if kind is ProposalKind.TOOL_REQUEST:
+        # Reaching outside the colony at all is the category §23.1 wants looked
+        # at, and unlike a USD_SIM spend it cannot be undone by a ledger entry.
+        tier = _max_tier(tier, RiskTier.MEDIUM)
+        spec = tool_registry.REGISTRY.get(tool_id or "")
+        if spec is None or not spec.read_only:
+            # An unregistered tool is treated exactly as an acting one. Failing
+            # *closed* on the unknown case matters more than the known one: a
+            # tool added later without a `read_only` decision, or a proposal
+            # naming something that does not exist, must not arrive in the
+            # queue looking routine.
             tier = _max_tier(tier, RiskTier.HIGH)
 
     if status is CellStatus.QUARANTINED:
@@ -1292,6 +1340,8 @@ def payload(
         ),
         exposure_minor_units=request.exposure_minor_units,
         related_request_count=related,
+        tool_request=_tool_request_of(proposal_row),
+        derived_from_untrusted=bool(proposal_row["derived_from_untrusted"]),
         liability_minor_units=None,
         cell_explanation=proposal_row["rationale"],
         auditor_summary=_auditor_summary(conn, request_id),

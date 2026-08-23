@@ -33,7 +33,14 @@ import json
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 #: Upper bounds on free text. A proposal is a summary the operator will read,
 #: not a place to park an essay — and §15's context budget means today's
@@ -60,6 +67,13 @@ class ProposalKind(StrEnum):
     EXPERIMENT = "experiment"
     STRATEGY = "strategy"
     SPEND_REQUEST = "spend_request"
+    #: Ask to run a registered tool (§0.4, §19). Like SPEND_REQUEST this is a
+    #: request, not an action: it produces a §23 review item, and only an
+    #: approved grant runs anything. The tool id is deliberately *not*
+    #: validated here — `tools` sits above this module in the dependency order,
+    #: and importing it would invert the layering the kernel keeps everywhere.
+    #: `tools.validate_request` checks it at proposal-record and execute time.
+    TOOL_REQUEST = "tool_request"
     #: A first-class outcome, not a failure. A Cell with nothing worth doing
     #: should say so; the alternative is a Cell that invents work because the
     #: schema gave it no way to decline. (Abstaining is still not free — §10.5
@@ -102,6 +116,39 @@ class ProposedPrediction(BaseModel):
         return value.strip()
 
 
+class ToolRequestSpec(BaseModel):
+    """Which tool, with which arguments (§19, §0.4).
+
+    An *intention*, which is what this whole schema is for — the Cell says what
+    it wants done and nothing here does it. The pair is frozen at approval and
+    read back from `payload_json` at execution, so what runs is what the
+    operator was shown at §23.2 rather than anything re-read from the Cell
+    afterwards.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tool: str = Field(min_length=1, max_length=64)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("arguments")
+    @classmethod
+    def _arguments_are_flat_scalars(cls, value: dict) -> dict:
+        """Arguments are scalars, not nested structures.
+
+        A nested payload is somewhere to hide a second instruction, and §19.4
+        is explicit that nothing arriving through this path may read as a
+        command. Keeping arguments flat means an operator reviewing a request
+        sees the whole of it on one line.
+        """
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("argument names must be strings")
+            if not isinstance(item, (str, int, float, bool)):
+                raise ValueError(f"argument {key!r} must be a string, number or boolean")
+        return value
+
+
 class Proposal(BaseModel):
     """The only shape a deliberation may return.
 
@@ -119,6 +166,27 @@ class Proposal(BaseModel):
     predictions: tuple[ProposedPrediction, ...] = Field(
         default=(), max_length=MAX_PREDICTIONS
     )
+    #: Present exactly when `kind` is TOOL_REQUEST — see `_tool_request_matches_kind`.
+    tool_request: ToolRequestSpec | None = None
+
+    @model_validator(mode="after")
+    def _tool_request_matches_kind(self) -> "Proposal":
+        """A tool_request proposal carries a tool_request, and nothing else does.
+
+        Both directions matter. Without the first, a `tool_request` reaches the
+        queue with nothing to execute and the failure surfaces at execution
+        time, after a human has already approved it. Without the second, a Cell
+        could attach a tool request to an `experiment` — a kind reviewers read
+        as "yes, go think about that" — and `tools.execute_grant` refuses that
+        pairing precisely because approving one is not approving the other.
+        """
+        if self.kind is ProposalKind.TOOL_REQUEST and self.tool_request is None:
+            raise ValueError("a tool_request proposal must carry a tool_request")
+        if self.kind is not ProposalKind.TOOL_REQUEST and self.tool_request is not None:
+            raise ValueError(
+                f"only a tool_request proposal may carry a tool_request, not {self.kind.value}"
+            )
+        return self
 
     @field_validator("summary", "rationale")
     @classmethod
@@ -248,6 +316,12 @@ def _prompt_schema() -> dict[str, Any]:
         "rationale": f"REQUIRED string, 1-{MAX_RATIONALE_CHARS} chars",
         "risk_tier": _one_of(RiskTier),
         "estimated_cost_minor_units": "REQUIRED integer >= 0 (use 0 if nothing would be spent)",
+        "tool_request": (
+            "REQUIRED only when kind is tool_request, and forbidden otherwise: "
+            '{"tool": "<one of the tools listed in your context>", '
+            '"arguments": {"<name>": "<scalar value>"}}. Nothing runs until a '
+            "human approves the request."
+        ),
         "predictions": [
             {
                 "claim": (
