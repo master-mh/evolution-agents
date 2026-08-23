@@ -653,3 +653,9 @@ actually queued for building — this file is memory, not a backlog to work thro
   more RESOURCE than a Cell actually holds — every unit fixture funds generously enough to hide it,
   and the fixed scenario funds like a real colony. Worth remembering the next time a cap is chosen
   from first principles rather than from a real balance.
+- **`test_no_registered_tool_acts_on_the_world`'s message is now stale.** It says an acting tool
+  "needs §21.2's external-action registry before it needs a registry entry" — the registry now
+  exists (ADR-036), so the message reads as though the prerequisite is satisfied and an acting tool
+  would be fine. It would not: a *tool* that acts is rung 8-9 automation, whereas an external action
+  is performed by a person and the kernel only records it. The assertion is still correct; only its
+  explanation misleads, which is the kind of stale rationale someone eventually acts on.
