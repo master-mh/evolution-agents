@@ -212,14 +212,12 @@ def _allocate_locked(
     if now >= grant.expires_at_utc:
         # The grant inherits its request's expiry precisely so that an
         # approval cannot be banked and spent against a world that has moved on.
-        # **Nothing regenerates it, though** — `approval.expire_due` sweeps
-        # PENDING requests, and this one was approved, so no wake is coming. See
-        # the §23.3 section comment in `approval.py`; the gap is tracked in
-        # PRIORITIES.
+        # `approval.expire_grants_due` regenerates it — as a wake, never as a
+        # fresh grant, since a renewed grant *is* the banking this prevents.
         raise PromotionError(
             f"grant {grant_id} expired at {grant.expires_at_utc.isoformat()} — §23.3 "
-            "forbids allocating on stale terms. Nothing regenerates an expired grant: "
-            "the Cell has to propose again and be approved afresh."
+            "forbids allocating on stale terms. Run `mitosis expire-approvals` to "
+            "regenerate it: the Cell proposes again and is approved afresh."
         )
 
     request = approval.get_request(conn, grant.request_id)

@@ -757,3 +757,34 @@ actually queued for building — this file is memory, not a backlog to work thro
   `browser_control` shut (ADR-038). §0.4's "no direct secret access" still has no key at all —
   carried by Charter C14 and the provider key handling — which is defensible but means §27.1's
   block is not a complete index of §0.4.
+
+## From the grant-regeneration slice (2026-08-23, ADR-039)
+
+- **Both expiry sweeps still have exactly one caller, and that is now the whole of the gap.**
+  `expire_due` and `expire_grants_due` are only reached by `mitosis expire-approvals`. The
+  machinery built for an absent operator runs only when the operator is present, which is the
+  §23.3 irony the entry was originally about. Wiring it into `tick` is small, but it is a
+  *vacation-mode* decision rather than an expiry one — it changes what the colony does with nobody
+  watching, and the sweep enqueues wakes that a later tick may spend a Cell's budget on. It wants
+  an argument, not a quiet addition.
+- **A grant expiry can strand a claim, and the two clocks are not connected.** `external_actions`
+  claims hold a RESOURCE reservation with an 8-hour TTL; a grant's window is SLA-derived and much
+  longer. Nothing yet reasons about a Cell whose grant expired *while* a person was mid-claim —
+  the claim consumed the grant, so the sweep will not touch it, which is correct, but there is no
+  path that regenerates an action abandoned after the grant window closed. ADR-036's parked
+  question about expiring stale claims is the same question from the other side.
+- **The regeneration loop is bounded only by budget, and nothing counts it.** Propose → approve →
+  lapse → propose is bounded by Charter C4/C5 and the metabolic alarm, which is the right answer
+  and deliberately not a special-case cap. But nothing records *how many times* one action has
+  been regenerated, so a Cell burning its budget re-proposing the same lapsed request looks
+  identical to one doing fresh work. A `regeneration_count` on the proposal lineage would make it
+  visible without capping it — and §10.5's coroner report is where it would matter, since "died
+  re-proposing the same thing eleven times" is a cause of death worth naming.
+- **`RequestStatus.EXPIRED` means "expired unreviewed", and that is now load-bearing.** ADR-039
+  leaned on it to justify leaving a granted request APPROVED. Anything that later widens that
+  status — an operator-cancelled request, say — has to keep the distinction or the queue statistics
+  silently merge two different operator behaviours.
+- **The golden run's grant assertion is a count invariant, and counts are weak against renaming.**
+  `total` unchanged proves no grant was minted *into `approval_grants`*. A kernel that renewed by
+  writing somewhere else entirely would pass. The unit test is the real guard; the golden run is
+  the regression net.

@@ -1,5 +1,5 @@
 {
-  "expectation_version": 17,
+  "expectation_version": 18,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,9 +10,15 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "c715657563c7f1602e8abea6ca1cce5fe63520535be8a050dc9d0ecb6a002033",
+  "semantic_hash": "e322df1a2343b8c845ac5dce31b3ee30edf2705d3bbbfec25f3a768a015dd534",
   "snapshot": {
-    "approval_grants": 9,
+    "approval_grants": {
+      "consumed": 5,
+      "expired": 4,
+      "live": 0,
+      "regenerated": 4,
+      "total": 9
+    },
     "approval_requests": [
       {
         "assessed_tier": "MEDIUM",
@@ -183,6 +189,7 @@
       "event_dead_lettered": 1,
       "external_action_claimed": 3,
       "external_action_completed": 3,
+      "grant_expired": 4,
       "human_minutes_subsidised": 1,
       "model_call_reconciled": 1,
       "model_call_settled": 13,
@@ -467,6 +474,30 @@
         "event_type": "cell_wake",
         "priority": 100,
         "status": "processed"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
       },
       {
         "attempt_number": 0,

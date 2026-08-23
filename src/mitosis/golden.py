@@ -539,7 +539,31 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           `counterparty_blocks` and `channel_frozen` are all byte-identical:
 #           publishing reaches outside the colony, and a refusal reaches
 #           nothing at all.
-EXPECTATION_VERSION = 17
+#   17 -> 18 (§23.3's other clock: an approval nobody consumed is regenerated;
+#             §23.3/Amendment A19, §3.6, §17.2; ADR-039).
+#           A tight diff — three sections — and what is *absent* from it is half
+#           the point.
+#           (a) **`approval_grants`** stops being a bare count and becomes a
+#               disposition: `9` -> `{total: 9, live: 0, consumed: 5,
+#               expired: 4, regenerated: 4}`. Four grants in this scenario were
+#               approved by a person and never consumed — the refused email
+#               sibling claim and the three refused publish claims — which is
+#               exactly §23.3's solo-operator case. **`total` is unchanged by
+#               the sweep, and that is the assertion**: regeneration must be a
+#               wake and never a fresh grant, because renewing it is the banking
+#               a grant's inherited expiry exists to prevent. A kernel that
+#               renewed instead of waking would still show `expired: 4` and
+#               would move `total` to 13.
+#           (b) **`audit_event_types`** gains `grant_expired: 4`.
+#           (c) **`event_inbox`** gains four pending `cell_wake` rows — the
+#               regeneration itself, the Cell being asked for the action again.
+#           **Nothing else moves at all.** No balance, no transaction, no
+#           reservation, no resource_usage row: `approve` inserts a row and
+#           reserves nothing (ADR-029 allocates capital when a grant is
+#           *consumed*), so an expired grant has nothing to release and expiry
+#           has no ledger consequence. A diff that touched the books here would
+#           mean granting had quietly started holding something.
+EXPECTATION_VERSION = 18
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -1624,6 +1648,30 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     except channel_registry.ChannelAutonomyRefused:
         pass
 
+    # 19c. §23.3's other clock (ADR-039). Several grants in this scenario were
+    #      approved by a person and then never consumed — the three publish
+    #      claims that were refused, and the email one — which is precisely the
+    #      solo-operator case §23.3 (Amendment A19) exists to describe. Sweeping
+    #      them pins three things a bare grant count could not:
+    #
+    #      (a) An unconsumed grant **expires** rather than sitting live forever.
+    #          `live` ending at zero is what says the sweep ran at all.
+    #      (b) Each one **regenerates as a wake**, so the Cell is asked for the
+    #          action again instead of waiting on an approval that is never
+    #          coming. `regenerated` counts them.
+    #      (c) **No new grant is minted.** `total` is unchanged by the sweep,
+    #          which is the property that matters most: renewing the grant is
+    #          the obvious design and is exactly the banking a grant's inherited
+    #          expiry exists to prevent. A kernel that renewed instead of waking
+    #          would satisfy (a) and (b) and fail here.
+    #
+    #      Far past every grant's window, since grants expire on the wall clock
+    #      while this scenario's epochs are simulated (§6.3). The instant itself
+    #      is volatile and excluded from the snapshot; the counts are not.
+    approval.expire_grants_due(
+        conn, now=datetime.now(timezone.utc) + timedelta(days=365)
+    )
+
     # 20. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
@@ -1975,12 +2023,29 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         ).fetchall()
     ]
 
-    # No grant is ever issued by the scenario: §25.1 puts this loop at rung 6,
-    # and a golden run that started approving things on its own would be
-    # exactly the drift this file exists to catch.
-    approval_grant_count = conn.execute(
-        "SELECT COUNT(*) AS n FROM approval_grants"
-    ).fetchone()["n"]
+    # Grant **disposition**, not a bare count (ADR-039). The count alone could
+    # not see the thing worth pinning: §23.3 regenerates an approval nobody
+    # consumed, and regeneration must produce a *wake* and never a new grant. A
+    # kernel that renewed the grant instead would keep `total` moving in
+    # lockstep and look identical here, so `expired` and `regenerated` are
+    # pinned beside it. `live` ending at zero is the tell that the sweep ran.
+    #
+    # (The comment this replaces said "no grant is ever issued by the scenario",
+    # which stopped being true at expectation 7 when the §23 queue landed.)
+    grant_disposition = conn.execute(
+        """
+        SELECT COUNT(*) AS total,
+               SUM(consumed_at_utc IS NULL AND expired_at_utc IS NULL) AS live,
+               SUM(consumed_at_utc IS NOT NULL) AS consumed,
+               SUM(expired_at_utc IS NOT NULL) AS expired,
+               SUM(regenerated_wake_key IS NOT NULL) AS regenerated
+          FROM approval_grants
+        """
+    ).fetchone()
+    approval_grants = {
+        key: int(grant_disposition[key] or 0)
+        for key in ("total", "live", "consumed", "expired", "regenerated")
+    }
 
     # §25.2's promotion evidence. Ids and timestamps are volatile; the rung,
     # the amount, and the two humans are the substance.
@@ -2097,7 +2162,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "egress_allowlist": egress_domains,
         "autonomy": autonomy_flags,
         "approval_requests": approval_rows,
-        "approval_grants": approval_grant_count,
+        "approval_grants": approval_grants,
         "audits": audit_rows,
         "promotions": promotion_rows,
         "assessments": assessment_rows,

@@ -1559,22 +1559,44 @@ def cmd_expire_approvals(args: argparse.Namespace) -> None:
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
 
+    # Both sides of §23.3's clock: a request nobody decided, and an approval
+    # nobody consumed. Requests first — expiring one can only *reduce* the
+    # grants in play, never create one, so the two sweeps cannot race to
+    # produce a grant this run then immediately expire it.
     expired = approval.expire_due(conn)
-    if not expired:
-        print("No approval requests are past their expiry.")
+    expired_grants = approval.expire_grants_due(conn)
+
+    if not expired and not expired_grants:
+        print("Nothing is past its expiry — no pending requests, no unconsumed grants.")
         conn.close()
         return
-    print(f"Expired {len(expired)} request(s):")
-    for request in expired:
-        regenerated = (
-            f"regenerated as {request.regenerated_wake_key}"
-            if request.regenerated_wake_key
-            else "not regenerated (cell is not wakeable)"
+
+    def _regenerated(key: str | None) -> str:
+        return (
+            f"regenerated as {key}" if key else "not regenerated (cell is not wakeable)"
         )
-        print(f"  {request.request_id}  [{request.assessed_tier.value}]  {regenerated}")
+
+    if expired:
+        print(f"Expired {len(expired)} request(s) nobody decided:")
+        for request in expired:
+            print(
+                f"  {request.request_id}  [{request.assessed_tier.value}]  "
+                f"{_regenerated(request.regenerated_wake_key)}"
+            )
+    if expired_grants:
+        if expired:
+            print()
+        print(f"Expired {len(expired_grants)} approved grant(s) nobody consumed:")
+        for grant in expired_grants:
+            print(
+                f"  {grant.grant_id}  [{grant.tier.value}]  "
+                f"{_regenerated(grant.regenerated_wake_key)}"
+            )
     print()
     print("§23.3: expired actions are regenerated and re-evaluated, never")
-    print("executed on stale terms. Run `mitosis run-wakes` to re-derive them.")
+    print("executed on stale terms. Regeneration is a wake, never a fresh grant —")
+    print("the Cell proposes again and a person approves again.")
+    print("Run `mitosis run-wakes` to re-derive them.")
     conn.close()
 
 

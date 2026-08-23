@@ -321,20 +321,32 @@
   and `test_nothing_in_the_deliberation_path_executes_a_tool` enforces it. The delivery half is
   likewise done and manual on purpose (§28 Phase 8's acceptance is "all external action remains
   manual"). The real gap is §23.3's solo-operator model, and it is in two halves:
-  - **An unconsumed grant expires and nothing regenerates it.** Both executors refuse a stale one —
-    `tools.py:356` and `external_actions.py` each say "§23.3: an expired approval is regenerated,
-    never executed late" — but that regeneration exists only for pending *requests*
-    (`approval._expire_one`, which fires a `WAKE_APPROVAL_EXPIRED`). A grant that a human approved
-    and then never used simply dies, and the Cell is never told. The comment promises a mechanism
-    the grant path does not have.
+  - [x] **An unconsumed grant expires and nothing regenerates it — DONE** (2026-08-23), ADR-039.
+    `approval.expire_grants_due` + migration 0023. **The constraint that shaped it: regeneration is
+    a wake and never a new authorisation.** Renewing the grant, or reopening the request as
+    PENDING, is the obvious design and is exactly the banking a grant's inherited expiry exists to
+    prevent — one human decision refreshed indefinitely by the mechanism meant to end it. §23.3's
+    word is "re-evaluated", and that is a person's. **The expiry is recorded on the grant and the
+    request stays APPROVED**: §3.6's habit, plus `RequestStatus.EXPIRED` already means "expired
+    unreviewed", so reusing it would collapse "nobody looked" into "someone approved and the window
+    lapsed". A distinct `grant_expired` wake reason, because §15 renders it into the Cell's context
+    and "a human judged this worth doing" is exactly what a Cell re-proposing should know. Nothing
+    is released because a grant holds nothing — `approve` reserves neither money nor RESOURCE, and
+    the golden diff touches no book. 835 tests (7 new); golden expectation 17 → 18, where
+    `approval_grants` becomes a disposition and **`total` is unchanged by the sweep**, which is the
+    assertion a renewing kernel would fail. Teeth-checked six ways; hand-verified end to end.
   - **The regeneration that does exist only runs when the operator is present.** `approval.
     expire_due` has exactly one caller, `mitosis expire-approvals` in `cli.py:1562` — the scheduler
     never calls it. So the machinery built for an absent operator is itself operator-invoked, which
     is the failure §23.3's vacation mode exists to describe.
 
-  Neither half requires anything to execute a tool, which is why this is buildable now rather than
-  blocked on overturning ADR-034. *Disproved by:* `scheduler` calling `approval.expire_due`, or
-  anything that regenerates an unconsumed expired grant — **not** by the scheduler reaching
+  **The first half landed 2026-08-23 (ADR-039); the second is what remains**, and it is the sharper
+  one now: both sweeps exist and neither runs unattended, so the machinery built for an absent
+  operator still only works when the operator is present. Wiring it to the scheduler is a §23.3
+  *vacation-mode* question rather than an expiry one — it decides what the colony does with nobody
+  watching — and needs its own argument. Neither half requires anything to execute a tool, which is
+  why this was never blocked on overturning ADR-034. *Disproved by:* `scheduler` calling
+  `approval.expire_due` / `expire_grants_due` — **not** by the scheduler reaching
   `tools.execute_grant`, which §19.4 forbids.
 - [ ] **Charter C13's router exists; C13 is still unsatisfied.** `artifacts.check_exportable`
   refuses `SIM_ADVERSARIAL` and is tested, but nothing in the kernel can *produce* that label —

@@ -232,14 +232,13 @@ def _claim_locked(
         )
     if now >= grant.expires_at_utc:
         # §23.3 forbids acting on stale terms: an offer authorised against
-        # last week's market is a different offer. **Nothing regenerates an
-        # expired grant** — `approval.expire_due` sweeps PENDING requests, and
-        # this one was approved, so no wake is coming. See the §23.3 section
-        # comment in `approval.py`; the gap is tracked in PRIORITIES.
+        # last week's market is a different offer. `approval.expire_grants_due`
+        # regenerates it — as a wake, never as a fresh grant — so the Cell asks
+        # again and a person decides again.
         raise ExternalActionError(
             f"grant {grant_id} expired at {grant.expires_at_utc.isoformat()} — §23.3 "
-            "forbids acting on stale terms. Nothing regenerates an expired grant: "
-            "the Cell has to propose again and be approved afresh."
+            "forbids acting on stale terms. Run `mitosis expire-approvals` to "
+            "regenerate it: the Cell proposes again and is approved afresh."
         )
 
     request = approval.get_request(conn, grant.request_id)

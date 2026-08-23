@@ -1554,3 +1554,71 @@ from amendment ID to spec location is complete in one place:
   - With this, every flag in §27.1's block has an argued position: `public_web_read` open
     (ADR-034), `external_message` open (ADR-036), `external_publish` and `real_commerce` shut with
     reasons (ADR-037), `real_spending` shut since §5, and `browser_control` shut here.
+
+---
+
+## ADR-039: An approval nobody consumed is regenerated as a wake, never as a fresh grant
+
+- **Status:** Accepted
+- **Spec ref:** §23.3 (Amendment A19), §17.2, §3.6, §25.1; Charter C4, C5, C6; ADR-027, ADR-029
+- **Context:** §23.3 reads "pending approvals expire; expired actions are **regenerated and
+  re-evaluated** before execution." ADR-027 built that for a PENDING request: the Cell is woken
+  under `approval_expired` and re-derives the action against a world that moved. A grant is the
+  other side of the same clock — it inherits its request's expiry so an approval cannot be banked
+  and spent later — but once a request is APPROVED it is no longer PENDING, so `expire_due` never
+  saw it. All three executors refused a stale grant, each with a comment saying the action "is
+  regenerated, never executed late", and **nothing regenerated it**. Verified before building:
+  driving a real grant past its expiry left `expire_due` sweeping 0, `regenerated_wake_key` NULL,
+  the grant unconsumed in the table, and 0 wakes enqueued. The Cell waited on a wake that was never
+  coming — precisely the solo-operator failure Amendment A19 exists to name.
+- **Decisions, and the alternatives each displaced:**
+  1. **Regeneration is a wake. It is never a new authorisation.** This is the constraint that
+     shapes everything else. Rejected: renewing the grant with a fresh window, and reopening the
+     request as PENDING for a second decision — **both are the obvious design and both are exactly
+     the banking a grant's inherited expiry exists to prevent.** Either would turn one human
+     decision into an indefinite licence, refreshed by the very mechanism meant to end it. §23.3's
+     word is "re-evaluated", and re-evaluation is a person's: the Cell proposes again and a human
+     approves again. `test_an_expired_grant_never_becomes_a_new_authorisation` asserts the grant
+     total is unchanged by a sweep, that no grant survives its own expiry, and that no request
+     reopens itself.
+  2. **The expiry is recorded on the grant; the request stays APPROVED.** Rejected: marking the
+     request EXPIRED, which is the tidier-looking option and destroys information twice over.
+     §3.6's habit is the first reason — a human *did* approve it, and that is history rather than
+     something to overwrite. The second is a semantic collision: `RequestStatus.EXPIRED` already
+     means "expired unreviewed", so reusing it would collapse "nobody ever looked" into "someone
+     approved it and the window lapsed" — different facts about the operator *and* about the
+     proposal's merit, and the queue's own statistics would stop being able to tell them apart.
+  3. **A distinct wake reason, `grant_expired`.** Rejected: reusing `WAKE_APPROVAL_EXPIRED`. §15
+     renders the reason into the Cell's next context, and the two say different things: "expired
+     unreviewed" carries no information about merit, while "approved, then the window lapsed" says
+     a human judged it worth doing — which is exactly what a Cell deciding whether to propose the
+     same thing again should know. Neither reason appears in §17.2's list, which is illustrative
+     rather than closed; ADR-027 added `approval_expired` the same way.
+  4. **An unwakeable Cell's grant still expires, with the gap recorded.** `regenerated_wake_key`
+     stays NULL rather than the row being skipped, mirroring `_expire_one`. Leaving the grant live
+     would let a dead Cell's authorisation outlast the Cell; omitting the field would make "nothing
+     to regenerate into" look like a wake that vanished.
+- **Consequences:**
+  - **Nothing is released, because a grant holds nothing.** `approve` inserts a row and reserves no
+    money or RESOURCE — ADR-029 allocates capital when a grant is *consumed*. So expiry is a
+    bookkeeping transition plus a wake, with no ledger consequence, and the golden run proves it:
+    the 17 → 18 diff touches no balance, transaction, reservation or `resource_usage` row.
+    `test_a_grant_expiry_moves_no_money` pins it so that a later slice which makes granting reserve
+    something surfaces as a missing release rather than a slow leak.
+  - **Regeneration can loop** — propose, approve, lapse, propose — and that is bounded where every
+    other Cell activity is bounded rather than by a special case: each cycle costs a deliberation
+    against the Cell's own budget (Charter C4/C5), and §23.3's own metabolic alarm watches the burn
+    rate. A cap here would be a second, weaker copy of both.
+  - The sweep is idempotent on `expired_at_utc` (Charter C6) — it is the thing an operator runs on
+    a cron, so a second run must wake nobody twice. The dedupe key alone is not sufficient: it is
+    `expired_at_utc` that keeps the row out of the second scan.
+  - `mitosis expire-approvals` now sweeps both clocks, requests first — expiring a request can only
+    *reduce* the grants in play, never mint one, so the two sweeps cannot produce a grant and
+    immediately expire it in the same run.
+  - The three executors' refusals now name the sweep instead of promising a regeneration that did
+    not exist. That stale rationale was fixed one commit earlier and this is what makes it true.
+  - **Still open, and it is the other half of the PRIORITIES entry:** `expire_due` and
+    `expire_grants_due` both have exactly one caller, `mitosis expire-approvals`. The machinery
+    built for an absent operator still only runs when the operator is present. Wiring it to the
+    scheduler is a separate argued change — it decides what runs unattended, which is a §23.3
+    vacation-mode question rather than a §23.3 expiry question.

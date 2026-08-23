@@ -171,6 +171,16 @@ _ESCALATING_SIGNALS = frozenset(
 #: scheduled research so the record shows *why* the Cell was asked again.
 WAKE_APPROVAL_EXPIRED = "approval_expired"
 
+#: §23.3, for a grant rather than a request (ADR-039). **Deliberately distinct
+#: from `WAKE_APPROVAL_EXPIRED`**, because the two say different things to the
+#: Cell and §15 renders the reason into its next context. "Expired unreviewed"
+#: carries no information about the proposal's merit — nobody looked. "Approved,
+#: then the window to act on it lapsed" says a human judged it worth doing,
+#: which is exactly what a Cell deciding whether to propose the same thing again
+#: should know. Neither reason is in §17.2's list, which is illustrative rather
+#: than closed — `approval_expired` was added the same way by ADR-027.
+WAKE_GRANT_EXPIRED = "grant_expired"
+
 
 class ApprovalError(Exception):
     pass
@@ -261,6 +271,11 @@ class Grant:
     granted_at_utc: datetime
     expires_at_utc: datetime
     consumed_at_utc: datetime | None
+    #: Set by `expire_grants_due` when the window closed unconsumed (ADR-039).
+    expired_at_utc: datetime | None = None
+    #: The wake that regenerated the action. NULL when the Cell could no longer
+    #: deliberate, so the gap is visible rather than silent.
+    regenerated_wake_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1135,27 +1150,27 @@ def _pending_or_raise_locked(
 
 # --- §23.3 expiry and regeneration -------------------------------------------
 #
-# **Regeneration covers a pending request. It does not cover a granted one, and
-# the three grant consumers say so rather than implying otherwise.**
+# **Two clocks, two sweeps, one rule.** §23.3 reads "pending approvals expire;
+# expired actions are regenerated and re-evaluated before execution", and the
+# action can go stale on either side of the approval:
 #
-# §23.3 reads "pending approvals expire; expired actions are regenerated and
-# re-evaluated before execution", and `expire_due` below implements exactly that
-# for a request nobody has decided yet: the Cell is woken under
-# `WAKE_APPROVAL_EXPIRED` and re-derives the action against a world that moved.
+#   `expire_due`         a request nobody decided        -> WAKE_APPROVAL_EXPIRED
+#   `expire_grants_due`  an approval nobody consumed     -> WAKE_GRANT_EXPIRED
 #
-# A grant is the other side of the same clock. It inherits its request's expiry
-# (`_grant_locked`), so an approval cannot be banked and spent later — but once
-# a request is APPROVED it is no longer PENDING, and `expire_due`'s sweep does
-# not see it. An approved grant that nobody consumes therefore expires in
-# silence: `tools`, `external_actions` and `promotion` each refuse it, and
-# nothing wakes the Cell to ask again.
+# The second was missing until ADR-039. A grant inherits its request's expiry
+# (see `_grant_locked`) so an approval cannot be banked and spent against a
+# world that moved — but once a request is APPROVED it is no longer PENDING, so
+# `expire_due` never saw it, and an approved grant nobody used expired in
+# silence while the Cell waited on it.
 #
-# That is a real gap and it is tracked, not a subtlety of the design. It is
-# recorded in PRIORITIES as "nothing handles the operator being away" — the
-# other half being that this sweep has one caller, `mitosis expire-approvals`,
-# so the machinery built for an absent operator only runs when the operator is
-# present. Until it is closed, the honest thing for a refusal to say is that the
-# Cell must propose again, which is what the three of them now say.
+# **Both regenerate into a wake and never into an authorisation.** That is the
+# rule the two sweeps share and the one thing neither may relax: re-opening a
+# request as PENDING, or issuing a fresh grant, would turn one human decision
+# into an indefinite licence renewed by the very mechanism meant to end it.
+# The Cell proposes again; a person decides again.
+#
+# The three grant consumers — `tools`, `external_actions`, `promotion` — still
+# refuse a stale grant, and their refusals now name the wake the Cell gets.
 
 
 def expire_due(
@@ -1175,8 +1190,8 @@ def expire_due(
     NULL so the gap is visible rather than looking like a wake that vanished.
 
     **Scope: PENDING requests only.** An approved grant that expires unconsumed
-    is not swept here and nothing regenerates it — see the section comment
-    above.
+    is swept by `expire_grants_due` instead — same clause, other side of the
+    clock. See the section comment above.
     """
     now = now or _now()
     due = conn.execute(
@@ -1189,6 +1204,109 @@ def expire_due(
     for row in due:
         expired.append(_expire_one(conn, request_id=row["request_id"], now=now))
     return expired
+
+
+def expire_grants_due(
+    conn: sqlite3.Connection, *, now: datetime | None = None
+) -> list[Grant]:
+    """Expire grants whose window closed unconsumed, and regenerate each action.
+
+    The other side of `expire_due`'s clock (ADR-039). A grant inherits its
+    request's expiry so that an approval cannot be banked and spent against a
+    world that has moved on — but once the request is APPROVED it is no longer
+    PENDING, so `expire_due` never saw it, and an approved grant nobody used
+    expired in silence with the Cell still waiting on it.
+
+    **The regeneration is a wake, never a new grant.** §23.3 says expired
+    actions are "regenerated **and re-evaluated**", and re-evaluation is a
+    human's. Renewing the grant, or reopening the request as PENDING, is the
+    obvious design and is exactly the banking the shared expiry exists to
+    prevent — it would turn one approval into an indefinite licence, refreshed
+    by the very mechanism meant to end it. So the Cell is woken, proposes again,
+    and a person decides again on the new terms.
+
+    **Nothing is released, because a grant holds nothing.** `approve` inserts a
+    row and reserves no money or RESOURCE; ADR-029 allocates capital when a
+    grant is *consumed*. Expiry here has no ledger consequence.
+
+    Regeneration can loop — propose, approve, lapse, propose — and that is
+    bounded where every other Cell activity is bounded rather than by a special
+    case: each cycle costs a deliberation against the Cell's own budget
+    (Charter C4/C5), and §23.3's metabolic alarm watches the burn rate across
+    the colony. A cap here would be a second, weaker copy of both.
+    """
+    now = now or _now()
+    due = conn.execute(
+        """
+        SELECT grant_id FROM approval_grants
+         WHERE consumed_at_utc IS NULL AND expired_at_utc IS NULL
+           AND expires_at_utc <= ?
+         ORDER BY expires_at_utc, rowid
+        """,
+        (now.isoformat(),),
+    ).fetchall()
+
+    return [
+        _expire_one_grant(conn, grant_id=row["grant_id"], now=now) for row in due
+    ]
+
+
+def _expire_one_grant(
+    conn: sqlite3.Connection, *, grant_id: str, now: datetime
+) -> Grant:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        grant = get_grant(conn, grant_id)
+        if grant is None:
+            raise ApprovalError(f"no such grant: {grant_id}")
+        if grant.consumed_at_utc is not None or grant.expired_at_utc is not None:
+            # Consumed or swept between the scan and the lock. Not an error —
+            # an operator who got there first wins, exactly as they do in
+            # `_expire_one`, and a second sweep must be a no-op (Charter C6).
+            conn.execute("ROLLBACK")
+            return grant
+
+        cell = lifecycle.get_cell(conn, grant.cell_id)
+        wake_key: str | None = None
+        if cell is not None and cell.status in {CellStatus.ALIVE, CellStatus.DORMANT}:
+            wake_key = f"grant-expiry:{grant_id}"
+            deliberation._enqueue_wake_locked(
+                conn,
+                cell_id=grant.cell_id,
+                wake_reason=WAKE_GRANT_EXPIRED,
+                dedupe_key=wake_key,
+            )
+
+        conn.execute(
+            "UPDATE approval_grants SET expired_at_utc = ?, regenerated_wake_key = ? "
+            "WHERE grant_id = ?",
+            (now.isoformat(), wake_key, grant_id),
+        )
+
+        # **The request is left APPROVED on purpose.** A human did approve it,
+        # which is history rather than something to overwrite (§3.6's habit),
+        # and `RequestStatus.EXPIRED` already means "expired unreviewed" —
+        # reusing it would collapse "nobody looked" into "someone approved and
+        # the window lapsed", which are different facts about both the operator
+        # and the proposal.
+        audit.record(
+            conn,
+            event_type="grant_expired",
+            cell_id=grant.cell_id,
+            description=f"{grant.tier.value} grant expired unconsumed",
+            metadata={
+                "grant_id": grant_id,
+                "request_id": grant.request_id,
+                "proposal_id": grant.proposal_id,
+                "regenerated_wake_key": wake_key,
+                "tier": grant.tier.value,
+            },
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return get_grant(conn, grant_id)
 
 
 def _expire_one(
@@ -1336,6 +1454,10 @@ def get_grant(conn: sqlite3.Connection, grant_id: str) -> Grant | None:
         consumed_at_utc=(
             _parse(row["consumed_at_utc"]) if row["consumed_at_utc"] else None
         ),
+        expired_at_utc=(
+            _parse(row["expired_at_utc"]) if row["expired_at_utc"] else None
+        ),
+        regenerated_wake_key=row["regenerated_wake_key"],
     )
 
 

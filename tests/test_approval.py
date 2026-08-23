@@ -25,6 +25,7 @@ from mitosis import (
     prediction,
     scheduler,
 )
+from mitosis.accounts import cell_cash
 from mitosis.models import Book, CellStatus, CellType, EntrySpec
 from mitosis.proposal import RiskTier
 
@@ -937,3 +938,192 @@ def test_slas_come_from_the_operator_row(conn):
     assert request.expires_at_utc == request.created_at_utc + timedelta(
         seconds=42 * approval.EXPIRY_SLA_MULTIPLE
     )
+
+
+# --- ADR-039: the other side of §23.3's clock --------------------------------
+
+
+def _approved_grant(conn, cell, *, wake_key: str = "w1", **overrides):
+    request = _propose(conn, cell, wake_key=wake_key, **overrides)
+    return approval.approve(
+        conn, request_id=request.request_id, decided_by="operator", reason="worth doing"
+    )
+
+
+def test_an_unconsumed_grant_expires_and_regenerates_the_action(conn):
+    """§23.3: "expired actions are **regenerated and re-evaluated** before
+    execution" — for an approval nobody consumed, not only a request nobody
+    decided.
+
+    This is the half that was missing. A grant inherits its request's expiry, so
+    all three executors refused a stale one; but the request is APPROVED rather
+    than PENDING, so `expire_due` never saw it and the Cell was left waiting on
+    a wake that was never coming. If this fails, a solo operator who approves
+    something and then goes away loses the action silently — which is the exact
+    failure §23.3's solo-operator model exists to name.
+    """
+    cell = _make_cell(conn)
+    grant = _approved_grant(conn, cell)
+
+    after = grant.expires_at_utc + timedelta(seconds=1)
+    expired = approval.expire_grants_due(conn, now=after)
+
+    assert len(expired) == 1
+    assert expired[0].grant_id == grant.grant_id
+    assert expired[0].expired_at_utc is not None
+    assert expired[0].regenerated_wake_key is not None
+
+    woken = [
+        e
+        for e in events.next_ready(conn, now=after)
+        if e.event_type == deliberation.WAKE_EVENT_TYPE
+        and e.payload.get("wake_reason") == approval.WAKE_GRANT_EXPIRED
+    ]
+    assert woken, "the Cell must be asked for the action again"
+
+
+def test_an_expired_grant_never_becomes_a_new_authorisation(conn):
+    """The constraint that shapes the whole design (§23.3, ADR-039).
+
+    Regeneration is a **wake**. Renewing the grant, or reopening the request as
+    PENDING, is the obvious design and is exactly the banking that a grant's
+    inherited expiry exists to prevent — it would turn one human decision into
+    an indefinite licence, refreshed by the mechanism meant to end it. The Cell
+    proposes again and a person decides again.
+    """
+    cell = _make_cell(conn)
+    grant = _approved_grant(conn, cell)
+    before = conn.execute("SELECT COUNT(*) AS n FROM approval_grants").fetchone()["n"]
+
+    after = grant.expires_at_utc + timedelta(seconds=1)
+    approval.expire_grants_due(conn, now=after)
+
+    live = conn.execute(
+        "SELECT COUNT(*) AS n FROM approval_grants "
+        "WHERE consumed_at_utc IS NULL AND expired_at_utc IS NULL"
+    ).fetchone()["n"]
+    total = conn.execute("SELECT COUNT(*) AS n FROM approval_grants").fetchone()["n"]
+    pending = conn.execute(
+        "SELECT COUNT(*) AS n FROM approval_requests WHERE status = ?",
+        (approval.RequestStatus.PENDING,),
+    ).fetchone()["n"]
+
+    assert total == before, "expiry must not mint a grant"
+    assert live == 0, "no authorisation may survive its own expiry"
+    assert pending == 0, "nor may the request reopen itself for a second approval"
+
+
+def test_the_request_stays_approved_when_its_grant_expires(conn):
+    """§3.6's habit, and a semantic collision worth avoiding.
+
+    A human *did* approve this, and that is history rather than something to
+    overwrite. `RequestStatus.EXPIRED` already means "expired unreviewed" —
+    reusing it here would collapse "nobody ever looked" into "someone approved
+    it and the window lapsed", which are different facts about the operator and
+    about the proposal's merit, and the queue's own statistics would stop being
+    able to tell them apart.
+    """
+    cell = _make_cell(conn)
+    grant = _approved_grant(conn, cell)
+
+    after = grant.expires_at_utc + timedelta(seconds=1)
+    approval.expire_grants_due(conn, now=after)
+
+    request = approval.get_request(conn, grant.request_id)
+    assert request.status == approval.RequestStatus.APPROVED
+    assert request.decided_by == "operator"
+
+
+def test_a_consumed_grant_is_not_expired_afterwards(conn):
+    """The sweep's predicate. A grant that was used before its window closed is
+    finished business — marking it expired would say the action never happened.
+    """
+    cell = _make_cell(conn)
+    grant = _approved_grant(conn, cell)
+    conn.execute(
+        "UPDATE approval_grants SET consumed_at_utc = ? WHERE grant_id = ?",
+        (grant.granted_at_utc.isoformat(), grant.grant_id),
+    )
+    conn.commit()
+
+    after = grant.expires_at_utc + timedelta(seconds=1)
+    assert approval.expire_grants_due(conn, now=after) == []
+    assert approval.get_grant(conn, grant.grant_id).expired_at_utc is None
+
+
+def test_expiring_grants_twice_regenerates_once(conn):
+    """Charter C6: every externally-visible operation is idempotent.
+
+    The sweep is the thing an operator runs on a cron, so running it twice must
+    not wake the Cell twice — and the dedupe key alone is not the whole story,
+    since `expired_at_utc` is what keeps the row out of the second scan.
+    """
+    cell = _make_cell(conn)
+    grant = _approved_grant(conn, cell)
+    after = grant.expires_at_utc + timedelta(seconds=1)
+
+    first = approval.expire_grants_due(conn, now=after)
+    second = approval.expire_grants_due(conn, now=after + timedelta(seconds=30))
+
+    assert len(first) == 1
+    assert second == []
+    wakes = conn.execute(
+        "SELECT COUNT(*) AS n FROM event_inbox WHERE dedupe_key = ?",
+        (f"grant-expiry:{grant.grant_id}",),
+    ).fetchone()["n"]
+    assert wakes == 1
+
+
+def test_an_unwakeable_cells_grant_expires_with_the_gap_recorded(conn):
+    """A dead or quarantined Cell has nothing to regenerate into.
+
+    The grant still expires — leaving it live would let a dead Cell's
+    authorisation outlast it — and `regenerated_wake_key` stays NULL so the gap
+    is visible in the row rather than looking like a wake that vanished. Same
+    treatment `_expire_one` gives a request.
+    """
+    cell = _make_cell(conn)
+    grant = _approved_grant(conn, cell)
+    lifecycle.kill(conn, cell.cell_id, cause_of_death="fixed scenario")
+
+    after = grant.expires_at_utc + timedelta(seconds=1)
+    expired = approval.expire_grants_due(conn, now=after)
+
+    assert len(expired) == 1
+    assert expired[0].expired_at_utc is not None
+    assert expired[0].regenerated_wake_key is None
+
+
+def test_a_grant_expiry_moves_no_money(conn):
+    """`approve` reserves nothing — ADR-029 allocates capital when a grant is
+    *consumed*, not when it is issued — so expiry has no ledger consequence.
+
+    Worth pinning rather than assuming: if a later slice ever makes granting
+    reserve something, this is where the missing release shows up, instead of as
+    a slow leak in the RESOURCE book.
+    """
+    cell = _make_cell(conn)
+    grant = _approved_grant(conn, cell)
+    accounts = [
+        cell_cash(cell.cell_id),
+        "seed_bank",
+        "promotion_pool",
+        "colony_treasury",
+        "external_expense",
+    ]
+    books = (Book.USD_SIM, Book.USD_REAL, Book.RESOURCE)
+    before = {
+        (book, account): ledger.get_balance(conn, account, book)
+        for book in books
+        for account in accounts
+    }
+
+    after_t = grant.expires_at_utc + timedelta(seconds=1)
+    approval.expire_grants_due(conn, now=after_t)
+
+    after = {
+        (book, account): ledger.get_balance(conn, account, book)
+        for book in books
+        for account in accounts
+    }
+    assert after == before
