@@ -354,11 +354,15 @@ def _claim_grant_locked(
             f"{grant.consumed_at_utc.isoformat()} — a grant authorises one tool call"
         )
     if now >= grant.expires_at_utc:
-        # §23.3: an expired approval is regenerated, never executed late. A
-        # fetch authorised against last week's world is a different request.
+        # §23.3 forbids executing on stale terms: a fetch authorised against
+        # last week's world is a different request. **Nothing regenerates an
+        # expired grant** — `approval.expire_due` sweeps PENDING requests, and
+        # this one was approved, so no wake is coming. See the §23.3 section
+        # comment in `approval.py`; the gap is tracked in PRIORITIES.
         raise ToolError(
             f"grant {grant_id} expired at {grant.expires_at_utc.isoformat()} — §23.3 "
-            "requires the action be regenerated rather than executed on stale terms"
+            "forbids executing on stale terms. Nothing regenerates an expired grant: "
+            "the Cell has to propose again and be approved afresh."
         )
 
     request = approval.get_request(conn, grant.request_id)

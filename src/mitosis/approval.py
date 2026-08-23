@@ -1134,6 +1134,28 @@ def _pending_or_raise_locked(
 
 
 # --- §23.3 expiry and regeneration -------------------------------------------
+#
+# **Regeneration covers a pending request. It does not cover a granted one, and
+# the three grant consumers say so rather than implying otherwise.**
+#
+# §23.3 reads "pending approvals expire; expired actions are regenerated and
+# re-evaluated before execution", and `expire_due` below implements exactly that
+# for a request nobody has decided yet: the Cell is woken under
+# `WAKE_APPROVAL_EXPIRED` and re-derives the action against a world that moved.
+#
+# A grant is the other side of the same clock. It inherits its request's expiry
+# (`_grant_locked`), so an approval cannot be banked and spent later — but once
+# a request is APPROVED it is no longer PENDING, and `expire_due`'s sweep does
+# not see it. An approved grant that nobody consumes therefore expires in
+# silence: `tools`, `external_actions` and `promotion` each refuse it, and
+# nothing wakes the Cell to ask again.
+#
+# That is a real gap and it is tracked, not a subtlety of the design. It is
+# recorded in PRIORITIES as "nothing handles the operator being away" — the
+# other half being that this sweep has one caller, `mitosis expire-approvals`,
+# so the machinery built for an absent operator only runs when the operator is
+# present. Until it is closed, the honest thing for a refusal to say is that the
+# Cell must propose again, which is what the three of them now say.
 
 
 def expire_due(
@@ -1151,6 +1173,10 @@ def expire_due(
     A Cell that can no longer deliberate (dead, quarantined) has nothing to
     regenerate into. Its request still expires, and `regenerated_wake_key` stays
     NULL so the gap is visible rather than looking like a wake that vanished.
+
+    **Scope: PENDING requests only.** An approved grant that expires unconsumed
+    is not swept here and nothing regenerates it — see the section comment
+    above.
     """
     now = now or _now()
     due = conn.execute(
