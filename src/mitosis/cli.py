@@ -850,7 +850,16 @@ def cmd_tick(args: argparse.Namespace) -> None:
     if result.detail:
         print(f"  {result.detail}")
     if result.halted:
-        print("\n  Nothing was woken. Run `mitosis scheduler-status` for the guard state.")
+        print("\n  No Cell was woken. Run `mitosis scheduler-status` for the guard state.")
+        if result.requests_expired or result.grants_expired:
+            # §23.3's sweep runs before the guards (ADR-040): a halt stops the
+            # colony *doing* things, and expiring only ever takes permission
+            # away. Worth saying so, because "halted" otherwise reads as
+            # "nothing happened" and a stale approval did just lose its force.
+            print(
+                "  Expiry still ran — it removes authority rather than using it. "
+                "The regenerated wakes stay pending until a tick is allowed to run."
+            )
     for deliberated in result.deliberations:
         print()
         _print_deliberation(conn, deliberated)

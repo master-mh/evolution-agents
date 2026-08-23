@@ -396,3 +396,127 @@ def test_spend_in_an_epoch_no_tick_observed_is_zero(conn):
     _setup(conn)
     _post_real_spend(conn, 999, "by-hand")
     assert scheduler.epoch_spend_minor_units(conn, 0) == 0
+
+
+# --- ADR-040: §23.3's expiry runs before the guards --------------------------
+
+
+def _stale_grant(conn, cell):
+    """An approval a person made and nobody consumed, already past its window."""
+    from mitosis import approval, deliberation, providers as _providers
+
+    result = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=_providers.MockProvider(reply=REPLY),
+        wake_key=f"seed:{cell.cell_id}", model="mock-1",
+        proposal_sink=approval.QueueSink(),
+    )
+    row = conn.execute(
+        "SELECT request_id FROM approval_requests WHERE proposal_id = ?",
+        (result.proposal_id,),
+    ).fetchone()
+    grant = approval.approve(
+        conn, request_id=row["request_id"], decided_by="operator", reason="worth doing"
+    )
+    conn.execute(
+        "UPDATE approval_grants SET expires_at_utc = '2020-01-01T00:00:00+00:00' "
+        "WHERE grant_id = ?",
+        (grant.grant_id,),
+    )
+    conn.commit()
+    return grant
+
+
+def test_a_tick_sweeps_both_expiry_clocks(conn):
+    """§23.3's sweeps had exactly one caller — `mitosis expire-approvals` — so
+    the machinery built for an absent operator only ran when the operator was
+    present to type a command. A cron tick is the thing that is actually there
+    when nobody is."""
+    from mitosis import approval
+
+    _setup(conn)
+    cell = _make_cell(conn, "a")
+    grant = _stale_grant(conn, cell)
+
+    result = _tick(conn)
+
+    assert result.grants_expired == 1
+    assert approval.get_grant(conn, grant.grant_id).expired_at_utc is not None
+
+
+def test_expiry_runs_even_on_a_halted_tick(conn):
+    """**The placement decision, and the reason this slice exists** (ADR-040).
+
+    Every guard in `tick` decides whether the colony may *do* something. The
+    sweep only ever *removes* permission — it cannot authorise anything — so
+    gating it behind the guards inverts their purpose: a halt that also stopped
+    expiry would preserve exactly the authorisations the halt exists to stop
+    being used.
+
+    Vacation mode makes it concrete. §23.3 pauses work when the operator is
+    unresponsive, which is precisely when approvals lapse unconsumed. Sweeping
+    after the guard would disable the mechanism built for an absent operator
+    whenever the operator is absent.
+    """
+    from mitosis import approval
+
+    _setup(conn)
+    cell = _make_cell(conn, "a")
+    grant = _stale_grant(conn, cell)
+
+    # A paid provider with real_spending off: halted before anything runs.
+    result = _tick(conn, provider_name="paid")
+
+    assert result.halted
+    assert result.outcome == scheduler.TickOutcome.HALTED_AUTONOMY
+    assert result.cells_woken == 0
+    assert result.grants_expired == 1, "a halt must not preserve a stale approval"
+    assert approval.get_grant(conn, grant.grant_id).expired_at_utc is not None
+
+
+def test_a_halted_tick_regenerates_but_does_not_spend(conn):
+    """The other half of the placement, and it falls out rather than being a
+    separate rule.
+
+    Expiring is free; the wake it enqueues is only *processed* by
+    `run_ready_wakes`, which a halted tick returns before reaching. So a halted
+    colony withdraws the stale authority immediately and leaves the
+    re-deliberation pending until a tick is allowed to run. If this fails, a
+    halt has become a way to make the colony think — and pay — anyway.
+    """
+    from mitosis import approval
+
+    _setup(conn)
+    cell = _make_cell(conn, "a")
+    grant = _stale_grant(conn, cell)
+
+    result = _tick(conn, provider_name="paid")
+
+    assert result.halted
+    assert result.deliberations == ()
+    pending = conn.execute(
+        "SELECT status FROM event_inbox WHERE dedupe_key = ?",
+        (f"grant-expiry:{grant.grant_id}",),
+    ).fetchone()
+    assert pending is not None, "the action must still be regenerated"
+    assert pending["status"] == "pending", "but not deliberated on a halted tick"
+
+
+def test_sweeping_twice_in_one_epoch_regenerates_once(conn):
+    """`tick` advertises itself as safe to run from cron as often as you like,
+    and adding a sweep to it must not cost that. Idempotence here rests on
+    `expired_at_utc` keeping the row out of the second scan, not on the wake's
+    dedupe key alone."""
+    _setup(conn)
+    cell = _make_cell(conn, "a")
+    grant = _stale_grant(conn, cell)
+
+    first = _tick(conn)
+    second = _tick(conn)
+
+    assert first.grants_expired == 1
+    assert second.grants_expired == 0
+    wakes = conn.execute(
+        "SELECT COUNT(*) AS n FROM event_inbox WHERE dedupe_key = ?",
+        (f"grant-expiry:{grant.grant_id}",),
+    ).fetchone()["n"]
+    assert wakes == 1

@@ -125,6 +125,10 @@ class TickResult:
     detail: str | None
     cells_woken: int
     deliberations: tuple = field(default=())
+    #: §23.3's two expiry clocks, swept before the guards (ADR-040). Reported
+    #: even on a halted tick, because the sweep runs on one.
+    requests_expired: int = 0
+    grants_expired: int = 0
 
     @property
     def halted(self) -> bool:
@@ -445,7 +449,9 @@ def tick(
 
     Idempotent per epoch by construction: wake dedupe keys are
     `epoch:{n}:cell:{id}`, so a second tick in the same epoch enqueues nothing
-    new and drains an already-empty queue. Safe to run from cron as often as
+    new and drains an already-empty queue. The expiry sweeps below are
+    idempotent on their own terms (a request leaves PENDING, a grant gains
+    `expired_at_utc`), so this stays true. Safe to run from cron as often as
     you like.
     """
     epoch_number = current_epoch(conn)
@@ -460,31 +466,68 @@ def tick(
         conn.execute("ROLLBACK")
         raise
 
+    # §23.3's two expiry clocks, and **the placement is the decision** (ADR-040).
+    #
+    # This runs *before* `_guard`, which is the opposite of everything else in
+    # this function. Every guard below decides whether the colony may **do**
+    # something — spend, deliberate, act. The sweep only ever **removes**
+    # permission: it expires a request nobody decided and an approval nobody
+    # consumed, and it cannot authorise anything. Gating it behind the guards
+    # would invert their purpose, because a halt that also stopped expiry would
+    # preserve exactly the authorisations the halt exists to stop being used.
+    #
+    # Vacation mode makes that concrete and is the reason this slice exists at
+    # all. §23.3's vacation clause fires when the operator is unresponsive —
+    # which is precisely when approvals lapse unconsumed. Sweeping *after* the
+    # guard would disable the mechanism built for an absent operator whenever
+    # the operator is absent, which is the same inversion twice over.
+    #
+    # **The cost stays guarded, though, and that falls out of the placement
+    # rather than needing its own rule.** Expiring is free; the regenerated
+    # wakes it enqueues are only *processed* by `run_ready_wakes` below, which a
+    # halt returns before reaching. So a halted colony expires stale grants and
+    # leaves the re-deliberation pending until a tick is allowed to run — the
+    # authority is withdrawn immediately, the spending waits.
+    requests_expired = len(approval.expire_due(conn))
+    grants_expired = len(approval.expire_grants_due(conn))
+    swept = (
+        f"; expired {requests_expired} request(s), {grants_expired} grant(s)"
+        if requests_expired or grants_expired
+        else ""
+    )
+
     spend_before = real_spend_breaker._settled_spend_since(conn, datetime(1970, 1, 1, tzinfo=timezone.utc))
 
     halt = _guard(conn, provider_name=provider.name)
     if halt is not None:
         outcome, detail = halt
+        detail = f"{detail}{swept}"
         _record_tick(
             conn, tick_id=tick_id, epoch_number=epoch_number, started=started,
             provider=provider.name, outcome=outcome, detail=detail,
             cells_woken=0, spend_before=spend_before, spend_after=spend_before,
         )
-        return TickResult(tick_id, epoch_number, outcome, detail, 0)
+        return TickResult(
+            tick_id, epoch_number, outcome, detail, 0,
+            requests_expired=requests_expired, grants_expired=grants_expired,
+        )
 
     cells = eligible_cells(conn, epoch_number)
     if max_cells is not None:
         cells = cells[:max_cells]
 
     if not cells:
+        idle_detail = f"no alive, funded Cell was eligible{swept}"
         _record_tick(
             conn, tick_id=tick_id, epoch_number=epoch_number, started=started,
             provider=provider.name, outcome=TickOutcome.IDLE,
-            detail="no alive, funded Cell was eligible",
+            detail=idle_detail,
             cells_woken=0, spend_before=spend_before, spend_after=spend_before,
         )
-        return TickResult(tick_id, epoch_number, TickOutcome.IDLE,
-                          "no alive, funded Cell was eligible", 0)
+        return TickResult(
+            tick_id, epoch_number, TickOutcome.IDLE, idle_detail, 0,
+            requests_expired=requests_expired, grants_expired=grants_expired,
+        )
 
     for cell in cells:
         deliberation.enqueue_wake(
@@ -519,15 +562,17 @@ def tick(
             conn.execute("ROLLBACK")
             raise
 
+    ran_detail = f"{len(results)} deliberation(s){swept}"
     _record_tick(
         conn, tick_id=tick_id, epoch_number=epoch_number, started=started,
         provider=provider.name, outcome=TickOutcome.RAN,
-        detail=f"{len(results)} deliberation(s)",
+        detail=ran_detail,
         cells_woken=len(results), spend_before=spend_before, spend_after=spend_after,
     )
     return TickResult(
-        tick_id, epoch_number, TickOutcome.RAN, f"{len(results)} deliberation(s)",
+        tick_id, epoch_number, TickOutcome.RAN, ran_detail,
         len(results), tuple(results),
+        requests_expired=requests_expired, grants_expired=grants_expired,
     )
 
 

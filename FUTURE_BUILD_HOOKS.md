@@ -788,3 +788,28 @@ actually queued for building — this file is memory, not a backlog to work thro
   `total` unchanged proves no grant was minted *into `approval_grants`*. A kernel that renewed by
   writing somewhere else entirely would pass. The unit test is the real guard; the golden run is
   the regression net.
+
+## From wiring the sweeps into `tick` (2026-08-23, ADR-040)
+
+- **"Runs before the guards" is a category a reader has to be told about.** Everything else in
+  `tick` is gated because it *does* something; the sweep is ungated because it *undoes* something.
+  Nothing in the code expresses that category — it is a comment and two tests. If a third
+  ungated-by-design step ever appears, it wants a name (a `_withdrawals()` phase, say) rather than
+  a third comment explaining the same distinction.
+- **Regenerated wakes escape `max_cells`.** That flag caps the scheduled research wakes only;
+  `run_ready_wakes` drains whatever is ready, so a tick following a large expiry burst deliberates
+  more than the operator asked for. Bounded by the money guards and deliberately not capped
+  locally, but an operator who passes `--max-cells 1` expecting one model call may get several.
+  Worth either honouring the cap across the whole drain or renaming the flag.
+- **The metabolic alarm is hard to reach on a scratch colony**, which made the halted-tick path
+  awkward to verify by hand: a spend large enough to trip the per-epoch alarm (50c) also trips the
+  hourly real-spend breaker (100c) once cumulative, and the breaker raises rather than halting, so
+  the colony wedges instead of halting cleanly. The test suite reaches the halt through the paid
+  provider gate instead. A `mitosis raise-alarm --reason` operator verb — the deliberate
+  counterpart to `acknowledge-metabolic-alarm`, which already exists — would make the halted paths
+  testable by hand and is the kind of thing a chaos drill (§28 Phase 2) will want anyway.
+- **§23.3 is now fully built** — SLAs, expiry on both clocks, regeneration on both, vacation mode,
+  metabolic alarm. Worth noting because it is the first clause in this spec to be finished
+  end to end, and the shape of how it got there is instructive: ADR-027 built the visible half,
+  ADR-039 found the invisible half by chasing a stale comment, and ADR-040 found that both halves
+  only ran when a person asked. None of the three gaps were visible from the clause alone.

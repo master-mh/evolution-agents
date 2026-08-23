@@ -1622,3 +1622,54 @@ from amendment ID to spec location is complete in one place:
     built for an absent operator still only runs when the operator is present. Wiring it to the
     scheduler is a separate argued change — it decides what runs unattended, which is a §23.3
     vacation-mode question rather than a §23.3 expiry question.
+
+---
+
+## ADR-040: The expiry sweep runs before the guards, because it removes permission rather than using it
+
+- **Status:** Accepted
+- **Spec ref:** §23.3 (Amendment A19), §27.1, §17.2; Charter C6; ADR-026, ADR-027, ADR-039
+- **Context:** ADR-039 gave an unconsumed grant a regeneration path, and ADR-027 gave a pending
+  request one. Both sweeps had exactly one caller: `mitosis expire-approvals`. **The machinery
+  built for an absent operator only ran when the operator was present to type a command** — the
+  §23.3 irony PRIORITIES had been carrying as "nothing handles the operator being away". A cron
+  `tick` is the thing that is actually there when nobody is.
+- **Decision: `tick` sweeps both clocks, and it does so *before* `_guard`.** The placement is the
+  whole decision; wiring the call in is trivial.
+  - **Every guard in `tick` decides whether the colony may *do* something** — the metabolic alarm,
+    the `real_spending` gate, vacation mode. They stop spending, deliberating, acting.
+  - **The sweep only ever *removes* permission.** It expires a request nobody decided and an
+    approval nobody consumed; it cannot authorise anything. Gating it behind the guards would
+    invert their purpose, because **a halt that also stopped expiry would preserve exactly the
+    authorisations the halt exists to stop being used.**
+  - **Vacation mode makes it concrete, and is why this matters rather than being a nicety.** §23.3
+    pauses external-facing work when the operator is unresponsive — which is precisely the
+    condition under which approvals lapse unconsumed. Sweeping after the guard would disable the
+    mechanism built for an absent operator whenever the operator is absent. That is the same
+    inversion this repo found twice in one week: a disproof pointer that named the bug as its own
+    resolution, and now a guard that would have switched off the thing it exists to make safe.
+- **What it displaced.** Putting the sweep after the guard, beside the wakes, which is where a
+  reader would naturally add it — "expire, then run what expiry produced" reads as one step. It is
+  two, and they belong on opposite sides of the halt.
+- **Consequences:**
+  - **The cost stays guarded, and that falls out of the placement rather than needing its own
+    rule.** Expiring is free; the wakes it enqueues are only *processed* by `run_ready_wakes`,
+    which a halted tick returns before reaching. So a halted colony withdraws stale authority
+    immediately and leaves the re-deliberation pending until a tick is allowed to run. The
+    authority goes at once; the spending waits. `test_a_halted_tick_regenerates_but_does_not_spend`
+    is what keeps a halt from becoming a way to make the colony think anyway.
+  - On a tick that *does* run, a regenerated wake is processed in the same tick, and that is
+    correct rather than merely convenient: §23.3's staleness is between the original approval and
+    now, and "now" is already later than the window that lapsed. The live run shows it —
+    `ran | 2 deliberation(s); expired 0 request(s), 1 grant(s)`.
+  - `tick` keeps its "safe to run from cron as often as you like" promise. Idempotence rests on the
+    sweeps' own terms — a request leaves PENDING, a grant gains `expired_at_utc` — not on the wake
+    dedupe key alone (Charter C6).
+  - `TickResult` gains `requests_expired` / `grants_expired`, and the counts reach the tick log's
+    `detail` on every outcome including a halt. A halted tick that says only "nothing was woken"
+    would be hiding the one thing that did happen.
+  - **Regenerated wakes are not bounded by `max_cells`**, which caps only the scheduled research
+    wakes. A burst of expiries therefore becomes a burst of deliberations in one tick, bounded by
+    the per-request/hour/day real-spend caps inside the tick and by the metabolic alarm across
+    ticks — the same guards that bound everything else. Noted rather than special-cased, on the
+    ADR-039 principle that a local cap here would be a second, weaker copy of both.

@@ -314,7 +314,8 @@
   (34 new); golden expectation 15 → 16, **no USD_REAL movement**. Teeth-checked 31 ways;
   hand-verified end to end on a live colony, where the pre-send check was found misattributing a
   same-lineage duplicate as a §21.3 sibling collision.
-- [ ] **Nothing handles the operator being away.** **Retitled and repointed 2026-08-23** (was
+- [x] **Nothing handles the operator being away — DONE** (2026-08-23), ADR-039 + ADR-040.
+  **Retitled and repointed first** (was
   "nothing schedules a tool call"); the old title invited the one reading §19.4 rules out, and its
   disproof pointer named that reading as the resolution. **Execution staying manual is the design,
   not the gap:** §19.4's injection isolation is why `scheduler.py` may not import `tools` at all,
@@ -340,14 +341,20 @@
     never calls it. So the machinery built for an absent operator is itself operator-invoked, which
     is the failure §23.3's vacation mode exists to describe.
 
-  **The first half landed 2026-08-23 (ADR-039); the second is what remains**, and it is the sharper
-  one now: both sweeps exist and neither runs unattended, so the machinery built for an absent
-  operator still only works when the operator is present. Wiring it to the scheduler is a §23.3
-  *vacation-mode* question rather than an expiry one — it decides what the colony does with nobody
-  watching — and needs its own argument. Neither half requires anything to execute a tool, which is
-  why this was never blocked on overturning ADR-034. *Disproved by:* `scheduler` calling
-  `approval.expire_due` / `expire_grants_due` — **not** by the scheduler reaching
-  `tools.execute_grant`, which §19.4 forbids.
+  **Both halves landed 2026-08-23.** ADR-039 built grant regeneration; ADR-040 wired both sweeps
+  into `tick`, **before `_guard`** — which is the whole of that slice. Every guard in `tick`
+  decides whether the colony may *do* something; the sweep only ever *removes* permission, so
+  gating it behind them would invert their purpose: a halt that also stopped expiry would preserve
+  exactly the authorisations the halt exists to stop being used. Vacation mode is the case that
+  makes it bite — §23.3 pauses work when the operator is unresponsive, which is precisely when
+  approvals lapse unconsumed, so sweeping after the guard would switch off the mechanism built for
+  an absent operator whenever the operator is absent. **The cost stays guarded and that falls out
+  of the placement**: expiring is free, and the wakes it enqueues are only *processed* by
+  `run_ready_wakes`, which a halted tick returns before reaching — authority withdrawn at once,
+  spending deferred. Neither half ever required anything to execute a tool, which is why this was
+  never blocked on overturning ADR-034. 839 tests (11 new across the two slices); golden expectation
+  17 → 18 (ADR-039), unchanged by ADR-040. Teeth-checked ten ways across the two; hand-verified on a
+  live colony, where a tick logged `ran | 2 deliberation(s); expired 0 request(s), 1 grant(s)`.
 - [ ] **Charter C13's router exists; C13 is still unsatisfied.** `artifacts.check_exportable`
   refuses `SIM_ADVERSARIAL` and is tested, but nothing in the kernel can *produce* that label —
   §18.2 is about lineages evolved under adversarial synthetic incentives, and the shadow economy is
