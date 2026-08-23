@@ -289,11 +289,24 @@ def _check_egress_locked(conn: sqlite3.Connection, url: str) -> str:
 
 # --- §27.1 autonomy gate ------------------------------------------------------
 
+#: §0.4 grants autonomy "tool by tool, phase by phase", so **one key per
+#: capability** — enforced by `test_no_autonomy_flag_gates_more_than_one_capability`
+#: rather than left to whoever registers the next channel. ADR-037 is why
+#: `real_commerce` is here and §27.1's block does not name it: §0.4 lists six
+#: prohibitions and the defaults block carries five keys, and "no real commerce"
+#: is the one that never got one. A marketplace listing is real commerce rather
+#: than publishing, and filing it under `external_publish` made that flag the
+#: only one in the kernel that opened two capabilities from two different phases.
+#:
+#: `real_commerce` is not `real_spending`: that flag is §0.4's "no real
+#: payments" and governs unattended spend. A colony can be forbidden to sell and
+#: still permitted to buy.
 _AUTONOMY_COLUMNS = {
     "public_web_read": "public_web_read_enabled",
     "browser_control": "browser_control_enabled",
     "external_publish": "external_publish_enabled",
     "external_message": "external_message_enabled",
+    "real_commerce": "real_commerce_enabled",
     "real_spending": "real_spending_enabled",
 }
 

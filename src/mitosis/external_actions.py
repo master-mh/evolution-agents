@@ -281,6 +281,9 @@ def _claim_locked(
         conn,
         channel=channel,
         counterparty=counterparty,
+        domain=domain,
+        platform_account=platform_account,
+        artifact_id=artifact_id,
         founder_cell_id=cell.founder_cell_id,
         now=now,
     )
@@ -311,6 +314,12 @@ def _claim_locked(
         if counterparty is not None
         else None
     )
+
+    # Stored in the form §21.2 aggregates on, never as typed. `check_action`
+    # above compared the normalised value; writing the raw one would leave every
+    # later query looking for a string this row does not contain.
+    domain = channel_registry.normalise_target(domain)
+    platform_account = channel_registry.normalise_target(platform_account)
 
     conn.execute(
         "UPDATE approval_grants SET consumed_at_utc = ? WHERE grant_id = ?",

@@ -42,6 +42,7 @@ import secrets
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 
 from . import audit
 from .tool_registry import autonomy_enabled
@@ -134,8 +135,26 @@ class DuplicateContact(ExternalActionRefused):
 
 
 class SiblingCollision(ExternalActionRefused):
-    """§21.3: two lineages reaching one counterparty look like one business
-    contradicting itself. Bidding wars and conflicting offers are this shape."""
+    """§21.3: two lineages reaching one *target* look like one business
+    contradicting itself. Bidding wars and conflicting offers are this shape.
+
+    The target is whichever §21.2 key the channel is keyed on — a counterparty,
+    a domain, or a platform account. ADR-037 widened this from the counterparty
+    alone, because for a channel that addresses nobody the counterparty check
+    was skipped entirely and this refusal could never fire.
+    """
+
+
+class DuplicatePublication(ExternalActionRefused):
+    """§21.2's "duplicate", for a channel with no person to key it on.
+
+    The same content-addressed artifact going to the same target twice. ADR-035
+    made an artifact's identity its content hash so that §11.3's "duplicated
+    artifacts with new names" is unrepresentable; this is the first check that
+    spends that identity. Unlike a sibling collision it applies to *any*
+    lineage, including the one that published it the first time — a marketplace
+    suspends an account for duplicate listings without asking who filed them.
+    """
 
 
 class ChannelRateLimit(ExternalActionRefused):
@@ -157,6 +176,27 @@ class ChannelAutonomyRefused(ExternalActionRefused):
 
 
 # --- the registry -------------------------------------------------------------
+
+
+class TargetKind(str, Enum):
+    """Which of §21.2's aggregation keys a channel's collisions are keyed on.
+
+    §21.2 names "counterparty/domain/channel over a rolling window", and §21.1's
+    shared assets add the platform account. Every channel collides on exactly
+    one of them, and the channel dimension is already the cap.
+
+    This replaced a `requires_counterparty: bool` (ADR-037). The boolean was not
+    wrong so much as it only described the `email` case: everything it said
+    "no" to fell out of §21.2's checks altogether, so `marketplace_listing` and
+    `web_publish` had a registry entry, a rate cap, a freeze — and no duplicate,
+    sibling or block check at all. Naming the key instead means a channel that
+    addresses nobody still collides on *something*, and a new channel has to say
+    what.
+    """
+
+    COUNTERPARTY = "counterparty"
+    DOMAIN = "domain"
+    PLATFORM_ACCOUNT = "platform_account"
 
 
 @dataclass(frozen=True)
@@ -183,11 +223,14 @@ class ChannelSpec:
     #: wake, whether or not the channel is even switched on.
     short_description: str
     #: A §27.1 `autonomy:` key. §0.4 grants autonomy "tool by tool"; a channel
-    #: with no flag would be a capability nobody ever decided to allow.
+    #: with no flag would be a capability nobody ever decided to allow — and no
+    #: flag may serve two channels, which is ADR-037 and is enforced by a test.
     autonomy_flag: str
-    #: Whether the action addresses a particular person. False for a listing or
-    #: a page, which reach everyone and nobody.
-    requires_counterparty: bool
+    #: Which §21.2 key this channel's collisions are keyed on. **Required at
+    #: claim time**, so a channel fails closed rather than skipping its checks:
+    #: an action whose target is unknown cannot be compared against anything,
+    #: and "cannot be compared" must not read as "does not collide".
+    target_kind: TargetKind
     #: Actions on this channel per `CONTACT_WINDOW_SECONDS`, colony-wide.
     max_actions_per_window: int
     #: Claimed-but-unfinished actions on this channel, colony-wide.
@@ -213,20 +256,27 @@ REGISTRY: dict[str, ChannelSpec] = {
         ),
         short_description="one email to one recipient, sent by hand",
         autonomy_flag="external_message",
-        requires_counterparty=True,
+        target_kind=TargetKind.COUNTERPARTY,
         max_actions_per_window=5,
         max_open_claims=2,
         max_billable_human_minutes=30,
     ),
+    # §0.4's "no real commerce", not its "no public publishing": a listing is an
+    # **offer to sell**, which is §28 Phase 9's "one narrow product class, one
+    # merchant channel" and not Phase 8's landing-page draft. ADR-037 moved it
+    # off `external_publish` for that reason — the old flag granted a Phase 9
+    # capability along with a Phase 8 one, so the defensible half could not be
+    # turned on by itself.
     "marketplace_listing": ChannelSpec(
         channel_id="marketplace_listing",
         description=(
             "One listing on one marketplace account, posted by hand. Two "
-            "lineages listing against each other is §21.2's bidding war."
+            "lineages listing against each other is §21.2's bidding war, and "
+            "the platform account is what they collide on."
         ),
         short_description="one marketplace listing, posted by hand",
-        autonomy_flag="external_publish",
-        requires_counterparty=False,
+        autonomy_flag="real_commerce",
+        target_kind=TargetKind.PLATFORM_ACCOUNT,
         max_actions_per_window=3,
         max_open_claims=2,
         max_billable_human_minutes=45,
@@ -239,7 +289,7 @@ REGISTRY: dict[str, ChannelSpec] = {
         ),
         short_description="one page published on a colony domain, by hand",
         autonomy_flag="external_publish",
-        requires_counterparty=False,
+        target_kind=TargetKind.DOMAIN,
         max_actions_per_window=3,
         max_open_claims=2,
         max_billable_human_minutes=45,
@@ -298,6 +348,29 @@ def _salt(conn: sqlite3.Connection) -> bytes:
     )
     row = conn.execute("SELECT salt_hex FROM counterparty_salt WHERE id = 1").fetchone()
     return bytes.fromhex(row["salt_hex"])
+
+
+def normalise_target(value: str | None) -> str | None:
+    """§21.2's domain and platform account, in the form the aggregation uses.
+
+    Normalised exactly as `counterparty_hash` normalises what it hashes, and for
+    the reason given there: `Alice@Ex.com` and `alice@ex.com` are one person, and
+    a dedupe that misses that is a dedupe that does not work. `Colony.Test` and
+    `colony.test` are one domain — DNS says so — and two operators typing a
+    platform account differently would otherwise collide on nothing.
+
+    **Applied on write as well as on read**, and to every channel rather than
+    only the one keyed on the column. The sibling query for a domain deliberately
+    looks across channels, so an `email` row holding `Golden.Test` while a
+    `web_publish` claim asks about `golden.test` would be exactly the collision
+    §21.3 exists to catch, missed on a capitalisation. Where two spellings really
+    are distinct platform accounts this over-refuses, which is the safe
+    direction: a refused claim costs a conversation, a missed collision costs
+    §21.1's shared assets.
+    """
+    if value is None:
+        return None
+    return value.strip().casefold() or None
 
 
 def counterparty_hash(conn: sqlite3.Connection, counterparty: str) -> str:
@@ -402,11 +475,66 @@ def _window_start(now: datetime) -> datetime:
     return now - timedelta(seconds=CONTACT_WINDOW_SECONDS)
 
 
+def target_of(
+    spec: ChannelSpec,
+    *,
+    counterparty: str | None,
+    domain: str | None,
+    platform_account: str | None,
+) -> str:
+    """The value this channel collides on, validated. Raises if it is missing.
+
+    **Fails closed.** A channel whose target is unknown cannot be compared
+    against anything on record, and the whole failure ADR-037 fixed was that
+    "cannot be compared" read as "does not collide" — `marketplace_listing` and
+    `web_publish` carried a registry entry, a rate cap and a freeze, and no
+    duplicate or sibling check at all, because both were keyed on a
+    counterparty they do not have.
+
+    The other two fields stay recordable either way: §21.2 tracks "domain used"
+    and "platform account" as facts, and an email genuinely has a sending
+    domain even though it collides on the recipient. Only the counterparty is
+    refused where it does not belong, because that one carries §16.3's hazard —
+    a page addressed to nobody has no business holding a person's identifier.
+    """
+    supplied = {
+        TargetKind.COUNTERPARTY: counterparty,
+        TargetKind.DOMAIN: domain,
+        TargetKind.PLATFORM_ACCOUNT: platform_account,
+    }
+
+    if spec.target_kind is not TargetKind.COUNTERPARTY and counterparty is not None:
+        raise ChannelError(
+            f"channel {spec.channel_id!r} addresses nobody in particular; it takes no "
+            f"counterparty. It collides on its {spec.target_kind.value}."
+        )
+
+    # Normalised exactly as `counterparty_hash` normalises, and for the reason
+    # it gives: `Alice@Ex.com` and `alice@ex.com` are one person, and a dedupe
+    # that misses that is a dedupe that does not work. `Colony.Test` and
+    # `colony.test` are one domain — DNS says so — and two operators typing a
+    # platform account differently would otherwise collide on nothing. Where the
+    # two spellings really are distinct accounts this over-refuses, which is the
+    # safe direction: a refused claim costs a conversation and a missed
+    # collision costs §21.1's shared assets.
+    value = normalise_target(supplied[spec.target_kind]) or ""
+    if not value:
+        raise ChannelError(
+            f"channel {spec.channel_id!r} collides on its {spec.target_kind.value}; "
+            f"name it. §21.2 aggregates on counterparty/domain/channel, and an "
+            "action with no target cannot be checked against anything."
+        )
+    return value
+
+
 def check_action(
     conn: sqlite3.Connection,
     *,
     channel: str,
     counterparty: str | None = None,
+    domain: str | None = None,
+    platform_account: str | None = None,
+    artifact_id: str | None = None,
     founder_cell_id: str | None = None,
     now: datetime | None = None,
 ) -> None:
@@ -423,6 +551,16 @@ def check_action(
     lineage, so the sibling check is at its strictest — an operator asking "may
     I contact this person" gets the most conservative answer available rather
     than a laxer one than the claim will apply.
+
+    **That strictest-reading trick does not transfer to a target channel, and
+    the difference is the whole of ADR-037's third consequence.** Contacting one
+    person twice is §21.2's duplicate; publishing twice to your own domain is a
+    business publishing twice. So "refuse on any prior action" — conservative
+    for a counterparty — would refuse the *normal* case for a domain, and
+    ADR-036 already established that a refusal misidentifying what went wrong is
+    worse than a blunter one, because the operator acts on the diagnosis. A
+    target-keyed channel therefore **refuses to answer** without a lineage
+    rather than guessing which way to be wrong.
     """
     now = now or datetime.now(timezone.utc)
     spec = get_spec(channel)
@@ -440,19 +578,27 @@ def check_action(
             "acknowledge it before anything else goes out."
         )
 
-    if spec.requires_counterparty and not (counterparty or "").strip():
-        raise ChannelError(f"channel {channel!r} addresses one counterparty; name it")
-    if counterparty is not None and not spec.requires_counterparty:
-        raise ChannelError(
-            f"channel {channel!r} addresses nobody in particular; it takes no counterparty"
-        )
+    target = target_of(
+        spec,
+        counterparty=counterparty,
+        domain=domain,
+        platform_account=platform_account,
+    )
 
-    if counterparty is not None:
-        digest = counterparty_hash(conn, counterparty)
+    if spec.target_kind is TargetKind.COUNTERPARTY:
         _check_counterparty_locked(
             conn,
-            digest=digest,
+            digest=counterparty_hash(conn, target),
             channel=channel,
+            founder_cell_id=founder_cell_id,
+            now=now,
+        )
+    else:
+        _check_target_locked(
+            conn,
+            spec=spec,
+            target=target,
+            artifact_id=artifact_id,
             founder_cell_id=founder_cell_id,
             now=now,
         )
@@ -546,6 +692,101 @@ def _check_counterparty_locked(
             f"§21.2: this counterparty was already contacted on {channel} at "
             f"{same_channel['claimed_at_utc']} (action {same_channel['action_id']}), "
             f"within the last {CONTACT_WINDOW_SECONDS}s"
+        )
+
+
+def _check_target_locked(
+    conn: sqlite3.Connection,
+    *,
+    spec: ChannelSpec,
+    target: str,
+    artifact_id: str | None,
+    founder_cell_id: str | None,
+    now: datetime,
+) -> None:
+    """§21.2 for a channel that addresses nobody (ADR-037).
+
+    Two checks, and they are deliberately *not* the counterparty's two:
+
+    1. **Sibling collision (§21.3)** — a different lineage acting on the same
+       domain or platform account inside the window. This is where "bidding
+       wars, conflicting offers, cannibalisation" actually live for a publish
+       channel: two lineages listing against each other on one merchant account
+       is one business contradicting itself, exactly as two lineages emailing
+       one person is.
+    2. **Duplicate publication** — the same artifact to the same target, by
+       *anyone*. A person can be contacted once; a domain can be published to
+       all day. What cannot happen twice is the same content, and ADR-035 made
+       content the artifact's identity, so this is the one duplicate check a
+       target channel can honestly make.
+
+    **A same-lineage repeat is not a collision here**, which is the asymmetry
+    with `_check_counterparty_locked`. Refusing it would refuse a business
+    publishing twice to its own site — and a guard that fires on the normal case
+    is the failure ADR-036 caught in `understated_risk`, arrived at from the
+    other direction.
+    """
+    column = spec.target_kind.value  # a TargetKind member, never caller input
+    since = _window_start(now).isoformat()
+
+    if founder_cell_id is None:
+        raise ChannelError(
+            f"channel {spec.channel_id!r} collides on its {column}, where a repeat by "
+            "the *same* lineage is not a collision at all — so this check needs to "
+            "know which lineage is asking. Name a cell."
+        )
+
+    sibling = conn.execute(
+        f"""
+        SELECT action_id, founder_cell_id, channel, claimed_at_utc
+          FROM external_action_registry
+         WHERE {column} = ? AND status != 'abandoned'
+           AND claimed_at_utc >= ? AND founder_cell_id <> ?
+         ORDER BY claimed_at_utc DESC LIMIT 1
+        """,
+        (target, since, founder_cell_id),
+    ).fetchone()
+    if sibling is not None:
+        raise SiblingCollision(
+            f"§21.3: lineage {sibling['founder_cell_id']} acted on {column} "
+            f"{target!r} via {sibling['channel']} at {sibling['claimed_at_utc']} "
+            f"(action {sibling['action_id']}). Externally the colony is one "
+            "business, and two lineages on one channel account is how it bids "
+            "against itself."
+        )
+
+    if artifact_id is None:
+        return
+
+    # Windowed, on the same clock as everything else in this module. §21.2's own
+    # words are "cumulative-exposure aggregation keys … over a rolling window",
+    # and an unwindowed version would be a permanent lock with no release: an
+    # artifact could never be republished after a listing expired, and the
+    # kernel has no unpublish to pair with it. One window rather than two, for
+    # the reason `CONTACT_WINDOW_SECONDS` already gives — a patient splitter
+    # spaces its actions past whichever window is narrower.
+    #
+    # **Scoped to the channel, unlike the sibling check above.** Two lineages on
+    # one domain contradict each other whichever channels they used, so that one
+    # looks across all of them. But emailing a write-up from a domain and then
+    # publishing it on that same domain is one business doing two normal things
+    # — it is only a duplicate if the same content goes out the same way twice.
+    duplicate = conn.execute(
+        f"""
+        SELECT action_id, founder_cell_id, claimed_at_utc
+          FROM external_action_registry
+         WHERE {column} = ? AND artifact_id = ? AND channel = ?
+           AND status != 'abandoned' AND claimed_at_utc >= ?
+         ORDER BY claimed_at_utc DESC LIMIT 1
+        """,
+        (target, artifact_id, spec.channel_id, since),
+    ).fetchone()
+    if duplicate is not None:
+        raise DuplicatePublication(
+            f"§21.2: artifact {artifact_id} already went to {column} {target!r} at "
+            f"{duplicate['claimed_at_utc']} (action {duplicate['action_id']}). It is "
+            "the same content — §11.3's 'duplicated artifacts with new names' cannot "
+            "get around this, because an artifact is identified by its content."
         )
 
 

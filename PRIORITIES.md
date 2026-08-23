@@ -325,13 +325,36 @@
   §18.2 is about lineages evolved under adversarial synthetic incentives, and the shadow economy is
   Phase 6. C13 remains the one Charter clause with no `charter_*` test, now for a precise reason
   rather than a vague one. *Disproved by:* anything that writes `SIM_ADVERSARIAL`.
-- [ ] **One autonomy flag has a column and nothing behind it; one has channels and no decision.**
-  **Corrected 2026-08-23:** `external_message` now gates the `email` channel and is exercised
-  end to end (ADR-036), so it is off this list. `external_publish` gates two *registered* channels
-  — `marketplace_listing` and `web_publish` — which is not the same as being decided: §0.4 grants
-  autonomy capability by capability, and nobody has argued that one yet. `browser_control` still
-  guards a capability that does not exist at all. *Disproved by:* a completed external action on a
-  publish channel, or any tool declaring `browser_control`.
+- [x] **The `external_publish` decision — DONE** (2026-08-23), ADR-037. `channel_registry.py` +
+  migration 0022. **The flag stays off, and the reason it could not simply be turned on is that it
+  was gating two capabilities from two different phases.** `external_publish` was the only flag in
+  the kernel opening more than one — `public_web_read` gates one tool, `external_message` one
+  channel — which made `cmd_set_autonomy`'s own "there is deliberately no switch that opens more
+  than one" false as written. And the two are not peers: a page published by hand is §28 Phase 8's
+  landing-page draft, while a marketplace listing is an offer to sell — Phase 9's merchant channel,
+  with the legal identity and liability reserves that phase requires. **The split is §0.4's own
+  list, not an invention:** §0.4 names six prohibitions and §27.1's block carries five keys, and
+  "no real commerce" is the one that never got one. So `marketplace_listing` moved to a new
+  `real_commerce` key and `external_publish` keeps its spec-given name over `web_publish` alone —
+  no spec-named key removed, and §27.1 is headed "development defaults". **The second finding was
+  that the registry's guarantee was vacuous for both:** every §21.2 check was counterparty-keyed,
+  so a channel addressing nobody ran the autonomy gate, the freeze and the rate cap and then
+  skipped duplicate, sibling and do-not-contact entirely — while `marketplace_listing`'s own
+  description promised "two lineages listing against each other is §21.2's bidding war", detected
+  by nothing. `domain` and `platform_account` had been columns since migration 0021 and were named
+  in no predicate anywhere: the eighth reserved socket found half-built. `ChannelSpec.target_kind`
+  now names the §21.2 key each channel collides on and **requires** it, so a publish channel fails
+  closed. A same-lineage repeat on a domain is deliberately *not* a collision (publishing twice to
+  your own site is a business publishing twice), duplicates are keyed on the content-addressed
+  artifact instead, and a target-keyed check **refuses to answer without a lineage** rather than
+  guessing which way to be wrong. 826 tests (11 new); golden expectation 16 → 17, where
+  `external_publish` is open and `real_commerce` shut in one colony — a kernel that re-merged them
+  passes every other assertion in the run and fails there (**no USD_REAL movement**). Teeth-checked
+  ten ways; hand-verified end to end on a live colony.
+- [ ] **`browser_control` still guards a capability that does not exist at all.** Untouched by
+  ADR-037 and not the same question: it is §25.1 rung 8–9 automation rather than anything a person
+  performs by hand, so there is nothing yet for a §0.4 argument to be *about*. *Disproved by:* any
+  tool declaring `browser_control`.
 - [ ] **§23.2's liability figure is unmodelled — but the account is not missing.** Corrected
   2026-08-22: the previous wording ("no liability reserve exists (§13 is Phase 6+)") was wrong on
   both counts. §13 is Novelty Evaluation; liability is not a §13 concept. And `liability_reserve`

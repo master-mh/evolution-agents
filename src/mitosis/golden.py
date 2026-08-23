@@ -482,7 +482,64 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           `cells`, `predictions`, `artifacts`, `coroner_reports` and
 #           `promotions` are byte-identical: an external action reaches outside
 #           the colony and changes nothing about who exists inside it.
-EXPECTATION_VERSION = 16
+#   16 -> 17 (one autonomy flag per capability, and the §21.2 key a publish
+#             channel collides on; §0.4, §21.2/§21.3, §27.1, §28 Phases 8-9;
+#             ADR-037).
+#           The scenario gains four publish cases and every section below moves
+#           because of them. **The one that is the point of the slice is (d).**
+#           (a) **`autonomy`** gains `real_commerce: false` and flips
+#               `external_publish` to true. `external_publish` was gating two
+#               capabilities — `web_publish` and `marketplace_listing` — which
+#               made it the only flag in the kernel opening more than one, and
+#               made `cmd_set_autonomy`'s "there is deliberately no switch that
+#               opens more than one" false as written. §0.4 lists six
+#               prohibitions and §27.1's block carries five keys; "no real
+#               commerce" is the one that never got one, and a listing is
+#               commerce rather than publishing.
+#           (b) **`external_actions`** gains one row: `web_publish`,
+#               `delivered`, `domain: golden.test`, 20 human minutes, carrying
+#               the artifact. Three further claims are *refused* and therefore
+#               write no row — which is what makes the counts below the
+#               assertion rather than the row itself.
+#           (c) **`human_minutes`** 38/34 -> 58/54. Both move by exactly 20:
+#               the publish is under `web_publish`'s 45-minute ceiling, so it
+#               records no subsidy, and the 4-minute gap from the email action
+#               survives unchanged. A run whose only human-minute figure came
+#               from an over-ceiling action could not tell the two apart.
+#           (d) **The split flag, proved in one colony.** `external_publish` is
+#               open and `real_commerce` is shut, so a `marketplace_listing`
+#               claim is refused while `web_publish` succeeds. **A kernel that
+#               re-merged the two flags passes every other assertion in this
+#               run and fails here.** It also pins that approval is not
+#               permission: the refused grant is real and was approved by a
+#               person (§25.1 rung 6, not rung 9).
+#           (e) **The §21.3 checks that did not exist.** A second lineage on
+#               `golden.test` is refused as a sibling collision, and the same
+#               lineage republishing the same artifact there is refused as a
+#               duplicate — while the same lineage publishing *different*
+#               content would not be. Before ADR-037 both claims succeeded:
+#               every §21.2 check was counterparty-keyed, so a channel that
+#               addresses nobody skipped all of them.
+#           (f) `deliberations`, `proposals`, `model_calls`, `approval_requests`
+#               /`grants`, `assessments`, `event_inbox` and `audit_event_types`
+#               all move by the four new wakes the four cases need. Each is a
+#               mock call priced at zero.
+#           (g) `resource_usage`, `reservations` and `transaction_types` move
+#               with them: `RESOURCE::reservation_reserve`/`settle` 13 -> 18
+#               (four wakes plus the claim) and `release` 1 -> 2 (the claim
+#               settles 20 of the 45 minutes reserved and releases the rest).
+#               `RESOURCE::cell#4:cash` -206 and `infrastructure_reserve` +208
+#               is the same movement seen from both ends.
+#           **No USD_REAL balance moves and `external_expense` is unchanged in
+#           every book (20 / 1550).** `USD_REAL::reservation_reserve` 11 -> 15
+#           and `release` 9 -> 13 move as a pair with `settle` fixed at 1 —
+#           four new wakes that reserve and release and never settle, which is
+#           the tell that they cost nothing. `cells`, `predictions`,
+#           `artifacts`, `artifact_lineage`, `coroner_reports`, `promotions`,
+#           `counterparty_blocks` and `channel_frozen` are all byte-identical:
+#           publishing reaches outside the colony, and a refusal reaches
+#           nothing at all.
+EXPECTATION_VERSION = 17
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -596,7 +653,9 @@ def _post_fetch_reply(tool_call_id: str) -> str:
 # The §21 external-action request. Built per-run because it delivers the
 # artifact the scenario actually produced — a hard-coded id would pin the shape
 # of delivery while proving nothing about the export gate in front of it.
-def _external_action_reply(artifact_id: str, *, intent: str) -> str:
+def _external_action_reply(
+    artifact_id: str, *, intent: str, channel: str = "email"
+) -> str:
     """Note what is *not* here: anyone's name. A Cell names a channel and a
     purpose; the operator names the counterparty at claim time and the kernel
     stores a salted hash of it (§16.3). A reply carrying an address would fail
@@ -619,7 +678,7 @@ def _external_action_reply(artifact_id: str, *, intent: str) -> str:
             "estimated_cost_minor_units": 0,
             "predictions": [],
             "external_action": {
-                "channel": "email",
+                "channel": channel,
                 "intent": intent,
                 "artifact_id": artifact_id,
             },
@@ -1362,12 +1421,12 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         conn, flag="external_message", enabled=True, changed_by="golden-operator"
     )
 
-    def _granted_external_action(cell, *, wake_key: str, intent: str):
+    def _granted_external_action(cell, *, wake_key: str, intent: str, channel: str = "email"):
         deliberation.deliberate(
             conn,
             cell_id=cell.cell_id,
             provider=providers.MockProvider(
-                reply=_external_action_reply(golden_artifact, intent=intent)
+                reply=_external_action_reply(golden_artifact, intent=intent, channel=channel)
             ),
             wake_key=wake_key,
             wake_reason=deliberation.WAKE_SCHEDULED_RESEARCH,
@@ -1461,6 +1520,109 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         outcome="complaint",
         human_minutes=4,
     )
+
+    # 19b. §0.4 one flag per capability, and the §21.2 key a publish channel
+    #      collides on (ADR-037). Four things this pins, and the fourth is the
+    #      one the whole slice exists for:
+    #
+    #      (a) **A publish channel works end to end.** `web_publish` addresses
+    #          nobody, so before ADR-037 it ran through §21.2's checks and every
+    #          counterparty-keyed one was skipped — a registry entry, a rate cap
+    #          and a freeze in front of no collision detection at all.
+    #      (b) **A sibling collision on a domain.** The check that did not
+    #          exist. The explorer is a different lineage on the same domain,
+    #          which is §21.3 exactly: externally the colony is one business.
+    #      (c) **A duplicate publication.** Same lineage, same artifact, same
+    #          domain — refused, while the same lineage publishing *different*
+    #          content there would not be. That asymmetry is the point: a person
+    #          can be contacted once, a domain can be published to all day, and
+    #          what cannot repeat is the content. It is keyed on the artifact
+    #          because ADR-035 made content the artifact's identity.
+    #      (d) **One flag open and the other shut, in the same colony.**
+    #          `external_publish` is on and `real_commerce` is off, so a
+    #          `marketplace_listing` claim is refused while `web_publish`
+    #          succeeds. A kernel that re-merged the two flags — the state this
+    #          slice found — would pass every other assertion in this run and
+    #          fail here. It also pins that approval is not permission: the
+    #          grant below is real, approved by a person, and still refused.
+    tools.set_autonomy(
+        conn, flag="external_publish", enabled=True, changed_by="golden-operator"
+    )
+
+    publish_grant = _granted_external_action(
+        auditor_child,
+        wake_key="golden:wake:web-publish",
+        intent="publish the write-up",
+        channel="web_publish",
+    )
+    publish_action = external_actions.claim(
+        conn,
+        grant_id=publish_grant.grant_id,
+        claimed_by="golden-operator",
+        domain="golden.test",
+    )
+    external_actions.complete(
+        conn,
+        action_id=publish_action.action_id,
+        completed_by="golden-operator",
+        outcome="delivered",
+        human_minutes=20,
+        reference="golden-run page reference",
+    )
+
+    #      (b) A different lineage, the same domain.
+    publish_collision_grant = _granted_external_action(
+        explorer,
+        wake_key="golden:wake:web-publish-collision",
+        intent="publish against the same domain",
+        channel="web_publish",
+    )
+    try:
+        external_actions.claim(
+            conn,
+            grant_id=publish_collision_grant.grant_id,
+            claimed_by="golden-operator",
+            domain="golden.test",
+        )
+        raise AssertionError("§21.3 should have refused a second lineage on one domain")
+    except channel_registry.SiblingCollision:
+        pass
+
+    #      (c) The same lineage, the same artifact, the same domain.
+    publish_duplicate_grant = _granted_external_action(
+        auditor_child,
+        wake_key="golden:wake:web-publish-duplicate",
+        intent="publish the same write-up again",
+        channel="web_publish",
+    )
+    try:
+        external_actions.claim(
+            conn,
+            grant_id=publish_duplicate_grant.grant_id,
+            claimed_by="golden-operator",
+            domain="golden.test",
+        )
+        raise AssertionError("§21.2 should have refused the same artifact twice")
+    except channel_registry.DuplicatePublication:
+        pass
+
+    #      (d) The other half of the split flag, still shut.
+    listing_grant = _granted_external_action(
+        auditor_child,
+        wake_key="golden:wake:marketplace-listing",
+        intent="list the write-up for sale",
+        channel="marketplace_listing",
+    )
+    try:
+        external_actions.claim(
+            conn,
+            grant_id=listing_grant.grant_id,
+            claimed_by="golden-operator",
+            platform_account="golden-merchant",
+        )
+        raise AssertionError("autonomy.real_commerce is false; §28 Phase 9 is not open")
+    except channel_registry.ChannelAutonomyRefused:
+        pass
 
     # 20. Simulated clock.
     clock.advance(conn, timedelta(days=7))

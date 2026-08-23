@@ -1381,3 +1381,102 @@ from amendment ID to spec location is complete in one place:
     the sibling query was NULL-safe and so matched the asker's *own* claim, and the message accused
     a second lineage of interference. The strictness was right and is unchanged; only the diagnosis
     moved.
+
+---
+
+## ADR-037: `external_publish` stays closed, because one flag was gating two capabilities from two different phases
+
+- **Status:** Accepted
+- **Spec ref:** §0.4, §19.4, §20.2, §21.1–§21.3, §23.4, §25.1, §27.1 (development defaults), §28
+  Phases 8–9, §31; ADR-027, ADR-034, ADR-035, ADR-036
+- **Context:** ADR-036 closed with "`external_publish` still has nothing behind it that a Cell can
+  reach … the flag is one §0.4 decision per capability", and PRIORITIES carried it as *"one
+  autonomy flag has a column and nothing behind it; one has channels and no decision"*. This is
+  that decision, argued. The question is narrower than it sounds: nothing in the registry
+  transmits, so enabling the flag would not let a Cell publish anything — it would let a Cell
+  *propose* a publish action, an operator approve it, and a person publish by hand while the
+  kernel records it. So the real question is whether the record-and-refuse machinery is adequate
+  for a channel that addresses nobody.
+- **Decision: no, and the flag stays off — decided rather than undecided.** Four findings, and the
+  second was the one that settled it.
+  1. **The registry's central guarantee is vacuous for both publish channels.** §21.2's prevention
+     half is counterparty-keyed, and `check_action` skipped *all three* of its checks — duplicate
+     contact, sibling collision, do-not-contact — whenever a channel addressed nobody. What
+     survived was the autonomy flag, the freeze, and the rate/quota caps. Meanwhile
+     `marketplace_listing`'s own description promised what the code could not do: "Two lineages
+     listing against each other is §21.2's bidding war", detected by nothing. This is the inverse
+     of the `understated_risk` bug ADR-036 found — a signal that fires unconditionally
+     distinguishes nothing, and a check that can never fire looks like a working registry and is
+     its opposite.
+  2. **One flag gated two capabilities, and they belong to different phases.** `external_publish`
+     was the only autonomy flag in the kernel mapping to more than one capability
+     (`public_web_read` gates one tool, `external_message` one channel). `cmd_set_autonomy`'s own
+     docstring — "there is deliberately no switch that opens more than one" — was false as
+     written. And the two are not peers: a page published by hand on a colony domain is §28 Phase
+     8 ("landing-page drafts", "humans review all external use"), while a marketplace listing is
+     **an offer to sell** — Phase 9's "one narrow product class, one merchant channel", with the
+     legal identity and liability reserves that phase requires. One flag collapsed a phase
+     boundary, so the defensible half could not be granted without the indefensible one.
+  3. **The key that would work was already a column, checked by nothing.** §21.2's aggregation
+     keys are "counterparty/**domain**/channel"; migration 0021 already carried `domain` and
+     `platform_account`, described there as "§21.2's 'domain used' and 'platform account'".
+     They were written at claim time and read back on the row, and **no query predicate anywhere
+     keyed on either**. The eighth reserved socket found half-built; the honest order is to key
+     the checks first and argue the flag second, because otherwise the first real listing is the
+     test.
+  4. **Where the capability was safe it was inert, and where it was live it crossed a phase.**
+     §20.2 requires `commercial_use == permitted` for commercial export; anything derived from a
+     fetched page is `unknown` by construction and there is still no `set-rights` path. A
+     marketplace listing is inherently commercial, so `check_exportable(commercial=True)` refuses
+     nearly everything a Cell can currently produce.
+- **What it displaced.** The alternative on the table was **turning `external_publish` on for
+  Phase 8 landing pages**, and it is a serious one: nothing transmits, a human approves and a
+  human acts, the rate cap and the complaint freeze are both live, and §28 Phase 8 names
+  "landing-page drafts" as a deliverable. That argument is strong for `web_publish` alone and weak
+  for `marketplace_listing` — which is exactly the split the flag forbade. Rejected on finding 2:
+  not because publishing by hand is unsafe, but because the grant could not be made at the
+  granularity §0.4 requires.
+- **Consequences — the flag is split along §0.4's own list, not invented.** §0.4 names six
+  prohibitions ("no network from generated code, no real commerce, no external communication, no
+  real payments, no public publishing, no direct secret access") and §27.1's defaults block
+  carries five keys. **"No real commerce" is the one with no flag**, and a marketplace listing is
+  real commerce, not publishing — it was filed under the wrong prohibition. So:
+  - `external_publish` keeps its spec-given name and gates `web_publish` alone — §0.4's "no public
+    publishing", §28 Phase 8. Still false.
+  - `marketplace_listing` moves behind a new `real_commerce` key — §0.4's "no real commerce", §28
+    Phase 9. Ships false, and is distinct from `real_spending`, which is §0.4's "no real payments"
+    and governs *unattended spend* rather than offering something for sale.
+  - No spec-named key is removed, and §27.1 is headed "development defaults, not economic
+    recommendations" — the precedent for extending it is `metabolic_acceleration_factor`, in
+    `operator_state` since migration 0014 and absent from §27.1's block. The normative clause is
+    §0.4, and one key per capability is what it asks for.
+  - `test_no_autonomy_flag_gates_more_than_one_capability` makes the CLI docstring true and keeps
+    it true; a third publish channel would have to argue for its own key.
+  - `browser_control` is untouched and stays off: it gates a capability no tool declares, and it
+    is §25.1 rung 8–9 automation rather than anything a person performs.
+- **And the checks are keyed on the target, so the refusal half is real before the flag is
+  argued again.** `ChannelSpec.target_kind` replaces `requires_counterparty` with the §21.2
+  dimension the channel's collisions are actually keyed on — `COUNTERPARTY` for email, `DOMAIN`
+  for `web_publish`, `PLATFORM_ACCOUNT` for `marketplace_listing` — and that key is **required**,
+  so a publish channel fails closed rather than skipping its checks. Three consequences worth
+  stating:
+  - **A same-lineage repeat on a target is not a collision.** Contacting one person twice is
+    §21.2's duplicate; publishing twice to your own domain is a business publishing twice. Only a
+    *different* lineage on the same target is refused (§21.3), which is the distinction ADR-036's
+    live-run misattribution already established.
+  - **Duplicate is keyed on the artifact**, since a target channel has no person to key it on: the
+    same content-addressed artifact to the same target is refused for any lineage. ADR-035 made
+    "duplicated artifacts with new names" unrepresentable, and this is the first check to spend
+    that identity.
+  - **A target-keyed channel refuses to answer `check_action` without a lineage** rather than
+    guessing. The counterparty path answers the strictest way it can when the asker is unknown;
+    for a target the strictest reading — refuse on any prior action — would refuse the *normal*
+    case, and ADR-036's finding was that a refusal misidentifying what went wrong is worse than a
+    blunter one. `external-check` grew `--cell` so the question can be asked properly.
+  - `domain` and `platform_account` stay plaintext, and the asymmetry with the counterparty hash
+    is deliberate: they are the colony's *own* shared assets under §21.1, not a third party's
+    identity under §16.3. Hashing them would protect nobody and would make the operator-facing
+    refusal unreadable. They are **normalised** the way `counterparty_hash` normalises what
+    it hashes, though, and on write as well as on read: `Colony.Test` and `colony.test` are one
+    domain, the sibling query deliberately spans channels, and a dedupe that misses a
+    capitalisation is a dedupe that does not work.

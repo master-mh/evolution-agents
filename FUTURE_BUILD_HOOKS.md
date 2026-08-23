@@ -659,3 +659,49 @@ actually queued for building — this file is memory, not a backlog to work thro
   would be fine. It would not: a *tool* that acts is rung 8-9 automation, whereas an external action
   is performed by a person and the kernel only records it. The assertion is still correct; only its
   explanation misleads, which is the kind of stale rationale someone eventually acts on.
+
+## From the `external_publish` decision (2026-08-23, ADR-037)
+
+- **A flag can be wrong in a way that only shows up when someone tries to use it.** `external_publish`
+  looked settled for two slices — it had a column, a CLI switch, two registered channels and a
+  default of false. What it did not have was the *granularity* §0.4 requires, and nothing surfaced
+  that until the decision to enable it was actually attempted. The tell was available the whole
+  time: it was the only flag in `_AUTONOMY_COLUMNS` that more than one capability named.
+  `test_no_autonomy_flag_gates_more_than_one_capability` now makes that structural, but the general
+  shape — a gate nobody has tried to open is a gate nobody has checked — has no test.
+- **§0.4's six prohibitions still map onto five and a half keys.** With `real_commerce` added, the
+  list is: network-from-generated-code (`sandbox.network_default` plus `public_web_read`), real
+  commerce (`real_commerce`), external communication (`external_message`), real payments
+  (`real_spending`), public publishing (`external_publish`), direct secret access (**no flag** —
+  carried by Charter C14 and the provider key handling, which is defensible, but it means the
+  §27.1 block is not a complete index of §0.4 and should not be read as one).
+- **`real_commerce` can be opened and still sell nothing.** §20.2 requires
+  `commercial_use == permitted` for commercial export, anything derived from a fetched page is
+  `unknown` by construction, and there is still no `set-rights` path — now flagged for the third
+  slice running (ADR-035, ADR-036, ADR-037). The publish path is where it finally bites at the end
+  of the pipeline rather than in the middle: the flag would be on, the channel open, and every
+  listing refused at the export gate. Whatever fills it needs an audit trail and an operator
+  attestation, not a column write.
+- **The sibling check now spans channels and the duplicate check does not, and the asymmetry is
+  load-bearing.** Two lineages on one domain contradict each other whichever channels they used;
+  the same content going out two different ways is two normal actions. Both directions were wrong
+  in a draft and each was caught by a different case — worth remembering that "scope it the same
+  way as the neighbouring query" is not a safe default here.
+- **A claim held before acting is still a lock, and nothing sweeps it — now on two more channels.**
+  ADR-036 flagged this for `email`; `web_publish` and `marketplace_listing` inherit it, and a
+  stranded publish claim holds a *domain* rather than one person, which is a broader lock. The open
+  policy question is unchanged and now costs more: does an expired claim free its target, given the
+  person may in fact have published?
+- **Nothing distinguishes a colony domain from anyone else's.** `web_publish`'s description says "a
+  colony domain", and the kernel accepts whatever string the operator types. There is no registry
+  of domains the colony actually controls, so nothing stops a publish claim naming a domain the
+  colony has no account on — the §21.2 collision checks would work perfectly against a fiction.
+  `egress_allowlist` is the nearest existing thing and is about reading, not publishing.
+- **`platform_account` is a bare string with no registry behind it either.** §21.1's shared assets
+  include "marketplace account", and nothing says which accounts the colony actually holds — the
+  same gap as the domain above. *(The narrower half of this — two operators typing
+  `colony-merchant` and `Colony-Merchant` colliding on nothing — was found while writing this note
+  and fixed rather than parked: `normalise_target` applies the same strip-and-casefold that
+  `counterparty_hash` applies, on write as well as on read. The first draft normalised only for the
+  query while the claim wrote the raw string, so every later check looked for a value the row did
+  not contain. Worth remembering that a normalisation is two changes, not one.)*

@@ -108,6 +108,17 @@ def _make_cell(conn, *, key: str = "a"):
 def _open_the_gates(conn) -> None:
     tools.set_autonomy(conn, flag="external_message", enabled=True)
     tools.set_autonomy(conn, flag="external_publish", enabled=True)
+    tools.set_autonomy(conn, flag="real_commerce", enabled=True)
+
+
+def _publish_grant(conn, cell, *, wake_key: str, channel: str = "web_publish", **extra):
+    """An approved grant for a channel that addresses nobody."""
+    return _approved_grant(
+        conn,
+        cell,
+        wake_key=wake_key,
+        external_action={"channel": channel, "intent": "publish the draft", **extra},
+    )
 
 
 def _approved_grant(conn, cell, *, wake_key: str = "w1", **overrides):
@@ -999,4 +1010,325 @@ def test_an_operator_check_names_prior_contact_rather_than_accusing_a_sibling(co
             channel="email",
             counterparty=COUNTERPARTY,
             founder_cell_id=other.founder_cell_id,
+        )
+
+
+# --- ADR-037: a channel that addresses nobody still collides on something -----
+
+
+def test_no_autonomy_flag_gates_more_than_one_capability():
+    """§0.4: "autonomy is granted tool by tool, phase by phase".
+
+    The defect this defends against shipped once. `external_publish` gated both
+    `web_publish` and `marketplace_listing`, which made it the only flag in the
+    kernel opening two capabilities — and they were not peers: a page published
+    by hand is §28 Phase 8, a marketplace listing is an offer to sell and
+    therefore Phase 9. One flag collapsed a phase boundary, so the defensible
+    half could not be granted without the other.
+
+    Structural rather than a spot-check on today's registry: what must stay true
+    is that *no* flag ever serves two capabilities, and a third publish channel
+    added later has to argue for its own key. It is also what makes
+    `cmd_set_autonomy`'s "there is deliberately no switch that opens more than
+    one" true, which it was not.
+    """
+    from mitosis import tool_registry
+
+    holders: dict[str, list[str]] = {}
+    for spec in channel_registry.REGISTRY.values():
+        holders.setdefault(spec.autonomy_flag, []).append(f"channel:{spec.channel_id}")
+    for spec in tool_registry.REGISTRY.values():
+        holders.setdefault(spec.autonomy_flag, []).append(f"tool:{spec.tool_id}")
+
+    shared = {flag: names for flag, names in holders.items() if len(names) > 1}
+    assert not shared, (
+        f"§0.4 grants autonomy capability by capability; these flags open more than "
+        f"one: {shared}"
+    )
+
+
+def test_a_publish_channel_fails_closed_without_a_target(conn):
+    """§21.2 aggregates on "counterparty/domain/channel", and an action whose
+    target is unknown cannot be compared against anything on record.
+
+    The bug this replaces did not raise — it *skipped*. Every §21.2 check was
+    keyed on a counterparty, so a channel that addresses nobody ran the autonomy
+    gate, the freeze and the rate cap and then passed straight through the
+    duplicate, sibling and do-not-contact checks. "Cannot be compared" must not
+    read as "does not collide".
+    """
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    grant = _publish_grant(conn, cell, wake_key="w1")
+
+    with pytest.raises(channel_registry.ChannelError, match="collides on its domain"):
+        external_actions.claim(conn, grant_id=grant.grant_id, claimed_by="operator")
+
+
+def test_two_lineages_cannot_publish_to_one_domain(conn):
+    """§21.3 for a channel with no counterparty — the check that did not exist.
+
+    "Cells are internally separate but externally may appear to be one
+    business." Two lineages publishing against one domain is that failure, and
+    it is where §21.2's "bidding wars, conflicting offers, cannibalisation"
+    actually live for a publish channel.
+    """
+    _open_the_gates(conn)
+    one = _make_cell(conn, key="a")
+    two = _make_cell(conn, key="b")
+    assert one.founder_cell_id != two.founder_cell_id
+
+    first = _publish_grant(conn, one, wake_key="w1")
+    external_actions.claim(
+        conn, grant_id=first.grant_id, claimed_by="operator", domain="colony.test"
+    )
+
+    second = _publish_grant(conn, two, wake_key="w2")
+    with pytest.raises(channel_registry.SiblingCollision):
+        external_actions.claim(
+            conn, grant_id=second.grant_id, claimed_by="operator", domain="colony.test"
+        )
+
+
+def test_one_lineage_may_publish_to_its_own_domain_twice(conn):
+    """The asymmetry with the counterparty checks, and it is deliberate.
+
+    Contacting one person twice is §21.2's duplicate contact. Publishing twice
+    to your own domain is a business publishing twice. A guard that refused this
+    would fire on the normal case, which is the failure ADR-036 found in
+    `understated_risk` arrived at from the other direction — and the live-run
+    finding that a refusal misidentifying what went wrong is worse than a
+    blunter one.
+    """
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+
+    first = _publish_grant(conn, cell, wake_key="w1")
+    external_actions.claim(
+        conn, grant_id=first.grant_id, claimed_by="operator", domain="colony.test"
+    )
+
+    second = _publish_grant(conn, cell, wake_key="w2")
+    action = external_actions.claim(
+        conn, grant_id=second.grant_id, claimed_by="operator", domain="colony.test"
+    )
+    assert action.status == "claimed"
+
+
+def test_the_same_artifact_cannot_be_published_twice_to_one_target(conn):
+    """§21.2's "duplicate", for a channel with no person to key it on.
+
+    ADR-035 made an artifact's identity its content hash so that §11.3's
+    "duplicated artifacts with new names" is unrepresentable rather than merely
+    detectable; this is the first check that spends that identity. It applies to
+    any lineage, unlike the sibling check — a marketplace suspends an account
+    for duplicate listings without asking who filed them.
+    """
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    artifact = artifacts.create(
+        conn,
+        cell_id=cell.cell_id,
+        kind="landing_page_draft",
+        title="the same page",
+        content="one page of fixed content",
+    )
+    artifacts.export(
+        conn, artifact_id=artifact.artifact_id, exported_by="operator", reason="publish it"
+    )
+
+    first = _publish_grant(conn, cell, wake_key="w1", artifact_id=artifact.artifact_id)
+    external_actions.claim(
+        conn, grant_id=first.grant_id, claimed_by="operator", domain="colony.test"
+    )
+
+    second = _publish_grant(conn, cell, wake_key="w2", artifact_id=artifact.artifact_id)
+    with pytest.raises(channel_registry.DuplicatePublication):
+        external_actions.claim(
+            conn, grant_id=second.grant_id, claimed_by="operator", domain="colony.test"
+        )
+
+
+def test_a_publish_check_refuses_to_answer_without_a_lineage(conn):
+    """It does not guess, because both guesses are wrong in a way that matters.
+
+    The counterparty path answers the strictest way it can when the asker is
+    unknown — any prior contact refuses. For a domain the strictest reading
+    refuses the *normal* case (a lineage publishing to its own domain again),
+    and the laxer reading gives an answer the claim will then contradict.
+    ADR-036's finding was that the operator acts on the diagnosis, so this
+    refuses to produce one rather than producing a wrong one.
+    """
+    _open_the_gates(conn)
+
+    with pytest.raises(channel_registry.ChannelError, match="which lineage is asking"):
+        channel_registry.check_action(
+            conn, channel="web_publish", domain="colony.test"
+        )
+
+
+def test_publishing_and_the_marketplace_are_separately_gated(conn):
+    """ADR-037, in one colony: the whole reason the flag was split.
+
+    §0.4's six prohibitions name "no public publishing" and "no real commerce"
+    separately, and a marketplace listing is the second — §28 Phase 9's "one
+    narrow product class, one merchant channel", not Phase 8's landing-page
+    draft. With `external_publish` open and `real_commerce` shut, a page
+    publishes and a listing is refused. A kernel that re-merged the two flags
+    passes every other test in this file and fails this one.
+    """
+    tools.set_autonomy(conn, flag="external_publish", enabled=True)
+    cell = _make_cell(conn)
+
+    page = _publish_grant(conn, cell, wake_key="w1")
+    action = external_actions.claim(
+        conn, grant_id=page.grant_id, claimed_by="operator", domain="colony.test"
+    )
+    assert action.status == "claimed"
+
+    listing = _publish_grant(conn, cell, wake_key="w2", channel="marketplace_listing")
+    with pytest.raises(channel_registry.ChannelAutonomyRefused, match="real_commerce"):
+        external_actions.claim(
+            conn,
+            grant_id=listing.grant_id,
+            claimed_by="operator",
+            platform_account="colony-merchant",
+        )
+
+
+def test_a_publish_channel_takes_no_counterparty(conn):
+    """§16.3: a page addressed to nobody has no business holding a person's
+    identifier. The counterparty is the one field refused where it does not
+    belong — `domain` and `platform_account` stay recordable on any channel,
+    because §21.2 tracks both as facts and an email genuinely has a sending
+    domain."""
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    grant = _publish_grant(conn, cell, wake_key="w1")
+
+    with pytest.raises(channel_registry.ChannelError, match="takes no counterparty"):
+        external_actions.claim(
+            conn,
+            grant_id=grant.grant_id,
+            claimed_by="operator",
+            counterparty=COUNTERPARTY,
+            domain="colony.test",
+        )
+
+
+def test_publishing_what_was_emailed_is_not_a_duplicate(conn):
+    """The duplicate check is channel-scoped; the sibling check is not.
+
+    Two lineages on one domain contradict each other whichever channels they
+    used, so that query looks across all of them. But emailing a write-up from a
+    domain and then publishing it on that same domain is one business doing two
+    normal things — only the same content going out the same way twice is a
+    duplicate. Found while building the golden case, where the email action
+    records `domain` as a §21.2 fact and an unscoped query refused the publish
+    that followed it.
+    """
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    artifact = artifacts.create(
+        conn,
+        cell_id=cell.cell_id,
+        kind="landing_page_draft",
+        title="one page",
+        content="fixed content",
+    )
+    artifacts.export(
+        conn, artifact_id=artifact.artifact_id, exported_by="operator", reason="send it"
+    )
+
+    emailed = _approved_grant(
+        conn,
+        cell,
+        wake_key="w1",
+        external_action={
+            "channel": "email",
+            "intent": "send the draft",
+            "artifact_id": artifact.artifact_id,
+        },
+    )
+    external_actions.claim(
+        conn,
+        grant_id=emailed.grant_id,
+        claimed_by="operator",
+        counterparty=COUNTERPARTY,
+        domain="colony.test",
+    )
+
+    published = _publish_grant(
+        conn, cell, wake_key="w2", artifact_id=artifact.artifact_id
+    )
+    action = external_actions.claim(
+        conn, grant_id=published.grant_id, claimed_by="operator", domain="colony.test"
+    )
+    assert action.status == "claimed"
+
+
+def test_a_duplicate_outside_the_window_is_not_a_permanent_lock(conn):
+    """§21.2's keys aggregate "over a rolling window", and the alternative here
+    was a lock with no release.
+
+    An unwindowed duplicate check would mean an artifact could never be
+    republished after a listing expired — and this kernel has no unpublish to
+    pair with it, so nothing could ever clear it. The same reasoning as
+    `counterparty_blocks` having no delete path, reaching the opposite answer,
+    because a complaint is damage and a republish is routine.
+    """
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    artifact = artifacts.create(
+        conn,
+        cell_id=cell.cell_id,
+        kind="landing_page_draft",
+        title="one page",
+        content="fixed content",
+    )
+    artifacts.export(
+        conn, artifact_id=artifact.artifact_id, exported_by="operator", reason="publish"
+    )
+
+    grant = _publish_grant(conn, cell, wake_key="w1", artifact_id=artifact.artifact_id)
+    external_actions.claim(
+        conn, grant_id=grant.grant_id, claimed_by="operator", domain="colony.test"
+    )
+
+    later = datetime.now(timezone.utc) + timedelta(
+        seconds=channel_registry.CONTACT_WINDOW_SECONDS + 60
+    )
+    channel_registry.check_action(
+        conn,
+        channel="web_publish",
+        domain="colony.test",
+        artifact_id=artifact.artifact_id,
+        founder_cell_id=cell.founder_cell_id,
+        now=later,
+    )
+
+
+def test_a_differently_cased_domain_is_the_same_domain(conn):
+    """The same normalisation `counterparty_hash` applies, for the same reason.
+
+    `Alice@Ex.com` and `alice@ex.com` are one person; `Colony.Test` and
+    `colony.test` are one domain, because DNS says so. A dedupe that misses that
+    is a dedupe that does not work — and the first draft of `target_of`
+    normalised only for the *query* while the claim wrote the raw string, so
+    every later check looked for a value the row did not contain.
+    """
+    _open_the_gates(conn)
+    one = _make_cell(conn, key="a")
+    two = _make_cell(conn, key="b")
+
+    first = _publish_grant(conn, one, wake_key="w1")
+    action = external_actions.claim(
+        conn, grant_id=first.grant_id, claimed_by="operator", domain="Colony.Test"
+    )
+    assert action.domain == "colony.test", "stored in the form §21.2 aggregates on"
+
+    second = _publish_grant(conn, two, wake_key="w2")
+    with pytest.raises(channel_registry.SiblingCollision):
+        external_actions.claim(
+            conn, grant_id=second.grant_id, claimed_by="operator", domain="COLONY.TEST"
         )

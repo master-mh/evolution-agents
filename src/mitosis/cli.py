@@ -940,7 +940,13 @@ def cmd_set_autonomy(args: argparse.Namespace) -> None:
             f"{'ENABLED' if state.real_spending_enabled else 'disabled'}"
         )
 
-    for flag in ("public_web_read", "browser_control", "external_publish", "external_message"):
+    for flag in (
+        "public_web_read",
+        "browser_control",
+        "external_publish",
+        "external_message",
+        "real_commerce",
+    ):
         value = getattr(args, flag)
         if value is None:
             continue
@@ -951,7 +957,7 @@ def cmd_set_autonomy(args: argparse.Namespace) -> None:
         getattr(args, f) is None
         for f in (
             "real_spending", "public_web_read", "browser_control",
-            "external_publish", "external_message",
+            "external_publish", "external_message", "real_commerce",
         )
     ):
         raise CliError("name at least one flag to change, e.g. --public-web-read on")
@@ -1146,7 +1152,7 @@ def cmd_channels(args: argparse.Namespace) -> None:
         print(f"  {spec.channel_id}")
         print(f"    {spec.description}")
         print(f"    autonomy.{spec.autonomy_flag}: {'on' if on else 'OFF'}")
-        print(f"    addresses one counterparty: {'yes' if spec.requires_counterparty else 'no'}")
+        print(f"    collides on: {spec.target_kind.value} (§21.2's aggregation key)")
         print(
             f"    colony-wide caps: {spec.max_actions_per_window} per "
             f"{channel_registry.CONTACT_WINDOW_SECONDS}s, "
@@ -1176,9 +1182,26 @@ def cmd_external_check(args: argparse.Namespace) -> None:
     """
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
+
+    # The lineage, not the Cell: §21.3's question is which *lineage* is already
+    # on this target, and ADR-027 keyed exposure on the founder for the same
+    # reason — §9 reproduction is the cheapest way this colony splits anything.
+    founder_cell_id = None
+    if args.cell is not None:
+        cell = lifecycle.get_cell(conn, args.cell)
+        if cell is None:
+            raise CliError(f"no such cell: {args.cell}")
+        founder_cell_id = cell.founder_cell_id
+
     try:
         channel_registry.check_action(
-            conn, channel=args.channel, counterparty=args.counterparty
+            conn,
+            channel=args.channel,
+            counterparty=args.counterparty,
+            domain=args.domain,
+            platform_account=args.account,
+            artifact_id=args.artifact,
+            founder_cell_id=founder_cell_id,
         )
     except channel_registry.ChannelError as exc:
         print(f"REFUSED: {exc}")
@@ -2447,7 +2470,13 @@ def build_parser() -> argparse.ArgumentParser:
         "set-autonomy", help="enable/disable unattended real spending (§27.1)"
     )
     autonomy_parser.add_argument("--real-spending", default=None, choices=["on", "off"])
-    for flag in ("public-web-read", "browser-control", "external-publish", "external-message"):
+    for flag in (
+        "public-web-read",
+        "browser-control",
+        "external-publish",
+        "external-message",
+        "real-commerce",
+    ):
         autonomy_parser.add_argument(
             f"--{flag}", default=None, choices=["on", "off"],
             help=f"§27.1 autonomy.{flag.replace('-', '_')} (ships off)",
@@ -2528,6 +2557,18 @@ def build_parser() -> argparse.ArgumentParser:
     ext_check_parser.add_argument(
         "--counterparty", default=None,
         help="who it would go to. Hashed to ask the question; never stored by this verb",
+    )
+    ext_check_parser.add_argument("--domain", default=None, help="§21.2 'domain used'")
+    ext_check_parser.add_argument("--account", default=None, help="§21.2 'platform account'")
+    ext_check_parser.add_argument(
+        "--cell", default=None,
+        help="which Cell is asking. Required for a channel keyed on a domain or a "
+             "platform account, where a repeat by the same lineage is not a collision",
+    )
+    ext_check_parser.add_argument(
+        "--artifact", default=None,
+        help="what would be published, if anything — the same content to the same "
+             "target twice is §21.2's duplicate for a channel that addresses nobody",
     )
     ext_check_parser.set_defaults(func=cmd_external_check)
 
