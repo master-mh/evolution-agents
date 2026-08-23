@@ -155,6 +155,77 @@ def test_no_registered_tool_acts_on_the_world():
     )
 
 
+def test_no_registered_tool_declares_browser_control():
+    """§19.2, §19.6, §28 Phase 7 — ADR-038: the flag is reserved and shut, and
+    what it waits on is a sandbox rather than a decision.
+
+    §28 Phase 7 does name a "read-only browser" as a deliverable, so this is not
+    premature by phase — the colony is at Phase 7 for reading, and rendering a
+    page a Cell may read is §25.1 rung 4 like every other fetch. What blocks it
+    is §19: a browser *runs* the page, which makes it the first thing in this
+    colony that would execute untrusted third-party code, and §19.1 says even
+    Docker "is not a strong adversarial security boundary" while §19.6 files
+    "isolated browser microVMs" under future hooks. There is no sandbox module
+    at all today.
+
+    The two guards ADR-034 built are both unenforceable inside a browser engine:
+    `fetchers.py` refuses redirects because a 302 carries a fetch off the
+    allowlist, and it checks robots.txt per URL. An engine handles its own
+    redirects and loads subresources that pass neither.
+    """
+    browsers = [
+        s.tool_id
+        for s in tool_registry.REGISTRY.values()
+        if s.autonomy_flag == "browser_control"
+    ]
+    assert not browsers, (
+        f"{browsers} declare browser_control. A browser executes untrusted code, "
+        "and §19.3's sandbox does not exist — the flag must not be opened for a "
+        "renderer that is not behind one (ADR-038)"
+    )
+
+
+def test_nothing_in_the_kernel_can_drive_a_browser():
+    """The structural half of ADR-038, for the same reason ADR-036 made its
+    no-transmit guard structural.
+
+    A test that only checked the registry passes against a kernel that ships a
+    browser driver and has not registered it yet — and the likelier mistake is
+    not a tool declaring `browser_control`, it is a renderer quietly registered
+    under `public_web_read`, which is structurally indistinguishable from
+    `http_get`. What *is* detectable is the engine itself: no module may import
+    one.
+    """
+    source_dir = Path(__file__).resolve().parents[1] / "src" / "mitosis"
+    forbidden = {
+        "selenium",
+        "playwright",
+        "pyppeteer",
+        "puppeteer",
+        "webdriver",
+        "webdriver_manager",
+        "splash",
+        "helium",
+        "seleniumwire",
+    }
+    for path in sorted(source_dir.glob("*.py")):
+        tree = ast.parse(path.read_text())
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split(".")[0].lstrip("."))
+                imported.update(a.name for a in node.names)
+            elif isinstance(node, ast.Import):
+                imported.update(a.name.split(".")[0] for a in node.names)
+        offending = imported & forbidden
+        assert not offending, (
+            f"{path.name} imports {sorted(offending)} — a browser engine executes "
+            "untrusted third-party code, and §19.3's sandbox does not exist "
+            "(ADR-038). §19.2 requires gVisor/Firecracker-class isolation before "
+            "real-facing code execution, not a flag"
+        )
+
+
 def test_every_tool_names_an_autonomy_flag():
     """§0.4: autonomy is granted tool by tool. A tool with no flag is a
     capability nobody ever decided to allow."""

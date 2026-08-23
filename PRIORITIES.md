@@ -351,10 +351,33 @@
   `external_publish` is open and `real_commerce` shut in one colony — a kernel that re-merged them
   passes every other assertion in the run and fails there (**no USD_REAL movement**). Teeth-checked
   ten ways; hand-verified end to end on a live colony.
-- [ ] **`browser_control` still guards a capability that does not exist at all.** Untouched by
-  ADR-037 and not the same question: it is §25.1 rung 8–9 automation rather than anything a person
-  performs by hand, so there is nothing yet for a §0.4 argument to be *about*. *Disproved by:* any
-  tool declaring `browser_control`.
+- [x] **The `browser_control` decision — DONE** (2026-08-23), ADR-038. No migration, no code — a
+  decision and two structural guards. **The entry this replaces was wrong twice, and both errors
+  were written the same morning it was resolved.** It called the capability §25.1 rung 8–9
+  automation "with nothing for a §0.4 argument to be about": false, because §28 **Phase 7 names a
+  "read-only browser" as a deliverable**, and rendering a page a Cell may read is rung 4 exactly
+  where `http_get` already sits. And its disproof pointer read *"any tool declaring
+  `browser_control`"* — **backwards, and mildly dangerous**: a tool declaring the flag before a
+  sandbox exists is the bug the entry should prevent, not the evidence it is resolved. **The real
+  finding is that the flag names two capabilities and the spec never says which** — a renderer
+  (Phase 7) or driving a browser to act (rung 8–9, Phase 10). ADR-038 assigns it the renderer,
+  because that is the only browser §28 ever asks for, and rules that actuation would need its own
+  §27.1 key — ADR-037's principle applied *before* the second capability exists. **It stays shut,
+  and what it waits on is §19 rather than a decision:** a browser *runs* the page, so both of
+  ADR-034's network guards stop working (an engine follows its own redirects, and checks robots.txt
+  for none of its subresources), Charter C12's whole live surface is the egress allowlist, and
+  there is no `sandbox.py` at all — §19.1 calls Docker "not a strong adversarial security
+  boundary", §19.2 wants gVisor/Firecracker *before* real-facing code execution, and §19.6 files
+  "isolated browser microVMs" under future hooks. 828 tests (2 new), golden run untouched
+  (no behaviour changed). *Disproved by:* a sandbox meeting §19.3 — **not** by a registered tool.
+- [ ] **A JS-rendered page is unreadable, and that is a Phase 5 prerequisite blocking a Phase 7
+  deliverable.** Named by ADR-038 rather than left as "not yet": `http_get` returns an empty shell
+  for anything built client-side, so a Cell told to read the world can read only the part of it
+  that ships HTML. The unblock is §19.3's sandbox, which is Phase 5 and does not exist.
+  `ResourceType.BROWSER_MINUTES` (§2.2, declared since migration 0008, referenced by nothing) is
+  the tenth reserved socket and says what shape the capability was meant to have — a metered,
+  bounded session rather than a fetch. *Disproved by:* `sandbox.py`, or anything writing
+  `browser_minutes`.
 - [ ] **§23.2's liability figure is unmodelled — but the account is not missing.** Corrected
   2026-08-22: the previous wording ("no liability reserve exists (§13 is Phase 6+)") was wrong on
   both counts. §13 is Novelty Evaluation; liability is not a §13 concept. And `liability_reserve`

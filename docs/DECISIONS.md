@@ -1480,3 +1480,77 @@ from amendment ID to spec location is complete in one place:
     it hashes, though, and on write as well as on read: `Colony.Test` and `colony.test` are one
     domain, the sibling query deliberately spans channels, and a dedupe that misses a
     capitalisation is a dedupe that does not work.
+
+---
+
+## ADR-038: `browser_control` is reserved for a sandboxed read-only renderer, and waits on §19 rather than on a decision
+
+- **Status:** Accepted
+- **Spec ref:** §0.4, §2.2, §19.1–§19.6, §25.1 (rung 4), §27.1, §28 Phases 5 and 7; Charter C12;
+  ADR-034, ADR-037
+- **Context:** The last undecided flag in §27.1's `autonomy:` block, and the one PRIORITIES
+  described as guarding "a capability that does not exist at all". ADR-037 settled
+  `external_publish` by splitting one key over two capabilities; this is the opposite shape —
+  **one key, no capability, and two possible meanings**, which is why the same move does not
+  apply.
+- **The ambiguity is the finding.** `browser_control` could name either:
+  1. **a read-only renderer** — running a page so a Cell can read JS-built content. §28 **Phase 7
+     names this by name**: "controlled search, public APIs, provenance, read-only browser, shadow
+     predictions". Reading a rendered page is §25.1 rung 4, exactly where `http_get` already sits.
+  2. **driving a browser** — clicking, forms, sessions. That is rung 8–9 and §28 Phase 10's
+     "automate only actions with low downside, reversibility, proven reliability".
+
+  The flag's *name* says (2); the spec's only browser deliverable is (1). §0.4 grants autonomy
+  capability by capability, and a key whose capability is undetermined cannot be granted at all.
+- **Decision, part one: the key means (1), a sandboxed read-only renderer.** It is the only
+  browser §28 ever asks for, and it fills a Phase 7 deliverable the colony is otherwise short of.
+  Driving a browser to *act* is a different capability and would need its own §27.1 key — ADR-037's
+  principle applied *before* the second capability exists rather than after, which is the whole
+  lesson of that ADR.
+- **Decision, part two: it stays off, and unlike ADR-037 there is nothing to restructure.** The
+  flag's shape is already right: one key, one capability, correctly closed. What it waits on is
+  §19, and the blocker is specific.
+  1. **A read-only browser is not read-only where it counts.** `http_get` fetches bytes and hands
+     them to the kernel as data; a browser *runs* the page. ADR-034's sharpest consequence was
+     that a tool result can never cause another tool call — a browser breaks that one level lower,
+     because the page's own JavaScript is execution and its subresource loads never reach
+     `_check_egress_locked`.
+  2. **Both of ADR-034's network guards are unenforceable inside an engine.** `fetchers.py` calls
+     the redirect refusal "the important line in the file", because a 302 from an allowlisted host
+     carries a fetch somewhere nobody approved; an engine follows its own redirects. And §19.4's
+     robots.txt compliance is checked per URL; an engine loading twenty subresources checks none.
+     Charter C12's entire live surface today is the egress allowlist, and an iframe or an XHR
+     routes around it.
+  3. **There is no sandbox.** No `sandbox.py` exists; C12's filesystem and secret halves are
+     deferred to Phase 5 with a named gap and only the network half is live. §19.1 says Docker "is
+     not a strong adversarial security boundary", §19.2 says migrate toward gVisor, Firecracker and
+     microVMs **before** real-facing autonomous code execution, and §19.6 files "isolated browser
+     microVMs" under future hooks — the spec puts a browser beside hardware-backed confidential
+     execution, not beside a fetch. Opening this flag today would make a browser the first thing in
+     this colony's history to execute untrusted third-party code on the host, with nothing between
+     them.
+- **What it displaced.** Leaving the entry as "nothing to argue about yet", which is what
+  PRIORITIES said this morning and is wrong twice over: it called the capability rung 8–9
+  automation (true only of meaning (2), and §28 Phase 7 asks for meaning (1)), and its disproof
+  pointer read *"any tool declaring `browser_control`"* — **backwards, and mildly dangerous**,
+  because a tool declaring the flag before a sandbox exists is the bug the entry should prevent
+  rather than the evidence it is resolved. The correct pointer is a sandbox meeting §19.3.
+- **Consequences:**
+  - `test_no_registered_tool_declares_browser_control` holds the registry side.
+  - `test_nothing_in_the_kernel_can_drive_a_browser` holds the real side, and is structural for
+    ADR-036's reason: a registry-only check passes against a kernel that ships a driver and has not
+    registered it yet, and **the likelier mistake is not a tool declaring `browser_control` — it is
+    a renderer quietly registered under `public_web_read`**, which is structurally
+    indistinguishable from `http_get`. The engine import is what is actually detectable.
+  - **`ResourceType.BROWSER_MINUTES` is the tenth reserved socket**: named in §2.2's RESOURCE list,
+    declared in `models.py` since migration 0008, referenced by nothing. It is not an argument for
+    building the capability, but it says what shape the capability was always meant to have — a
+    metered, bounded, long-running session rather than a fetch. RESOURCE metering is the only bound
+    left when USD_REAL is free, and it is the bound a renderer will need.
+  - The honest description of the gap is **a Phase 5 prerequisite blocking a Phase 7 deliverable**,
+    not "not yet". `http_get` returns an empty shell for a JS-rendered page, so a Cell told to read
+    the world can currently read only the part of it that ships HTML. That cost is real and is now
+    named.
+  - With this, every flag in §27.1's block has an argued position: `public_web_read` open
+    (ADR-034), `external_message` open (ADR-036), `external_publish` and `real_commerce` shut with
+    reasons (ADR-037), `real_spending` shut since §5, and `browser_control` shut here.

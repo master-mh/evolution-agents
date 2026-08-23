@@ -705,3 +705,51 @@ actually queued for building — this file is memory, not a backlog to work thro
   `counterparty_hash` applies, on write as well as on read. The first draft normalised only for the
   query while the claim wrote the raw string, so every later check looked for a value the row did
   not contain. Worth remembering that a normalisation is two changes, not one.)*
+
+## From the `browser_control` decision (2026-08-23, ADR-038)
+
+- **A reserved flag can name two capabilities and the spec never disambiguate.** `external_publish`
+  was one key over two *registered* capabilities; `browser_control` is one key over none, with two
+  readings — §28 Phase 7's "read-only browser" and rung 8–9 actuation — and the flag's *name*
+  points at the reading the spec never asks for. ADR-038 assigned it the renderer. The general
+  lesson is that "the flag ships false" hides an unanswered question about what the flag is *for*,
+  and the answer is cheapest to write down while nothing depends on it.
+- **A disproof pointer can point the wrong way.** PRIORITIES' convention is that a blocker names
+  what would settle it, and this entry's pointer — "any tool declaring `browser_control`" — named
+  the *bug* rather than the resolution: a tool declaring the flag before a sandbox exists is
+  precisely what the entry should prevent. **The sweep was done and found one more.** "Nothing
+  schedules a tool call" points at *"the scheduler reaching `tools.execute_grant`"* — a state
+  `test_nothing_in_the_deliberation_path_executes_a_tool` explicitly forbids, since §19.4's
+  injection isolation is why `scheduler.py` may not import `tools` at all. So either that entry is
+  asking for ADR-034's guard to be overturned (a large argued change, not a backlog item) or its
+  real resolution is something else — most likely a vacation-mode policy for grants that expire
+  while nobody is there, which needs no scheduler-side execution. The entry should say which; it
+  currently reads as though automating tool execution is the obvious next step, and it is the one
+  thing §19.4 rules out. The other seven pointers name symbols or commands and are sound.
+- **§19.3's controls are a list of thirteen and roughly one is implemented.** "No host filesystem;
+  no raw secrets; no privileged execution; no Docker socket; CPU/memory/runtime/disk limits;
+  network disabled by default; egress domain allowlist; DNS control; stdout/stderr capture;
+  artifact-export gateway; dependency allowlist; package hashes; lockfiles; SBOM; malware scanning;
+  licence scanning; signed artifacts; reproducible build metadata." The colony has the egress
+  allowlist, the export gateway and network-disabled-by-default. Charter C12's filesystem and
+  secret halves have been deferred as a named gap since ADR-034, and every later slice has been
+  able to stay clear of them because nothing executes. **A renderer is the first thing that would
+  not stay clear**, which is the honest reason a sandbox slice has to come before it.
+- **`ResourceType.BROWSER_MINUTES` is the tenth reserved socket** — §2.2's RESOURCE list, declared
+  in `models.py` since migration 0008, referenced by nothing. Same state `HUMAN_MINUTES` was in
+  before ADR-036. It says the shape the capability was meant to have: a metered, bounded,
+  long-running session rather than a fetch, which matters because RESOURCE metering is the only
+  bound left when USD_REAL is free.
+- **A renderer registered under `public_web_read` is the likelier mistake than one declaring
+  `browser_control`**, and it is structurally indistinguishable from `http_get` at the registry
+  level — same flag, same `read_only=True`, same `egress_argument`. `test_nothing_in_the_kernel_
+  can_drive_a_browser` catches the engine import instead, which is the part that *is* detectable.
+  Anything that renders without importing a known driver — a headless service reached over HTTP,
+  say — defeats both guards, and that is a real hole rather than a hypothetical one: a
+  render-as-a-service fetch would look exactly like an ordinary `http_get` to an allowlisted host.
+- **Every §27.1 flag now has an argued position, so the next one is a new key rather than a
+  backlog item.** `public_web_read` open (ADR-034), `external_message` open (ADR-036),
+  `external_publish` / `real_commerce` shut with reasons (ADR-037), `real_spending` shut since §5,
+  `browser_control` shut (ADR-038). §0.4's "no direct secret access" still has no key at all —
+  carried by Charter C14 and the provider key handling — which is defensible but means §27.1's
+  block is not a complete index of §0.4.
