@@ -596,3 +596,12 @@ actually queued for building — this file is memory, not a backlog to work thro
   scoring, age decay, retrieval by experiment/market" — the index is newest-first and nothing more,
   so a Cell with many artifacts loses sight of the ones that matter. Same shape as the
   `RECENT_PROPOSALS` cap and the same eventual fix.
+
+- **The spec reserves sockets years before anything fills them, and four were found this session
+  alone.** `liability_reserve` (a §31 Phase-1 account, classified in `accounts.py`, nothing posts
+  to it), `ledger_entries.artifact_id` (Amendment A3, present since migration 0001, populated for
+  the first time by ADR-035), `ResourceType.HUMAN_MINUTES` (declared in `models.py`, still unused),
+  and §27.1's four autonomy flags (built as gates in ADR-034 with nothing behind three of them).
+  Earlier ones: `promotion_pool` and §17.2's wake reasons. **Grep for the socket before designing
+  the subsystem** — twice this session the "missing" thing was half-built already, and once
+  (`liability_reserve`) a PRIORITIES entry had been wrong about it for weeks.

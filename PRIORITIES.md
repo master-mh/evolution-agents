@@ -295,6 +295,37 @@
   tests (23 new); golden expectation 14 → 15, and the scenario **records revenue for the first time
   in its history** (USD_SIM; **no USD_REAL movement**). Teeth-checked sixteen ways; one structural
   test was checking the wrong thing and was rewritten.
+- [ ] **The delivery channel — design approved 2026-08-23, unbuilt.** §21.2's central
+  external-action registry. **Build the registry, not a sender**: §28 Phase 8's acceptance is "all
+  external action remains manual", and §21.2's own verbs are *track* and *prevent*. Nothing
+  transmits; the kernel records what a human did and refuses what would collide. That is also
+  Phase 9's acceptance criterion ("no duplicate or conflicting customer contact") built a phase
+  early. Four decisions already taken:
+  - **Store a salted hash of the counterparty, never the counterparty.** §16.3 makes "customer
+    identity" and "private customer data" non-inheritable and §20.1 tracks personal data because
+    holding it is a liability. Dedupe needs equality, not identity: "have we contacted this person"
+    stays answerable while "who have we contacted" does not, from the kernel's own tables. A
+    `customers` table is the obvious design and the one the spec warns about.
+  - **Counterparty/channel aggregation for external actions; lineage stays for internal ones.**
+    ADR-027 chose `lineage:{founder}:{kind}` as an explicit stand-in because §23.4's named
+    dimensions did not exist. They do after this slice — and the gap is not cosmetic: §21.2's
+    worries ("duplicate contact, sibling bidding wars") are *many lineages, one counterparty*, which
+    a lineage-keyed window structurally cannot see. §21.3: "Cells are internally separate but
+    externally may appear to be one business."
+  - **Per-channel rate and quota caps, not spend caps.** §21.1's shared assets — sending
+    reputation, merchant identity, brand — are the first thing at risk that money cannot repair. A
+    refund does not undo a spam complaint, and every existing guard (C4, C5, the breaker, the pool)
+    bounds money only.
+  - **Meter `ResourceType.HUMAN_MINUTES`.** Declared in `models.py` since Phase 1, used nowhere —
+    another reserved socket. Phase 8's North Star is "human minutes/artifact" and §1's
+    autonomy-adjusted profit exists "to expose hidden human labour and subsidy"; `outcome.py` counts
+    intervention *events* but never time. Every action in this slice is manual by construction, so
+    this is where the current phase's headline metric becomes measurable at all.
+  A Cell proposes through the existing proposal → approval → grant path, and "execution" writes a
+  registry entry rather than sending anything. Out of scope: any transmission, Phase 9's legal
+  identity and liability reserves, and reputation *scoring* (a number nothing can validate is
+  theatre — record raw events, leave the score to real feedback).
+  *Disproved by:* an `external_action_registry` table.
 - [ ] **Nothing schedules a tool call, and nothing delivers an exported artifact.** Every tool
   execution and every export is operator-invoked. Export *records* that a human took an artifact
   outside; there is no channel that puts it in front of anyone. Delivery is §21.2's
