@@ -872,3 +872,36 @@ actually queued for building — this file is memory, not a backlog to work thro
   every test of the gate passed while the feature could not actually be used. The general form —
   **fix the gate, forget the eye** — is what to look for whenever a kernel guarantee changes and
   something else renders the same fact.
+
+## From scheduler liveness (2026-08-24, ADR-042)
+
+- **Two of the three gaps the PRIORITIES entry named were not real, and the entry had been carried
+  for six weeks.** "No restart-on-failure" was already cron's job; "someone must install the
+  crontab" is a print statement. Only "no alert when ticks stop" was a real gap, and the actual bug
+  underneath it — a crash leaving no row at all — was **not mentioned in the entry**. Worth adding
+  to the `*Disproved by:*` habit: an entry can be *directionally* right and wrong about every
+  specific it names, and reading the code it describes is what separates those.
+- **`health` is a fifth thing that can halt, and nothing enumerates the halts.** `_guard` has three
+  (metabolic, vacation, autonomy), ADR-040 added the sweep as an explicitly ungated step, and
+  `liveness` now classifies all of them plus two failure modes. The classification lives in
+  `liveness` as an if-chain and in `_guard` as another. A colony that grows a sixth guard has to
+  remember to teach `liveness` whether it is an outage. **A single table of "halt → is this an
+  outage" is the fix**, and it should come with the next guard rather than before it.
+- **Nothing reconciles the tick record with a real cron installation.** `health` says "no tick in N
+  epochs" and prints a crontab line, but it cannot tell "the crontab was removed" from "cron is
+  running and the machine is asleep" from "the entry is there and mistyped". A `mitosis tick
+  --dry-run` that records a tick without doing work would let an operator prove the line works
+  before trusting it.
+- **The stale-tick threshold reuses the liveness deadline, and those are two different questions.**
+  "How long before I call a colony dead" and "how long before a running tick is stuck" happen to
+  share a number today. A tick that legitimately takes longer than the whole cadence — many Cells,
+  a slow provider — would be classified as stuck. Bounded in practice because `max_cells` and the
+  spend caps bound a tick's work, but it is a coincidence rather than a design.
+- **`liveness(now=...)` moves wall time and not the epoch**, because `current_epoch` reads the
+  simulated clock and takes no `now`. Harmless in production (the clock tracks wall time in REAL
+  mode) and a real trap in tests, where passing a later `now` silently exercises only half the
+  rule. Threading a `now` through `clock.current_epoch` would close it.
+- **Historical ticks were backfilled with `finished_at_utc = started_at_utc`**, which is honest
+  about *whether* they finished and wrong about *when*. Any future "how long do ticks take"
+  statistic has to exclude rows older than migration 0025, and nothing marks where that boundary
+  is except the migration itself.

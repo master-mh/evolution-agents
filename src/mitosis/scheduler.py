@@ -95,6 +95,13 @@ class SchedulerError(Exception):
 
 
 class TickOutcome:
+    #: Written *before* the work, so a tick that dies leaves a row (ADR-042).
+    #: Borrowed from `tool_calls.status = 'requested'` (migration 0019), which
+    #: solved the same problem one layer down.
+    STARTED = "started"
+    #: Raised and was caught. `detail` carries the redacted exception — a
+    #: Charter C14 requirement, since a provider error can quote a key.
+    CRASHED = "crashed"
     RAN = "ran"
     IDLE = "idle"
     HALTED_METABOLIC = "halted_metabolic"
@@ -111,6 +118,9 @@ class OperatorState:
     real_spending_enabled: bool
     metabolic_alarm_at_utc: datetime | None
     metabolic_alarm_reason: str | None
+    #: How often the operator's crontab actually runs `tick`. None means "one
+    #: epoch" — see `liveness`, where the default is the policy.
+    tick_expected_every_seconds: int | None = None
 
     @property
     def alarm_active(self) -> bool:
@@ -184,6 +194,7 @@ def _row_to_operator(row: sqlite3.Row) -> OperatorState:
             else None
         ),
         metabolic_alarm_reason=row["metabolic_alarm_reason"],
+        tick_expected_every_seconds=row["tick_expected_every_seconds"],
     )
 
 
@@ -458,14 +469,45 @@ def tick(
     tick_id = ids.new_id()
     started = datetime.now(timezone.utc)
 
+    # **The row is written before any work happens** (ADR-042), in the same
+    # transaction as the epoch anchor. Until this, `scheduler_ticks` was only
+    # written at the *end* of a tick, so a crash anywhere below left no row at
+    # all — and a colony failing every minute for a week looked exactly like one
+    # nothing had ever scheduled. Those need different people to fix them.
+    # `tool_calls` made this move first (migration 0019, `status='requested'`).
     conn.execute("BEGIN IMMEDIATE")
     try:
         _record_epoch_start_locked(conn, epoch_number)
+        _begin_tick_locked(
+            conn, tick_id=tick_id, epoch_number=epoch_number,
+            started=started, provider=provider.name,
+        )
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
         raise
 
+    try:
+        return _run_tick(
+            conn, tick_id=tick_id, epoch_number=epoch_number, started=started,
+            provider=provider, model=model, max_cells=max_cells,
+        )
+    except Exception as exc:
+        _mark_crashed(conn, tick_id=tick_id, exc=exc)
+        raise
+
+
+def _run_tick(
+    conn: sqlite3.Connection,
+    *,
+    tick_id: str,
+    epoch_number: int,
+    started: datetime,
+    provider: providers.ModelProvider,
+    model: str,
+    max_cells: int | None,
+) -> TickResult:
+    """The body of a tick, with its record already open."""
     # §23.3's two expiry clocks, and **the placement is the decision** (ADR-040).
     #
     # This runs *before* `_guard`, which is the opposite of everything else in
@@ -502,9 +544,8 @@ def tick(
     if halt is not None:
         outcome, detail = halt
         detail = f"{detail}{swept}"
-        _record_tick(
-            conn, tick_id=tick_id, epoch_number=epoch_number, started=started,
-            provider=provider.name, outcome=outcome, detail=detail,
+        _finish_tick(
+            conn, tick_id=tick_id, outcome=outcome, detail=detail,
             cells_woken=0, spend_before=spend_before, spend_after=spend_before,
         )
         return TickResult(
@@ -518,10 +559,8 @@ def tick(
 
     if not cells:
         idle_detail = f"no alive, funded Cell was eligible{swept}"
-        _record_tick(
-            conn, tick_id=tick_id, epoch_number=epoch_number, started=started,
-            provider=provider.name, outcome=TickOutcome.IDLE,
-            detail=idle_detail,
+        _finish_tick(
+            conn, tick_id=tick_id, outcome=TickOutcome.IDLE, detail=idle_detail,
             cells_woken=0, spend_before=spend_before, spend_after=spend_before,
         )
         return TickResult(
@@ -563,10 +602,8 @@ def tick(
             raise
 
     ran_detail = f"{len(results)} deliberation(s){swept}"
-    _record_tick(
-        conn, tick_id=tick_id, epoch_number=epoch_number, started=started,
-        provider=provider.name, outcome=TickOutcome.RAN,
-        detail=ran_detail,
+    _finish_tick(
+        conn, tick_id=tick_id, outcome=TickOutcome.RAN, detail=ran_detail,
         cells_woken=len(results), spend_before=spend_before, spend_after=spend_after,
     )
     return TickResult(
@@ -576,32 +613,67 @@ def tick(
     )
 
 
-def _record_tick(
+def _begin_tick_locked(
     conn: sqlite3.Connection,
     *,
     tick_id: str,
     epoch_number: int,
     started: datetime,
     provider: str,
+) -> None:
+    """Open the tick's record. Caller holds the write lock, so this commits
+    together with the epoch anchor — a tick that exists and an epoch that was
+    never observed would be a state nothing could explain."""
+    # `spend_before` is captured here rather than after the expiry sweeps,
+    # which is equivalent — ADR-040: expiring "has no ledger consequence at
+    # all" — and is what lets a *crashed* tick still report the spend it
+    # started from. A crash row claiming 0 → 0 would be a false statement
+    # rather than a missing one.
+    spend_before = real_spend_breaker._settled_spend_since(
+        conn, datetime(1970, 1, 1, tzinfo=timezone.utc)
+    )
+    conn.execute(
+        """
+        INSERT INTO scheduler_ticks (
+            tick_id, epoch_number, started_at_utc, finished_at_utc, provider,
+            is_paid, outcome, detail, cells_woken, spend_before_minor,
+            spend_after_minor
+        ) VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, 0, ?, ?)
+        """,
+        (
+            tick_id, epoch_number, started.isoformat(), provider,
+            1 if provider in PAID_PROVIDERS else 0,
+            TickOutcome.STARTED, spend_before, spend_before,
+        ),
+    )
+
+
+def _finish_tick(
+    conn: sqlite3.Connection,
+    *,
+    tick_id: str,
     outcome: str,
     detail: str | None,
     cells_woken: int,
-    spend_before: int,
+    spend_before: int | None,
     spend_after: int,
 ) -> None:
+    """`spend_before=None` keeps what `_begin_tick_locked` recorded, which is
+    what the crash path wants: it knows what the colony has spent *now* and has
+    no way to recover the figure the tick body was working from."""
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(
             """
-            INSERT INTO scheduler_ticks (
-                tick_id, epoch_number, started_at_utc, provider, is_paid,
-                outcome, detail, cells_woken, spend_before_minor, spend_after_minor
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            UPDATE scheduler_ticks
+               SET finished_at_utc = ?, outcome = ?, detail = ?, cells_woken = ?,
+                   spend_before_minor = COALESCE(?, spend_before_minor),
+                   spend_after_minor = ?
+             WHERE tick_id = ?
             """,
             (
-                tick_id, epoch_number, started.isoformat(), provider,
-                1 if provider in PAID_PROVIDERS else 0,
-                outcome, detail, cells_woken, spend_before, spend_after,
+                datetime.now(timezone.utc).isoformat(), outcome, detail,
+                cells_woken, spend_before, spend_after, tick_id,
             ),
         )
         conn.execute("COMMIT")
@@ -610,8 +682,292 @@ def _record_tick(
         raise
 
 
+def _mark_crashed(conn: sqlite3.Connection, *, tick_id: str, exc: BaseException) -> None:
+    """Close the record on the way out of a failure, and **never mask the
+    original exception**.
+
+    The detail is redacted (Charter C14): a provider error can quote the key it
+    was rejected with, and this string is persisted. If the write itself fails —
+    which is likely, since a broken database is one of the things that makes a
+    tick crash — the row simply stays `started` with a NULL `finished_at_utc`,
+    which is the same signal a killed process leaves and is read the same way.
+    Swallowing that secondary failure is deliberate: the caller is already
+    raising something more informative.
+    """
+    try:
+        _finish_tick(
+            conn,
+            tick_id=tick_id,
+            outcome=TickOutcome.CRASHED,
+            detail=providers.redact(f"{type(exc).__name__}: {exc}")[:500],
+            cells_woken=0,
+            # Keep the figure the tick opened with, and record what the colony
+            # has actually settled by now: a tick that spent money and then died
+            # must not leave a row saying it spent nothing.
+            spend_before=None,
+            spend_after=real_spend_breaker._settled_spend_since(
+                conn, datetime(1970, 1, 1, tzinfo=timezone.utc)
+            ),
+        )
+    except Exception:
+        pass
+
+
 def recent_ticks(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM scheduler_ticks ORDER BY rowid DESC LIMIT ?", (limit,)
     ).fetchall()
     return [dict(r) for r in reversed(rows)]
+
+
+# --- liveness: is anything still running this? (§23.3, §30.1; ADR-042) --------
+
+#: How many recent ticks `liveness` reads to describe a failure run. A window
+#: rather than the whole table: the verdict only ever depends on the newest
+#: tick, and this exists to say "and the previous eleven died too".
+FAILURE_WINDOW = 20
+
+#: Slack on the liveness deadline, in missed runs. One is standard for a
+#: liveness check and is what keeps a slow tick or a late cron wake-up from
+#: reading as an outage.
+OVERDUE_SLACK = 2
+
+
+class Verdict:
+    HEALTHY = "healthy"
+    NEVER_RAN = "never_ran"
+    NOT_RUNNING = "not_running"
+    FAILING = "failing"
+    NEEDS_OPERATOR = "needs_operator"
+
+
+#: What `mitosis health` exits with. **0/non-zero is the whole interface**, and
+#: that is §30.1's "avoid unnecessary frameworks" applied to alerting exactly as
+#: it was applied to scheduling: a command composable with cron rather than a
+#: daemon, and an exit code readable by every monitor that exists rather than a
+#: notifier the kernel has to own. The two non-zero codes separate the two
+#: fixes, because they are not the same person's job.
+EXIT_HEALTHY = 0
+EXIT_INFRASTRUCTURE = 1  # nothing is running the scheduler, or every run dies
+EXIT_NEEDS_OPERATOR = 2  # it is running and has deliberately stopped
+
+_EXIT_BY_VERDICT = {
+    Verdict.HEALTHY: EXIT_HEALTHY,
+    Verdict.NEVER_RAN: EXIT_INFRASTRUCTURE,
+    Verdict.NOT_RUNNING: EXIT_INFRASTRUCTURE,
+    Verdict.FAILING: EXIT_INFRASTRUCTURE,
+    Verdict.NEEDS_OPERATOR: EXIT_NEEDS_OPERATOR,
+}
+
+
+@dataclass(frozen=True)
+class Liveness:
+    verdict: str
+    reasons: tuple[str, ...]
+    current_epoch: int
+    last_tick_at_utc: datetime | None
+    last_tick_epoch: int | None
+    last_outcome: str | None
+    epochs_since_last_tick: int | None
+    seconds_since_last_tick: float | None
+    #: Which rule was applied, in words, so the report never leaves the operator
+    #: guessing why a silent colony reads healthy.
+    deadline_rule: str
+    consecutive_failures: int
+
+    @property
+    def exit_code(self) -> int:
+        return _EXIT_BY_VERDICT[self.verdict]
+
+    @property
+    def healthy(self) -> bool:
+        return self.verdict == Verdict.HEALTHY
+
+
+def liveness(conn: sqlite3.Connection, *, now: datetime | None = None) -> Liveness:
+    """Can anything outside the colony tell that the colony is still running?
+
+    Nothing *inside* a stopped scheduler can notice it stopped, so this is a
+    read an operator, a cron `MAILTO`, or a monitor invokes from outside. It
+    answers three questions that used to be one:
+
+    * **Has it ever run?** No crontab was ever installed.
+    * **Has it run recently enough?** Installed once, gone now.
+    * **Is it running and dying?** Installed, firing, failing every time —
+      which before ADR-042 wrote no row and so looked identical to the second.
+
+    **A deliberate halt is not an outage**, and the split matters more than it
+    looks. Vacation mode and `real_spending` disabled are the colony working as
+    designed and resolve themselves when the operator returns — paging someone
+    on holiday because the fail-safe they configured engaged is how a fail-safe
+    gets turned off. A metabolic alarm is different: §23.3 halts *until
+    acknowledged*, so it will not clear on its own and it is the one halt that
+    is genuinely waiting for a person.
+    """
+    # `now` moves the wall-clock measurements only. The epoch comes from the
+    # simulated clock, as `current_epoch` always has — §6.3 keeps the two
+    # unmixed, and in a live colony the simulated clock tracks wall time so
+    # they agree. A caller that wants to move the epoch advances the clock.
+    now = now or datetime.now(timezone.utc)
+    epoch = current_epoch(conn)
+    state = operator_state(conn)
+    _, epoch_seconds = epoch_settings(conn)
+
+    # **Ordered by `rowid`, not by `started_at_utc`.** Rows are only ever
+    # inserted by `_begin_tick_locked`, in tick order, so insertion order *is*
+    # tick order — while wall time can move backwards under NTP correction, a
+    # VM restore or a DST-naive host, and would then report an older tick as the
+    # newest. Same reasoning as `rights.current` (ADR-041); the timestamps are
+    # still what the wall-clock deadline is measured against, because there is
+    # nothing else to measure it against.
+    row = conn.execute(
+        "SELECT * FROM scheduler_ticks ORDER BY rowid DESC LIMIT 1"
+    ).fetchone()
+
+    if row is None:
+        return Liveness(
+            verdict=Verdict.NEVER_RAN,
+            reasons=("no tick has ever run — nothing is scheduled to run `mitosis tick`",),
+            current_epoch=epoch,
+            last_tick_at_utc=None,
+            last_tick_epoch=None,
+            last_outcome=None,
+            epochs_since_last_tick=None,
+            seconds_since_last_tick=None,
+            deadline_rule="not applicable until a first tick exists",
+            consecutive_failures=0,
+        )
+
+    last_at = datetime.fromisoformat(row["started_at_utc"])
+    silence = (now - last_at).total_seconds()
+    epochs_since = epoch - row["epoch_number"]
+
+    # **The default deadline is expressed in epochs, and that is the policy.**
+    # What an outage costs the colony is *work*: wakes are keyed
+    # `epoch:{n}:cell:{id}`, so any tick within an epoch does that epoch's work
+    # and a second does nothing. A colony that has skipped two epochs has lost
+    # an epoch's wakes; one silent for an hour inside a six-hour epoch has lost
+    # nothing, however many cron runs it missed. An operator who wants
+    # wall-clock responsiveness sets `tick_expected_every_seconds` and gets a
+    # wall-clock rule instead.
+    if state.tick_expected_every_seconds:
+        deadline = state.tick_expected_every_seconds * OVERDUE_SLACK
+        overdue = silence > deadline
+        rule = (
+            f"silent for more than {deadline}s "
+            f"({OVERDUE_SLACK} × the configured {state.tick_expected_every_seconds}s cadence)"
+        )
+    else:
+        overdue = epochs_since >= OVERDUE_SLACK
+        rule = (
+            f"{OVERDUE_SLACK} or more epochs behind (epoch is {epoch_seconds}s; "
+            "set tick_expected_every_seconds for a wall-clock rule instead)"
+        )
+
+    # A tick still in flight is `started` with no `finished_at_utc`, and so is
+    # one whose process was killed. They are told apart by age: a tick running
+    # longer than the whole expected interval is stuck, not busy.
+    stale_after = state.tick_expected_every_seconds or epoch_seconds
+    recent = conn.execute(
+        "SELECT * FROM scheduler_ticks ORDER BY rowid DESC LIMIT ?", (FAILURE_WINDOW,)
+    ).fetchall()
+
+    def failed(tick_row) -> bool:
+        if tick_row["outcome"] == TickOutcome.CRASHED:
+            return True
+        if tick_row["outcome"] != TickOutcome.STARTED:
+            return False
+        began = datetime.fromisoformat(tick_row["started_at_utc"])
+        return (now - began).total_seconds() > stale_after
+
+    consecutive = 0
+    for tick_row in recent:
+        if not failed(tick_row):
+            break
+        consecutive += 1
+
+    reasons: list[str] = []
+    verdict = Verdict.HEALTHY
+
+    if consecutive:
+        verdict = Verdict.FAILING
+        if row["outcome"] == TickOutcome.CRASHED:
+            reasons.append(
+                f"the last {consecutive} tick(s) crashed — most recently: {row['detail']}"
+            )
+        else:
+            reasons.append(
+                f"the last {consecutive} tick(s) began and never reported back, which is "
+                "what a killed process leaves (SIGKILL, OOM, power) — no detail is "
+                "recoverable for those"
+            )
+    elif overdue:
+        verdict = Verdict.NOT_RUNNING
+        reasons.append(
+            f"last tick was {_ago(silence)} ago in epoch {row['epoch_number']}; "
+            f"now epoch {epoch}. Overdue: {rule}"
+        )
+    elif state.alarm_active:
+        # Only reached when the scheduler is demonstrably alive, which is the
+        # right order: an alarm nobody can act on is not the urgent fact when
+        # nothing is running at all.
+        verdict = Verdict.NEEDS_OPERATOR
+        reasons.append(
+            f"§23.3 metabolic alarm is raised and halts every tick until "
+            f"acknowledged — {state.metabolic_alarm_reason}"
+        )
+
+    if verdict != Verdict.NEEDS_OPERATOR and state.alarm_active:
+        reasons.append(f"(also: metabolic alarm raised — {state.metabolic_alarm_reason})")
+
+    return Liveness(
+        verdict=verdict,
+        reasons=tuple(reasons),
+        current_epoch=epoch,
+        last_tick_at_utc=last_at,
+        last_tick_epoch=row["epoch_number"],
+        last_outcome=row["outcome"],
+        epochs_since_last_tick=epochs_since,
+        seconds_since_last_tick=silence,
+        deadline_rule=rule,
+        consecutive_failures=consecutive,
+    )
+
+
+def _ago(seconds: float) -> str:
+    if seconds < 90:
+        return f"{int(seconds)}s"
+    if seconds < 5400:
+        return f"{seconds / 60:.0f}m"
+    if seconds < 172_800:
+        return f"{seconds / 3600:.1f}h"
+    return f"{seconds / 86_400:.1f}d"
+
+
+def set_tick_expectation(conn: sqlite3.Connection, seconds: int | None) -> OperatorState:
+    """How often the operator's crontab runs `tick`. None restores the
+    epoch-based default. Audited, like every other operator-set guard."""
+    if seconds is not None and seconds <= 0:
+        raise SchedulerError("a tick cadence must be a positive number of seconds")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        initialize_operator_if_absent(conn)
+        conn.execute(
+            "UPDATE operator_state SET tick_expected_every_seconds = ? WHERE id = 1",
+            (seconds,),
+        )
+        audit.record(
+            conn,
+            event_type="tick_expectation_set",
+            description=(
+                f"liveness deadline: every {seconds}s"
+                if seconds
+                else "liveness deadline: back to the epoch-based default"
+            ),
+            metadata={"tick_expected_every_seconds": seconds},
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return operator_state(conn)

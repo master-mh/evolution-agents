@@ -158,6 +158,40 @@ suite and golden run pass without the paid dependency installed at all.
 
 ---
 
+## Leaving it running
+
+`mitosis tick` runs one epoch's scheduled wakes and is idempotent per epoch — wakes are keyed
+`epoch:{n}:cell:{id}`, so a second tick inside the same epoch enqueues nothing and a per-minute
+cadence costs nothing until the epoch turns. There is deliberately no daemon (§30.1, "avoid
+unnecessary frameworks"): cron already restarts a command that failed, because it runs it again
+next minute either way.
+
+What cron does *not* do is tell anyone. `mitosis health` is the outside view, and its **exit code is
+the interface** — readable by cron's `MAILTO`, systemd, monit or an uptime check without any of them
+knowing what MITOSIS is:
+
+```bash
+.venv/bin/mitosis --db colony.db health
+```
+
+`0` healthy · `1` nothing is running the scheduler, or every run dies · `2` it is running and has
+deliberately halted for a person (§23.3's metabolic alarm, which holds until acknowledged).
+
+Vacation mode and `real_spending` being off are **not** failures — they are fail-safes working, and
+they clear when the operator returns. Paging someone on holiday because the pause they configured
+engaged is how a fail-safe gets switched off.
+
+Run `health` on a colony with no crontab and it prints the exact line to install, with this
+executable and this database path. By default it calls a colony overdue once it is two epochs
+behind, since what an outage costs is *work* and work is measured in epochs; for a wall-clock rule
+instead, tell it how often cron actually runs:
+
+```bash
+.venv/bin/mitosis --db colony.db set-tick-cadence --seconds 60
+```
+
+---
+
 ## Licence
 
 All rights reserved — see [`LICENSE`](LICENSE). MITOSIS is a personal research project and is not

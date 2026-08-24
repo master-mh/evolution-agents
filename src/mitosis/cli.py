@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 import textwrap
 from datetime import datetime, timedelta, timezone
@@ -865,6 +866,82 @@ def cmd_tick(args: argparse.Namespace) -> None:
         print()
         _print_deliberation(conn, deliberated)
     conn.close()
+
+
+def _schedule_line(db_path: str) -> str:
+    """The crontab entry for this colony, with this executable and this
+    database — the part that is actually easy to get wrong."""
+    executable = Path(sys.argv[0]).resolve()
+    if not executable.exists() or executable.name.endswith(".py"):
+        executable = Path(sys.executable).resolve().parent / "mitosis"
+    # Quoted, because this repo lives at a path with a space in it and an
+    # unquoted crontab line would fail in a way cron reports to nobody — which
+    # is precisely the failure `health` exists to make visible.
+    return (
+        f"* * * * * {shlex.quote(str(executable))} "
+        f"--db {shlex.quote(str(Path(db_path).resolve()))} "
+        "tick >> /tmp/mitosis-tick.log 2>&1"
+    )
+
+
+def cmd_set_tick_cadence(args: argparse.Namespace) -> None:
+    """The wall-clock liveness rule, when the epoch-based default is too loose."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    state = scheduler.set_tick_expectation(conn, args.seconds)
+    if state.tick_expected_every_seconds:
+        print(f"`health` now expects a tick every {state.tick_expected_every_seconds}s "
+              f"(overdue after {state.tick_expected_every_seconds * scheduler.OVERDUE_SLACK}s).")
+    else:
+        print("`health` is back to the epoch-based default: overdue at "
+              f"{scheduler.OVERDUE_SLACK} epochs behind.")
+    conn.close()
+
+
+def cmd_health(args: argparse.Namespace) -> int:
+    """Is anything still running this colony? (SPEC.md §23.3, §30.1; ADR-042)
+
+    Exits 0 healthy, 1 when nothing is running the scheduler or every run dies,
+    2 when it is running and has deliberately halted for a person. The exit code
+    is the point — it is what cron's MAILTO, systemd, monit or an uptime check
+    can act on without knowing anything about MITOSIS.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    state = scheduler.liveness(conn)
+
+    print(f"{state.verdict.upper()}  (exit {state.exit_code})")
+    for reason in state.reasons:
+        print(f"  {reason}")
+    if state.healthy and not state.reasons:
+        print("  the scheduler is running and nothing is waiting for you")
+
+    print()
+    if state.last_tick_at_utc is None:
+        print("  last tick:   never")
+    else:
+        print(f"  last tick:   {state.last_tick_at_utc.isoformat()}  "
+              f"({state.last_outcome}, epoch {state.last_tick_epoch})")
+        print(f"  now:         epoch {state.current_epoch} "
+              f"({state.epochs_since_last_tick} epoch(s) later)")
+    print(f"  deadline:    {state.deadline_rule}")
+
+    # §23.3's fail-safes are reported but do not fail the check: they resolve
+    # when the operator returns, and paging someone because the pause they
+    # configured engaged is how a fail-safe gets switched off.
+    if scheduler.is_on_vacation(conn):
+        print("  vacation:    ACTIVE — external work paused (§23.3). Not an outage.")
+
+    if state.verdict in (scheduler.Verdict.NEVER_RAN, scheduler.Verdict.NOT_RUNNING):
+        print()
+        print("  Nothing is running `mitosis tick`. Install this, or the launchd/systemd")
+        print("  equivalent — `tick` is idempotent per epoch, so a per-minute cadence")
+        print("  costs nothing until the epoch turns:")
+        print()
+        print(f"    {_schedule_line(args.db)}")
+
+    conn.close()
+    return state.exit_code
 
 
 def cmd_scheduler_status(args: argparse.Namespace) -> None:
@@ -2584,6 +2661,22 @@ def build_parser() -> argparse.ArgumentParser:
     _add_model_args(tick_parser, default_max_tokens=deliberation.DEFAULT_MAX_TOKENS)
     tick_parser.set_defaults(func=cmd_tick)
 
+    health_parser = subparsers.add_parser(
+        "health",
+        help="is anything still running the scheduler? exits 0/1/2 for a monitor (§23.3)",
+    )
+    health_parser.set_defaults(func=cmd_health)
+
+    tick_expect_parser = subparsers.add_parser(
+        "set-tick-cadence",
+        help="how often cron runs `tick`, for a wall-clock liveness rule (§23.3)",
+    )
+    tick_expect_parser.add_argument(
+        "--seconds", type=int, default=None,
+        help="omit to restore the default, which is expressed in epochs",
+    )
+    tick_expect_parser.set_defaults(func=cmd_set_tick_cadence)
+
     sched_status_parser = subparsers.add_parser(
         "scheduler-status", help="epoch, guards, metabolic rate, recent ticks (§23.3)"
     )
@@ -3022,7 +3115,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        args.func(args)
+        # A command may return an exit code. `health` is the only one that does
+        # and the reason it exists: 0/non-zero is the interface a monitor reads
+        # (SPEC.md §30.1 — the same "avoid unnecessary frameworks" that made
+        # `tick` a cron-composable command rather than a daemon).
+        code = args.func(args)
     except CliError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -3046,7 +3143,7 @@ def main(argv: list[str] | None = None) -> int:
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    return 0
+    return code if isinstance(code, int) else 0
 
 
 if __name__ == "__main__":

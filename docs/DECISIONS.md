@@ -1763,3 +1763,76 @@ from amendment ID to spec location is complete in one place:
     rights record for artifacts already built from it.
   - Golden expectation 18 → 19: one `rights_attestations` row and `rights_attested: 1`, with the
     `artifacts` section **byte-identical** — the assertion being what does *not* move.
+
+## ADR-042: A tick records itself before it works, and liveness leaves the process as an exit code
+
+- **Status:** Accepted
+- **Spec ref:** §23.3 (Amendment A19), §30.1, §17.2, §6.3, §27.1; Charter C14; ADR-022, ADR-026,
+  ADR-040, ADR-041
+- **Context:** PRIORITIES had carried "nothing runs the scheduler" since ADR-026: `tick` is a
+  command composable with cron, "but a colony still needs someone to install the crontab, and there
+  is no supervision, no restart-on-failure, and no alert when ticks simply stop." Two of those three
+  turned out to be one thing and one turned out to be already solved.
+  - **Restart-on-failure is cron's job and cron already does it** — it runs the command again next
+    minute whether or not the last run succeeded. That is why §30.1's "avoid unnecessary
+    frameworks" made `tick` a command rather than a daemon, and the reasoning still holds.
+  - **What cron does not do is tell anyone**, and the invisible failures were two, not one:
+    nothing is running the scheduler, and something is running it and every run dies. **From
+    outside they were indistinguishable**, because `scheduler_ticks` was only ever written at the
+    *end* of a tick — a crash anywhere left no row at all. A colony failing every minute for a week
+    looked exactly like one that had never been scheduled, and those need different people to fix
+    them.
+- **Decision: open the tick's record before the work, and expose liveness as an exit code.**
+  - **`scheduler_ticks` gains `'started'`, written in the same transaction as the epoch anchor,
+    and closed at the end.** This is `tool_calls.status = 'requested'` (migration 0019) applied one
+    layer up, and that migration already stated the principle: "a crash mid-call leaves a
+    diagnosable row rather than a reservation with nothing explaining it."
+  - **`'crashed'` and an unfinished `'started'` are different facts and stay separate.** A Python
+    exception can be caught and described; a SIGKILL, an OOM or a power cut cannot write anything,
+    so a row left `'started'` with a NULL `finished_at_utc` is the signal that survives the process
+    dying between statements. The crash detail is **redacted** (Charter C14) — a provider error
+    quotes the key it was rejected with, and this string is persisted.
+  - **`mitosis health` exits 0 / 1 / 2.** The exit code is the whole interface, which is §30.1
+    applied to alerting exactly as it was applied to scheduling: a command any monitor can read
+    rather than a notifier the kernel has to own. `1` is infrastructure (nothing running, or
+    everything dying); `2` is the colony running and deliberately stopped for a person.
+  - **A deliberate halt is not an outage, and the split is the interesting half.** Vacation mode
+    and `real_spending` disabled are the colony working as designed and clear when the operator
+    returns — paging someone on holiday because the fail-safe they configured engaged is how a
+    fail-safe gets turned off. §23.3's metabolic alarm is the exception: it halts *until
+    acknowledged*, so it is the one halt genuinely waiting for a person, and it gets its own code.
+  - **The default deadline is measured in epochs, not wall time.** What an outage costs the colony
+    is *work*, and wakes are keyed `epoch:{n}:cell:{id}` — any tick inside an epoch does that
+    epoch's work and a second does nothing. Two epochs behind means an epoch's wakes were skipped.
+    An operator wanting wall-clock responsiveness sets `tick_expected_every_seconds`.
+- **What it displaced.**
+  - **A supervisor process**, which is what "supervision" in the original entry asks for and what
+    §30.1 rules out. It would also have needed its own liveness check, one level further out.
+  - **Alarming on wall-clock silence by default**, which rested on a premise worth checking:
+    that a late expiry sweep leaves stale authority usable. **It does not** — ADR-039 established
+    that all three executors (`tools`, `external_actions`, `promotion`) refuse an expired grant on
+    their own terms, and the sweep exists to *regenerate the wake*, not to enforce the refusal. So
+    sweep latency is a responsiveness cost, not a safety hole, and it does not justify making every
+    operator configure a wall clock. Checking that premise is what turned the default from a
+    guess into a policy.
+  - **Installing the crontab.** `health` prints the exact line — this executable, this database,
+    shell-quoted — and leaves installing it to the person whose machine it is.
+- **Consequences:**
+  - **A tick still in flight looks exactly like a killed one**, since both are `'started'` with a
+    NULL `finished_at_utc`. They are told apart by age: a tick running longer than the whole
+    expected interval is stuck, not busy. Without that, `health` would flap on every healthy colony
+    that happened to be checked mid-tick.
+  - **Ticks are ordered by `rowid`, not by `started_at_utc`.** Rows are only ever inserted by
+    `_begin_tick_locked`, in tick order, while wall time moves backwards under NTP correction, a VM
+    restore or a DST-naive host — and would then report an older tick as the newest. Same reasoning
+    as ADR-041's attestation ordering.
+  - **`_mark_crashed` swallows its own failure.** A broken database is one of the reasons a tick
+    crashes, so the code that records the crash is the code most likely to fail too; it must never
+    replace the caller's exception with its own. The row then stays `'started'`, which is the same
+    signal a killed process leaves and is read the same way.
+  - `scheduler_ticks` had to be rebuilt, because SQLite cannot alter a CHECK constraint. Nothing
+    references it by foreign key, which is what made that a copy rather than an ordering problem.
+    Historical rows are backfilled with `finished_at_utc = started_at_utc` — they all completed, and
+    leaving them NULL would retroactively describe every past tick as a crash.
+  - **The golden run is untouched.** `scheduler_ticks` is not in the semantic snapshot and no new
+    audit event fires in the scenario, so this slice moves no expectation and no money.

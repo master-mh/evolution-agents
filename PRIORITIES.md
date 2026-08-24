@@ -196,9 +196,27 @@
   metadata" is load-bearing** — ledger rows are wall-stamped while epochs are simulated, so
   `epoch_log`'s per-epoch wall anchor is the only thing that makes per-epoch spend computable at
   all. 571 tests (22 new); golden hash unchanged. Teeth-checked nine ways.
-- [ ] **Nothing runs the scheduler.** `tick` is a command, composable with cron per §30.1's
-  "avoid unnecessary frameworks" — but a colony still needs someone to install the crontab, and
-  there is no supervision, no restart-on-failure, and no alert when ticks simply stop.
+- [x] **Nothing runs the scheduler — DONE** (2026-08-24), ADR-042. `scheduler.liveness` +
+  migration 0025 + `mitosis health`. **Two of the three gaps this entry named dissolved and the
+  third was a different bug than the entry described.** Restart-on-failure is cron's job and cron
+  already does it — it runs the command again next minute either way, which is why §30.1 made
+  `tick` a command rather than a daemon. The real gap was **two invisible failures that looked
+  identical**: nothing running the scheduler, and something running it and dying every time.
+  `scheduler_ticks` was written only at the *end* of a tick, so a crash left **no row at all** and
+  a colony failing every minute for a week looked exactly like one never scheduled. The row is now
+  opened before the work (`tool_calls.status='requested'` one layer up), with `'crashed'` and an
+  unfinished `'started'` kept as separate facts — an exception can be caught and redacted (C14), a
+  SIGKILL cannot write anything. `mitosis health` **exits 0/1/2**, which is §30.1 applied to
+  alerting: any monitor reads an exit code, none need to know what MITOSIS is. **A deliberate halt
+  is not an outage** — vacation and `real_spending` off are fail-safes working and clear when the
+  operator returns; only §23.3's metabolic alarm, which holds until acknowledged, gets code 2. The
+  default deadline is measured **in epochs**, and checking why turned a guess into a policy: the
+  wall-clock alternative assumed a late sweep leaves stale authority usable, and ADR-039 had
+  already established that all three executors refuse an expired grant on their own terms. 887
+  tests (18 new); golden run untouched (**no expectation moved, no money**). Teeth-checked thirteen
+  ways; hand-verified across five verdicts and three exit codes, which surfaced an unquoted
+  crontab line on a path with a space in it, and a self-review caught a crash row claiming it had
+  spent nothing.
 - [x] **`max_births_per_epoch` (§9.2) — DONE** (2026-08-22), ADR-031. `population.py` + migration
   0017. **The open question answered itself once the two refusals were put side by side:** it fails
   like the other caps, but it must not be *confused* with them. Capacity is durable and is why §9.3
