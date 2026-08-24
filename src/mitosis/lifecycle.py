@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import Protocol
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -456,6 +457,31 @@ def clear_quarantine(conn: sqlite3.Connection, cell_id: str, *, to_status: CellS
     )
 
 
+class CoronerEnricher(Protocol):
+    """The §10.5 seam. "Every death emits a coroner report … stage reached …
+    and links to its experiments" — and both live above this module, so the
+    dependency is inverted rather than imported. `experiments.ExperimentCoroner`
+    implements it, exactly as `displacement.ObjectiveDisplacer` implements
+    `population.Displacer`.
+
+    Optional for the same reason the displacer is: a kernel with no experiment
+    tracking still files a report, it just files a thinner one.
+
+    **`close_out` settles before it reports, and the two belong together.** A
+    dying Cell holds things above this layer as well as below it — the estate
+    reclamation below releases its reservations, and a running experiment is the
+    same kind of hold: §9.2 caps *simultaneous* experiments, so one left running
+    on a dead Cell keeps a colony-wide slot nothing will ever free. Reporting
+    without settling would also file a report listing a "running" experiment on
+    a Cell that is dead, which is a false statement rather than an incomplete
+    one. Called inside the caller's write lock, so it must not open its own.
+    """
+
+    def close_out(
+        self, conn: sqlite3.Connection, cell_id: str
+    ) -> tuple[str | None, tuple[str, ...]]: ...
+
+
 def _kill_locked(
     conn: sqlite3.Connection,
     cell: Cell,
@@ -464,6 +490,7 @@ def _kill_locked(
     final_hypotheses: list[str] | None = None,
     experiment_ids: list[str] | None = None,
     stage_reached: str | None = None,
+    coroner_enricher: CoronerEnricher | None = None,
     metadata: dict | None = None,
 ) -> None:
     """Apply the kill + its coroner report. Caller must already hold a write
@@ -482,6 +509,16 @@ def _kill_locked(
     # Computed under the caller's lock so the coroner report reflects a
     # consistent snapshot.
     spend = ledger.spend_by_book(conn, cell.cell_id)
+
+    # §10.5's two fields that live above this module. An explicit argument wins
+    # over the seam: a caller that knows better than a general derivation
+    # (a test, a replay) must not have it silently overwritten.
+    if coroner_enricher is not None:
+        derived_stage, derived_experiments = coroner_enricher.close_out(conn, cell.cell_id)
+        if stage_reached is None:
+            stage_reached = derived_stage
+        if not experiment_ids:
+            experiment_ids = list(derived_experiments)
 
     _transition_core(
         conn, cell, CellStatus.DEAD,
@@ -545,13 +582,15 @@ def kill(
     final_hypotheses: list[str] | None = None,
     experiment_ids: list[str] | None = None,
     stage_reached: str | None = None,
+    coroner_enricher: CoronerEnricher | None = None,
 ) -> Cell:
     """alive|dormant|quarantined -> dead (terminal, Charter C8). Files a
     coroner report artifact in the same transaction as the status change
     (SPEC.md §10.5, Amendment A15): genome hash, spend by book (derived from
     the ledger — see ledger.spend_by_book), cause of death, final
-    hypotheses, and links to experiments. `stage_reached`/`experiment_ids`
-    are always None/empty in this kernel — see module docstring."""
+    hypotheses, and links to experiments. Pass a `coroner_enricher` (see
+    `experiments.ExperimentCoroner`) to fill §10.5's stage and experiment links;
+    without one the report is filed thinner rather than not at all."""
     conn.execute("BEGIN IMMEDIATE")
     try:
         # Fetched and re-validated inside the write lock — same reasoning as
@@ -567,6 +606,7 @@ def kill(
             final_hypotheses=final_hypotheses,
             experiment_ids=experiment_ids,
             stage_reached=stage_reached,
+            coroner_enricher=coroner_enricher,
         )
         conn.execute("COMMIT")
     except Exception:

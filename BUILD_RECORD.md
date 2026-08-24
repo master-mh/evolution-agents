@@ -7,91 +7,89 @@ account fix, the prediction register, death criteria, §9.3 displacement, the ag
 scheduler, the §23 approval queue, the dead-Cell estate, the rung-7 promotion path, the §25.2
 read-back, §9.2's birth cap, Auditor Cells, genome content, the tool surface, the artifact
 store, the external-action registry, the §27.1 autonomy decisions, grant regeneration, the
-expiry sweep, and establishable rights, 2026-07-21 through 2026-08-24):
+expiry sweep, establishable rights, and scheduler liveness,
+2026-07-21 through 2026-08-24):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-24 — A tick that dies leaves a record
+## 2026-08-24 — The experiment: seven sections reference it, none defines it
 
-`scheduler.liveness` + migration 0025 + `mitosis health` (ADR-042). PRIORITIES had carried
-"nothing runs the scheduler" since ADR-026 — no crontab, no supervision, no restart-on-failure, no
-alert. **Two of the three dissolved on inspection and the third was a different bug than the entry
-described.**
+`experiments.py` + migration 0026 + four CLI verbs (ADR-043). The largest socket cluster in the
+repo, and unusually most of it was **live plumbing rather than dead columns**: `experiment_id` has
+been threaded through `gateway`, `prediction` and `ledger` for months, `reservations.settle` has
+been propagating it onto ledger entries all along, and `mitosis predict --experiment <id>` accepted
+any string and validated nothing. The foreign key was exposed to the operator before the table
+existed.
 
-### Cron already restarts it; what it cannot do is tell anyone
+### §2.6 defines the report, and the clause above it decides the design
 
-Restart-on-failure is cron's job and cron does it — it runs the command again next minute whether
-or not the last run succeeded. That is exactly why §30.1's "avoid unnecessary frameworks" made
-`tick` a command rather than a daemon, and a supervisor would only have needed its own liveness
-check one level further out.
+There is no §Experiments. What §2.6 does define is *"synthetic revenue/profit, real cash consumed,
+resource consumption, shadow cost, human labour, and a reality-gap estimate"* — six dimensions, so
+§10.2 and §13.2's "do not rely on a single weighted scalar" are satisfied by the definition rather
+than by a preference.
 
-The real gap was **two invisible failures that looked identical**: nothing is running the
-scheduler, and something is running it and every run dies. `scheduler_ticks` was only ever written
-at the *end* of a tick, so a crash anywhere — the expiry sweeps, a guard, `run_ready_wakes`, a
-provider call — left **no row at all**. A colony failing every minute for a week was
-indistinguishable from one that had never been scheduled, and those need different people to fix
-them.
+**§2.5, immediately above it, is "Balances are derived."** Read as neighbours, an experiment report
+is a derived view and not a stored row. So there is **no `experiment_results` table**, despite §31
+listing one — §31 offers "suggested entities" and does not mark that one Phase 1, and a stored
+outcome is exactly where §0.3 leaks back in. The surest way to keep "a Cell may explain a result and
+never define one" true is to give it no column to write, which is how `proposal.py` earns its shape.
+`test_there_is_no_experiment_results_table` defends the refusal.
 
-**The fix already existed one layer down.** `tool_calls` writes `status = 'requested'` before the
-external call, and migration 0019 had said why: "a crash mid-call leaves a diagnosable row rather
-than a reservation with nothing explaining it." The scheduler was in the state the gateway is in.
+### The stage question had three witnesses and they agreed
 
-`'crashed'` and an unfinished `'started'` stay separate facts: an exception can be caught and
-described (redacted — Charter C14, since a provider error quotes the key it was rejected with),
-while a SIGKILL, an OOM or a power cut writes nothing, and a row left `'started'` with a NULL
-`finished_at_utc` is the signal that survives the process dying between statements.
+§10.5's coroner lists `stage_reached` (singular) beside `experiment_ids` (plural); §27.2's dashboard
+pairs them as one Cell field, "current experiment/stage"; and §13.1's `normalised_cost = expected
+experiment cost / current stage tranche` would be circular if the stage belonged to the experiment.
+**So §25.1's nine rungs are the only ladder** and Phase 2's "stage gates" are the gates between
+them — no second ladder, no stages table. `stage_reached` derives from the highest rung a Cell was
+funded at *or* ran at, because a Cell that did rung-1 simulator work and was never promoted has
+still reached rung 1.
 
-### The alert leaves the process as an exit code
+### Found while building: a slot that leaks on every death
 
-`mitosis health` exits **0 / 1 / 2** — §30.1 applied to alerting exactly as it was applied to
-scheduling. Any monitor that exists can read an exit code; none of them need to know what MITOSIS
-is. `1` is infrastructure, `2` is the colony running and deliberately stopped for a person.
+§9.2 caps *simultaneous* experiments colony-wide, and death is routine. A Cell that died mid-
+experiment left it `running` forever, so a colony killing Cells faster than it concludes experiments
+would ratchet to its cap and refuse every new one with nothing anywhere explaining the refusals —
+the "a claim held before acting is a lock and nothing sweeps it" shape ADR-036 logged for channel
+claims. The seam now **settles before it reports**, and the experiment is **abandoned, never
+concluded**: it reached no answer, and a coroner report listing a running experiment on a dead Cell
+would be a false statement rather than a thin one.
 
-**A deliberate halt is not an outage, and that split is the half worth arguing.** Vacation mode and
-`real_spending` disabled are fail-safes working, and they clear when the operator returns — paging
-someone on holiday because the pause they configured engaged is how a fail-safe gets switched off.
-§23.3's metabolic alarm is the exception: it holds *until acknowledged*, so it is the one halt
-genuinely waiting for a person.
+The seam itself is `lifecycle.CoronerEnricher` — `lifecycle` sits below `experiments`, so §10.5's
+two fields arrive by injection rather than a back-edge, the shape `population.Displacer` established.
 
-### The default deadline is in epochs, and checking why turned a guess into a policy
-
-The tempting default is wall-clock silence, and it rests on a premise: that a late expiry sweep
-leaves stale authority usable. **It does not.** ADR-039 established that all three executors
-(`tools`, `external_actions`, `promotion`) refuse an expired grant on their own terms — the sweep
-regenerates the wake, it does not enforce the refusal. So sweep latency is a responsiveness cost,
-not a safety hole. What an outage actually costs is *work*, and wakes are keyed
-`epoch:{n}:cell:{id}`, so any tick inside an epoch does that epoch's work. Two epochs behind means
-an epoch's wakes were skipped. An operator who wants wall-clock responsiveness sets
-`tick_expected_every_seconds`.
+**§9.2's cap is a third refusal shape.** ADR-031 separated durable carrying capacity (which
+justifies displacement) from a temporary birth rate (which a clock clears); this slot frees when an
+experiment *concludes*. `ExperimentCapacityError` sits deliberately outside `PopulationError` so it
+cannot be caught as either, because both would suggest the wrong remedy.
 
 ### Verification
 
-- **887 tests passing** (18 new, 0 removed; up from 869). **Golden run untouched** — `scheduler_
-  ticks` is not in the semantic snapshot and no new audit event fires in the scenario, so this
-  slice moves no expectation and no money.
-- **Teeth-checked thirteen ways**, each failing its named test: the row written only at the end (the
-  state before this slice), an unredacted crash detail, a crash-recorder masking the original
-  exception, `finished_at_utc` never set, vacation reported as an outage, the alarm sharing the
-  infrastructure exit code, the alarm outranking a stopped scheduler, an in-flight tick counted as
-  a failure, wall-clock ordering, a wall-clock default deadline, `never_ran` reading healthy, and a
-  crashed tick not recognised at all, and a crash row claiming zero spend. **One MISSed and the
-  test was at fault** — it asserted on `.year`, which cannot tell nine days ago from now. The exact
-  shape the workflow note warns about: an assertion that cannot distinguish the two outcomes. A
-  second test failed for the same family of reason — it posted an unregistered `transaction_type`,
-  so the breaker's spend window never saw it and the fixture could not have proved anything.
-- **Hand-verified on live colonies**, all five verdicts and all three exit codes: never-ran (1),
-  healthy (0), a crash with an API key in the message redacted to `[redacted]` (1), a killed
-  process left as an unfinished `started` row (1), silence past a configured cadence (1), and a
-  metabolic alarm with the scheduler alive (2).
-- **A self-review caught one more:** a crashed tick recorded `spend 0 → 0` regardless of what it
-  had spent — a *false* statement in the log an operator reads at 3am, not merely a missing one.
-  `spend_before` is now captured when the row is opened, which is equivalent to capturing it after
-  the sweeps (ADR-040: expiry "has no ledger consequence at all") and survives a crash before the
-  body computes anything.
-- Two bugs surfaced only by running it. The generated crontab line was **unquoted**, and this repo
-  lives at a path with a space in it — it would have failed in a way cron reports to nobody, which
-  is precisely the failure `health` exists to make visible. And ticks were ordered by
-  `started_at_utc`, which moves backwards under NTP correction or a VM restore; now `rowid`, the
-  same reasoning as ADR-041.
-- Next: the nearest open work is Charter C13, still the one clause with no `charter_*` test and
-  still blocked on Phase 6's shadow economy — so the front is really Phase 2's experiment tracking,
-  which also unblocks `max_parallel_experiments` and the coroner report's empty `experiment_ids`.
+- **916 tests passing** (29 new, 0 removed; up from 887). **Golden expectation 19 → 20**, with
+  **`balances` identical in every account in every book** — an experiment is a record and a
+  derivation, and the revenue it now names was already being posted. The snapshot pins each
+  experiment's §2.6 figures *derived on the spot*, so a kernel that started caching an outcome would
+  have to keep them identical. `coroner_reports.stage_reached` moves from `null` — which it has been
+  since migration 0007 — to `"rung 7: tiny capped live experiment"`.
+- **Teeth-checked sixteen ways**, each failing its named test: the report ignoring the ledger,
+  revenue read off the cash leg, an unmeasurable dimension reported as 0, the §9.2 cap unchecked
+  (the state before this slice), that error folded into the population hierarchy, concluded
+  experiments still counting, §15.1's singular ignored, `stage_reached` from promotions alone, the
+  coroner seam never consulted, the seam made mandatory, the seam overwriting an explicit stage,
+  death not releasing the slot, death concluding rather than abandoning, `death.py` no longer
+  enriching, a rung off the ladder accepted, and unresolved forecasts folded into the reality-gap
+  mean.
+- **Hand-verified end to end on a live colony**: experiment started at rung 1, §15.1's one-at-a-time
+  refused, rung 12 refused, 12.50 USD_SIM of revenue derived into the report, concluded and the slot
+  freed, then a second experiment at rung 7 abandoned by its Cell's death with the coroner carrying
+  `rung 7: tiny capped live experiment` and both experiment ids.
+- Two gaps the live run surfaced: `record-revenue` had no `--experiment` flag despite the function
+  taking one (fixed), and re-recording revenue to attach an experiment is **correctly refused by
+  idempotency** — which means an operator who attributes revenue late cannot fix it, and §3.6 says
+  the remedy is an adjustment rather than an edit. Logged, not built.
+- **A snapshot-hygiene fix rode along**: a prediction's free-text claim embeds its approval request
+  id, so a section about *calibration* was pinning an identifier into the hash. Seeded ids are
+  reproducible only for a fixed sequence of allocations, so this slice minting one id earlier
+  produced a spurious diff. ADR-017 excludes volatile ids; this was one wearing a sentence as a
+  disguise, and it is now scrubbed.
+- Next: `resource_usage.experiment_id` is the obvious next socket — it is the one column standing
+  between §2.6's report and its last two dimensions.

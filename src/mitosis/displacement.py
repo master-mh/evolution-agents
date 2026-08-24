@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from . import death, ledger, lifecycle, population
+from . import death, experiments, ledger, lifecycle, population
 from .accounts import cell_committed
 from .models import Cell, CellStatus
 
@@ -154,5 +154,8 @@ class ObjectiveDisplacer:
                 "underlying_criterion": finding.criterion.value,
                 "underlying_evidence": finding.evidence,
             },
+            # An eviction is a death, so §10.5's report needs the same stage and
+            # experiment links an objective kill gets.
+            coroner_enricher=experiments.ExperimentCoroner(),
         )
         return displacement

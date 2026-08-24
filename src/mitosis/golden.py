@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -66,6 +67,7 @@ from . import (
     deliberation,
     db,
     events,
+    experiments,
     external_actions,
     gateway,
     ids,
@@ -605,7 +607,46 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           identical across every account — the extra token moves the recorded
 #           raw `quantity` and rounds to the same RESOURCE charge, and USD_REAL
 #           is untouched as it must be.
-EXPECTATION_VERSION = 19
+#   19 -> 20 (the experiment; §2.5/§2.6, §9.2, §10.5, §15.1, §25.1; ADR-043).
+#           Two experiments: one at rung 7 on the Cell the scenario kills, one
+#           at rung 1 on the Cell that earns.
+#           (a) **`experiments` (new)**: both rows, each carrying its **derived**
+#               §2.6 figures rather than stored ones. `synthetic_revenue: 40` on
+#               the second is the assertion — a derivation reading the Cell's
+#               cash leg instead of the `revenue` account, or the wrong book,
+#               fails here rather than only in the hash. `sandbox_cpu_seconds`
+#               and `human_minutes` are **null, not 0**: §19.3's sandbox is
+#               Phase 5 and `resource_usage` carries no experiment_id, and a 0
+#               would claim they consumed nothing.
+#           (b) **`coroner_reports.stage_reached`**: `null` -> `"rung 7: tiny
+#               capped live experiment"`. §10.5 has required this of every death
+#               since migration 0007 and no kernel could supply it. The row's
+#               experiment is `abandoned` with `concluded_by: "kernel"` — the
+#               §9.2 slot being released, because a colony that leaked one per
+#               death would ratchet to its cap and refuse every new experiment
+#               with nothing explaining why. Abandoned and never concluded: it
+#               reached no answer.
+#           (c) **`audit_event_types`** gains `experiment_started: 2`,
+#               `experiment_concluded: 1`, `experiment_abandoned_on_death: 1`.
+#           (d) **`deliberations.context_tokens`** +62 on each of five, and
+#               `model_calls`/`resource_usage` follow. §15.1 names "current
+#               experiment" second in its list, right after the genome, and the
+#               five are exactly the deliberations that ran while one was open.
+#               The section shows the *derived* report, which also answers what
+#               the 2026-08-06 live run found: every model set
+#               `estimated_cost_minor_units` to 0 because §15 context showed
+#               balances but never what anything had cost.
+#           (e) **`predictions.claim`** has its embedded uuid scrubbed to
+#               `<id>`. Not a behaviour change — a snapshot-hygiene fix this
+#               slice surfaced. The auto-registered promotion forecast names its
+#               approval request in free text, so a section about *calibration*
+#               was pinning an identifier, and any future slice that mints one
+#               id earlier would produce a spurious diff here. ADR-017 excludes
+#               volatile ids; this was one wearing a sentence as a disguise.
+#           **`balances` is identical across every account in every book.** An
+#           experiment is a record and a derivation; it moves no money, and the
+#           revenue it now names was already being posted.
+EXPECTATION_VERSION = 20
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -1012,10 +1053,30 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     )
     lifecycle.clear_quarantine(conn, explorer.cell_id, to_status=CellStatus.ALIVE)
 
+    # 7b. An experiment the death interrupts (§9.2, §10.5, §25.1; ADR-043).
+    #     Started at rung 7 — §25.1's "tiny capped live experiment", the rung
+    #     `promotion.py` funds — and never concluded, because its Cell dies two
+    #     statements later. **Two things are pinned by that.** The coroner report
+    #     gains a `stage_reached` and a link to the experiment, which §10.5
+    #     requires of every death and which was `null` in every prior expectation
+    #     version. And the experiment is left `abandoned`, never `concluded`: it
+    #     reached no answer, and a colony that recorded one would be filing a
+    #     finding nobody made. A kernel that failed to release it would leak the
+    #     §9.2 slot on every death, with nothing anywhere explaining the refusals
+    #     that followed.
+    experiments.start(
+        conn,
+        cell_id=commercial.cell_id,
+        hypothesis="fixed scenario: a capped live experiment the Cell does not survive",
+        ladder_rung=7,
+        expected_cost_minor_units=25,
+    )
+
     lifecycle.kill(
         conn, commercial.cell_id,
         cause_of_death="stage budget exhausted",
         final_hypotheses=["golden-run hypothesis A", "golden-run hypothesis B"],
+        coroner_enricher=experiments.ExperimentCoroner(),
     )
 
     # 8. Events. Distinct priorities keep next_ready's order reproducible —
@@ -1485,6 +1546,17 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     #     Amendment A3's `ledger_entries.artifact_id`, populated for the first
     #     time. USD_SIM deliberately: a golden run must never move USD_REAL, and
     #     revenue is the one verb that brings money *in*.
+    #
+    #     **The revenue is now earned under an experiment** (ADR-043), which is
+    #     what makes §2.6's report non-trivial in a replay: a report over an
+    #     experiment that earned and spent nothing would pass against a kernel
+    #     whose derivation was broken in either direction.
+    golden_experiment = experiments.start(
+        conn,
+        cell_id=auditor_child.cell_id,
+        hypothesis="fixed scenario: does the write-up earn anything",
+        ladder_rung=1,
+    )
     revenue.record_revenue(
         conn,
         cell_id=auditor_child.cell_id,
@@ -1492,6 +1564,7 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         source="golden-run fixed customer",
         book=Book.USD_SIM,
         artifact_id=golden_artifact,
+        experiment_id=golden_experiment.experiment_id,
         idempotency_key="golden:revenue:artifact",
     )
 
@@ -1747,6 +1820,35 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         conn, now=datetime.now(timezone.utc) + timedelta(days=365)
     )
 
+    # 19d. Concluding the experiment (§2.6, §15.1; ADR-043). Deliberately last,
+    #      so every deliberation in steps 19–19c ran with it as the Cell's
+    #      *current* experiment and §15.1's context section was assembled from
+    #      it — that is where this slice's prompt-token diff comes from, and a
+    #      scenario that concluded it earlier would pin the section as absent.
+    #
+    #      §2.6's report is asserted rather than merely recorded: the experiment
+    #      earned 40 USD_SIM and moved no real money, so a derivation reading the
+    #      wrong account or the wrong book fails here rather than in a hash.
+    golden_report = experiments.report(conn, golden_experiment.experiment_id)
+    if golden_report.synthetic_revenue_minor_units != 40:
+        raise AssertionError(
+            "§2.6: the experiment's synthetic revenue should be derived from the "
+            f"ledger as 40, got {golden_report.synthetic_revenue_minor_units}"
+        )
+    if golden_report.real_spend_minor_units != 0:
+        raise AssertionError("a golden run must never move USD_REAL")
+    if golden_report.sandbox_cpu_seconds is not None or golden_report.human_minutes is not None:
+        raise AssertionError(
+            "§2.6's unmeasurable dimensions must report as unmeasurable, never as 0"
+        )
+
+    experiments.conclude(
+        conn,
+        experiment_id=golden_experiment.experiment_id,
+        concluded_by="golden-operator",
+        note="fixed scenario: the write-up earned 40 USD_SIM",
+    )
+
     # 20. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
@@ -1760,6 +1862,18 @@ def _cell_aliases(conn: sqlite3.Connection) -> dict[str, str]:
     the underlying uuid4s are not."""
     rows = conn.execute("SELECT cell_id FROM cells ORDER BY rowid").fetchall()
     return {row["cell_id"]: f"cell#{index}" for index, row in enumerate(rows)}
+
+
+#: A uuid4 in free text. Matched loosely on shape rather than parsed, because
+#: what matters is that no id reaches the hash, not that every match was a real
+#: identifier.
+_UUID_IN_TEXT = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
+)
+
+
+def _scrub_ids(text: str) -> str:
+    return _UUID_IN_TEXT.sub("<id>", text or "")
 
 
 def _normalize_account(account_id: str, aliases: dict[str, str]) -> str:
@@ -1891,10 +2005,19 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
     # reason that has nothing to do with behaviour. Six places is far finer
     # than any calibration decision needs. Hashes and timestamps are excluded
     # for the same reasons they are everywhere else in this snapshot.
+    # `claim` is free text a Cell (or `approval.py`) wrote, and it can *embed*
+    # an id — the auto-registered promotion forecast names its approval request.
+    # Ids are seeded and so reproducible, but only for a fixed sequence of
+    # allocations: any later slice that mints one id earlier shifts every id
+    # after it and produces a spurious diff here, in a section whose subject is
+    # calibration rather than identity. ADR-017 excludes "volatile ids" from the
+    # snapshot and this is one wearing a sentence as a disguise, so it is
+    # scrubbed rather than pinned. (Found by ADR-043, which shifted the sequence
+    # by exactly one.)
     prediction_rows = [
         {
             "cell": aliases.get(row["cell_id"], "cell#?"),
-            "claim": row["claim"],
+            "claim": _scrub_ids(row["claim"]),
             "probability": row["probability"],
             "outcome": row["outcome"],
             "resolved": row["resolved_at_utc"] is not None,
@@ -1983,6 +2106,31 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         }
         for row in conn.execute("SELECT * FROM artifacts ORDER BY rowid").fetchall()
     ]
+
+    # §9.2/§25.1's experiments (ADR-043). **The §2.6 report is not stored, so
+    # what is pinned is derived on the spot** — which is the assertion: a kernel
+    # that started caching an outcome would have to keep this identical, and a
+    # kernel whose derivation broke shows it here rather than only in the hash.
+    # `abandoned` on the dead Cell's row is the §9.2 slot being released.
+    experiment_rows = []
+    for row in conn.execute("SELECT * FROM experiments ORDER BY rowid").fetchall():
+        derived = experiments.report(conn, row["experiment_id"])
+        experiment_rows.append(
+            {
+                "cell": aliases.get(row["cell_id"], "cell#?"),
+                "hypothesis": row["hypothesis"],
+                "ladder_rung": row["ladder_rung"],
+                "status": row["status"],
+                "concluded_by": row["concluded_by"],
+                "expected_cost_minor_units": row["expected_cost_minor_units"],
+                "synthetic_revenue": derived.synthetic_revenue_minor_units,
+                "synthetic_net_profit": derived.synthetic_net_profit_minor_units,
+                "real_spend": derived.real_spend_minor_units,
+                "resource_spend": derived.resource_spend_minor_units,
+                "sandbox_cpu_seconds": derived.sandbox_cpu_seconds,
+                "human_minutes": derived.human_minutes,
+            }
+        )
 
     # §20.1's establishable half (ADR-041). `attestation_id` and the timestamp
     # are volatile; what a replay pins is the *position* and the fact that a
@@ -2246,6 +2394,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "proposals": proposal_rows,
         "tool_calls": tool_call_rows,
         "artifacts": artifact_rows,
+        "experiments": experiment_rows,
         "rights_attestations": rights_attestation_rows,
         "artifact_lineage": artifact_lineage_shape,
         "external_actions": external_action_rows,

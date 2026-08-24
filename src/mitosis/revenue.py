@@ -69,6 +69,9 @@ def record_revenue(
     book: Book = Book.USD_REAL,
     note: str = "",
     artifact_id: str | None = None,
+    #: Which experiment earned it (§2.6). Amendment A3 gave `artifact_id` the
+    #: same job for *what* produced the money; this says under which test.
+    experiment_id: str | None = None,
     idempotency_key: str | None = None,
 ) -> Transaction:
     """Credit a Cell with money it earned.
@@ -140,11 +143,20 @@ def record_revenue(
             description=f"revenue for cell {cell_id} from {source.strip()}"
             + (f": {note}" if note else ""),
             entries=[
-                EntrySpec(account_id=REVENUE_ACCOUNT, amount_minor_units=-amount_minor_units),
+                EntrySpec(
+                    account_id=REVENUE_ACCOUNT,
+                    amount_minor_units=-amount_minor_units,
+                    # Tagged on the revenue leg as well as the cash leg, because
+                    # §2.6's report reads the *revenue account* for what an
+                    # experiment earned — the cash leg alone would make revenue
+                    # indistinguishable from any other credit to the Cell.
+                    experiment_id=experiment_id,
+                ),
                 EntrySpec(
                     account_id=cell_cash(cell_id),
                     amount_minor_units=amount_minor_units,
                     cell_id=cell_id,
+                    experiment_id=experiment_id,
                     artifact_id=artifact_id,
                 ),
             ],

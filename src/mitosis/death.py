@@ -65,7 +65,7 @@ import sqlite3
 from dataclasses import dataclass
 from enum import StrEnum
 
-from . import audit, ledger, lifecycle, prediction, revenue
+from . import audit, experiments, ledger, lifecycle, prediction, revenue
 from .accounts import cell_cash, cell_committed
 from .models import Book, Cell, CellStatus
 
@@ -310,6 +310,10 @@ def reap(
                     cell.cell_id,
                     cause_of_death=finding.describe(),
                     final_hypotheses=final_hypotheses,
+                    # §10.5 wants stage and experiment links on *every* report,
+                    # and both live above `lifecycle` — see
+                    # `lifecycle.CoronerEnricher`.
+                    coroner_enricher=experiments.ExperimentCoroner(),
                 )
             break  # one cause of death per Cell; the first found is recorded
     return results
@@ -395,4 +399,5 @@ def kill_for_negative_ev(
             f"(concurred by {concurring_auditor_cell_id})"
         ),
         final_hypotheses=final_hypotheses,
+        coroner_enricher=experiments.ExperimentCoroner(),
     )

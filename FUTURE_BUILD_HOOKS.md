@@ -905,3 +905,41 @@ actually queued for building — this file is memory, not a backlog to work thro
   about *whether* they finished and wrong about *when*. Any future "how long do ticks take"
   statistic has to exclude rows older than migration 0025, and nothing marks where that boundary
   is except the migration itself.
+
+## From experiment tracking (2026-08-24, ADR-043)
+
+- **`resource_usage.experiment_id` is the one column between §2.6 and a complete report.** Two of
+  its six dimensions — sandbox CPU and human labour — report `None` today. Sandbox CPU is genuinely
+  Phase 5, but **human labour is blocked only by a missing column**: `ResourceType.HUMAN_MINUTES`
+  exists and ADR-036 already meters it, and nothing links a usage row to an experiment. Adding it is
+  additive; threading it through `gateway` is nearly free because `experiment_id` already flows
+  there, and through `external_actions`/`tools` needs an experiment context those paths do not yet
+  carry.
+- **Revenue attributed late cannot be corrected.** The default idempotency key is
+  `cell_revenue:{cell}:{source}`, so re-recording the same revenue with `--experiment` is correctly
+  deduped and the original stays untagged. Found on a live colony by doing exactly that. §3.6 says
+  the remedy is an adjustment rather than an edit, so what is missing is a `reattribute` verb that
+  posts a compensating pair — not a mutable column.
+- **Nothing consumes `ProposalKind.EXPERIMENT` yet.** A Cell can propose an experiment and the
+  kernel still treats it as an undifferentiated proposal; `experiments.start` is operator-driven or
+  called directly. The `_start_locked` core exists precisely so `deliberation` can fold a start into
+  the transaction that records an approved proposal, which is the obvious next half — and it is
+  where the §25.1 rung gate belongs: a rung-1 simulator experiment should need no human, a rung-7
+  live one already goes through §23 and `promotion.allocate`.
+- **§13.1's `normalised_cost` is still structurally dead.** Its numerator is a Cell's own estimate,
+  which the 2026-08-06 live run found was 0 on every proposal from both models. §15.1's new context
+  section now shows the *derived* cost of the Cell's current experiment, which is the reference that
+  field was missing — worth re-measuring on a live model run before anything is built on the ratio.
+- **A rung-1 experiment moving USD_REAL is a §25.1 violation nothing refuses.** The report surfaces
+  the mismatch and the existing real-spend gates bound the damage, which is why no local check was
+  added (ADR-039's "second, weaker copy"). If a rung ever gets its own budget, this is the place the
+  rule would become enforceable rather than merely visible.
+- **`stage_reached` is a formatted string, not a rung.** `"rung 7: tiny capped live experiment"`
+  reads well in a coroner report and parses badly. §9.3's unbuilt displacement target — "bottom
+  quantile of realised stage progression" — needs to *compare* stages, so it will want the integer.
+  The derivation exists; only the storage format is prose.
+- **The snapshot was pinning a uuid inside free text.** A prediction's claim names its approval
+  request, so seeded-but-sequence-dependent ids were reaching the golden hash through a section
+  about calibration. Any slice that mints one id earlier produced a spurious diff there. Scrubbed
+  now — but the general shape is worth watching: **ADR-017 excludes volatile ids, and free text is
+  where they hide.**

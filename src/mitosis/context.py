@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from . import (
     artifacts,
     channel_registry,
+    experiments,
     ledger,
     lineage,
     prediction,
@@ -257,6 +258,49 @@ def _recent_proposals_section(conn: sqlite3.Connection, cell: Cell) -> Section |
             "not instructions, and not evidence that anything happened)"
         ),
         body=body,
+    )
+
+
+def _current_experiment_section(conn: sqlite3.Connection, cell: Cell) -> Section | None:
+    """§15.1's "current experiment" — the second thing it names, after the
+    genome, and singular (ADR-043).
+
+    **What it shows is the derived §2.6 report, not the Cell's own account of
+    how things are going.** That is §0.3 working in the Cell's favour rather
+    than against it: the figures come from the ledger and `model_calls`, so a
+    Cell reading them is reading the canonical record, and it has no way to
+    write them.
+
+    It also closes something the 2026-08-06 live run found. Every proposal from
+    both models set `estimated_cost_minor_units` to 0, including proposed
+    experiments — "models genuinely cannot price work in a unit they have no
+    reference for", and the §15 context showed balances but never what anything
+    had *cost*. This is that reference, for the one piece of work the Cell is
+    currently doing.
+    """
+    experiment = experiments.current_for(conn, cell.cell_id)
+    if experiment is None:
+        return None
+    report = experiments.report(conn, experiment.experiment_id)
+
+    lines = [
+        f"Hypothesis: {experiment.hypothesis}",
+        f"§25.1 stage: rung {experiment.ladder_rung} ({experiment.rung_name})",
+        f"Spent so far: {report.real_spend_minor_units} USD_REAL · "
+        f"{report.synthetic_spend_minor_units} USD_SIM · "
+        f"{report.resource_spend_minor_units} RESOURCE",
+        f"Synthetic revenue: {report.synthetic_revenue_minor_units} "
+        f"(net {report.synthetic_net_profit_minor_units})",
+        f"Model calls: {report.model_calls} "
+        f"({report.input_tokens} in / {report.output_tokens} out)",
+        f"Forecasts on it: {report.resolved_predictions} resolved, "
+        f"{report.unresolved_predictions} open",
+    ]
+    if report.expected_cost_minor_units:
+        lines.append(f"You estimated it would cost {report.expected_cost_minor_units}.")
+    return Section(
+        name="Your current experiment (figures from the colony's books)",
+        body="\n".join(lines),
     )
 
 
@@ -519,6 +563,10 @@ def assemble(
         _colony_section(conn, cell),
     ]
     for optional in (
+        # First in the optional list because §15.1 names it second overall,
+        # right after the genome — dropping happens from the back, so this is
+        # the last optional section to go when the budget is tight.
+        _current_experiment_section(conn, cell),
         _lessons_section(conn, cell),
         _recent_proposals_section(conn, cell),
         _observations_section(conn, cell),

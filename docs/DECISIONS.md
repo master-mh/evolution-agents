@@ -1836,3 +1836,78 @@ from amendment ID to spec location is complete in one place:
     leaving them NULL would retroactively describe every past tick as a crash.
   - **The golden run is untouched.** `scheduler_ticks` is not in the semantic snapshot and no new
     audit event fires in the scenario, so this slice moves no expectation and no money.
+
+## ADR-043: An experiment's result is derived from the ledger, never stored, and its stage belongs to the Cell
+
+- **Status:** Accepted
+- **Spec ref:** §2.4, §2.5, §2.6, §9.2, §10.2, §10.5, §13.1, §13.2, §15.1, §25.1, §27.2, §31;
+  Charter C3, C8; ADR-018, ADR-031, ADR-035, ADR-039, ADR-041, ADR-042
+- **Context:** `experiment_id` has been a column in `ledger_entries` and `ledger_transactions` since
+  migration 0001, `model_calls` since 0010 and `prediction_register` since 0012;
+  `coroner_reports.experiment_ids_json` since 0007; `colony_config.max_parallel_experiments` since
+  0003; `ProposalKind.EXPERIMENT` since 0013. `reservations.settle` has been propagating
+  `experiment_id` onto ledger entries all along, and `mitosis predict --experiment <id>` has always
+  accepted any string and validated nothing. **The foreign key was exposed to the operator before
+  the table existed.** Seven spec sections reference an experiment and none defines one.
+- **Decision: §2.6 defines the report, and that is enough to build from.**
+  - **The report is a derived view, and the clause above it settles that.** §2.6 lists six
+    dimensions — synthetic revenue/profit, real cash, resource, shadow cost, human labour, reality
+    gap — and §2.5, immediately preceding, is "Balances are derived": authoritative figures come
+    from ledger entries and are never cached (Charter C3). Six dimensions also satisfies §10.2 and
+    §13.2's "do not rely on a single weighted scalar" from the definition rather than from taste.
+  - **There is no `experiment_results` table, despite §31 listing one.** §31 offers "suggested
+    entities" and does not mark that one Phase 1. A stored outcome is where §0.3 leaks back in — a
+    Cell may explain a result and never define one — and the surest way to keep that true is to give
+    it no column to write, the same way `proposal.py` has no field for what a Cell earned.
+    `test_there_is_no_experiment_results_table` is the guard, and deleting it should be a deliberate
+    act that revisits this ADR.
+  - **Stage belongs to the Cell, and §25.1's nine rungs are the only ladder.** Three clauses agree:
+    §10.5's coroner lists `stage_reached` (singular) beside `experiment_ids` (plural); §27.2's
+    dashboard pairs them as one field, "current experiment/stage"; and §13.1's
+    `normalised_cost = expected experiment cost / current stage tranche` would be circular if the
+    stage belonged to the experiment. So Phase 2's "stage gates" are the gates between §25.1's
+    rungs, not a second ladder, and `stage_reached` derives from the highest rung a Cell was funded
+    at *or* ran at.
+  - **§15.1 says "current experiment", singular**, so a partial unique index makes two running
+    experiments on one Cell unrepresentable rather than refused — ADR-018/ADR-033/ADR-035's move for
+    identity, applied to a state.
+  - **An unmeasurable dimension reports as `None`, never `0`.** Sandbox CPU needs §19's sandbox
+    (Phase 5) and human labour needs a `resource_usage.experiment_id` that does not exist. A `0`
+    would be a claim rather than a decline — the trap ADR-042 hit when a crashed tick recorded that
+    it had spent nothing.
+- **What it displaced.**
+  - **A stored results table**, which is what §31 suggests and what every reporting instinct wants.
+  - **Making §13.1's expected cost load-bearing.** The field already exists on the proposal, and the
+    2026-08-06 live run found it was **0 on all eight proposals from both models**, including
+    proposed experiments — models cannot price work in a unit they have never seen a reference for.
+    A cap resting on it would be a cap a Cell sets for itself. It is recorded; the reservation and
+    spend machinery already bounds the work. §15.1's new context section shows the *derived* cost of
+    the Cell's current experiment, which is the reference that field was missing.
+  - **Enforcing rung-appropriate spend.** A rung-1 experiment moving USD_REAL is a §25.1 violation,
+    but `autonomy.real_spending`, the grant path and the circuit breaker already gate real money.
+    The report surfaces the mismatch instead — ADR-039's principle that a local check here would be
+    a second, weaker copy of both.
+- **Consequences:**
+  - **§9.2's cap is a third refusal shape.** ADR-031 separated durable carrying capacity (which
+    justifies displacement) from a temporary birth rate (which a clock clears). This is neither: the
+    slot frees when an experiment *concludes*. `ExperimentCapacityError` is deliberately outside
+    `PopulationError`'s hierarchy so it cannot be caught as either, because both would suggest the
+    wrong remedy.
+  - **A dying Cell releases its experiment slot, and the seam settles before it reports.** §9.2 is
+    colony-wide and death is routine, so a leaked slot per death would ratchet the colony to its cap
+    and refuse every new experiment with nothing explaining why — the "a claim held before acting is
+    a lock and nothing sweeps it" shape ADR-036 logged for channel claims. It is **abandoned, never
+    concluded**: it reached no answer, and a coroner report listing a *running* experiment on a dead
+    Cell would be a false statement rather than a thin one.
+  - **`lifecycle.CoronerEnricher` is the §10.5 seam**, implemented by
+    `experiments.ExperimentCoroner` and injected by `death.py` and `displacement.py` — the shape
+    `population.Displacer`/`displacement.ObjectiveDisplacer` established. Optional for the same
+    reason the displacer is: a kernel without experiment tracking must still bury its dead. An
+    explicit `stage_reached` wins over the seam, so a replay or migration is never overwritten.
+  - `revenue.record_revenue` gains `experiment_id`, tagged on the **revenue leg** as well as the
+    cash leg: §2.6 reads the revenue account, and the cash leg alone would make earnings
+    indistinguishable from any other credit to the Cell.
+  - Golden expectation 19 → 20. **`balances` is identical in every book** — an experiment is a
+    record and a derivation. The expectation also scrubs a uuid that had been reaching the hash
+    inside a prediction's free-text claim; unrelated to experiments, surfaced by this slice shifting
+    the seeded id sequence by exactly one.

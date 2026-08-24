@@ -29,6 +29,7 @@ from . import (
     deliberation,
     displacement,
     events,
+    experiments,
     external_actions,
     gateway,
     genome,
@@ -642,6 +643,7 @@ def cmd_record_revenue(args: argparse.Namespace) -> None:
             book=book,
             note=args.note,
             artifact_id=args.artifact,
+            experiment_id=args.experiment,
             idempotency_key=args.idempotency_key,
         )
     except revenue.RevenueError as exc:
@@ -1048,6 +1050,125 @@ def cmd_set_autonomy(args: argparse.Namespace) -> None:
         )
     ):
         raise CliError("name at least one flag to change, e.g. --public-web-read on")
+    conn.close()
+
+
+def cmd_start_experiment(args: argparse.Namespace) -> None:
+    """§9.2/§25.1 — begin an experiment (ADR-043)."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        experiment = experiments.start(
+            conn,
+            cell_id=args.cell,
+            hypothesis=args.hypothesis,
+            expected_cost_minor_units=args.expected_cost,
+            ladder_rung=args.rung,
+        )
+    except experiments.ExperimentError as exc:
+        raise CliError(str(exc)) from exc
+    print(f"Experiment {experiment.experiment_id}")
+    print(f"  cell:       {experiment.cell_id}")
+    print(f"  hypothesis: {experiment.hypothesis}")
+    print(f"  §25.1 rung: {experiment.ladder_rung} ({experiment.rung_name})")
+    limits = population.get_limits(conn)
+    print(f"  running:    {experiments.running_count(conn)}"
+          f"/{limits.max_parallel_experiments} (§9.2)")
+    if experiment.ladder_rung == 1:
+        print("  Rung 1 is the flight simulator — no real money should reach this.")
+    conn.close()
+
+
+def cmd_conclude_experiment(args: argparse.Namespace) -> None:
+    """End an experiment and free its §9.2 slot."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        experiment = experiments.conclude(
+            conn,
+            experiment_id=args.experiment_id,
+            concluded_by=args.by,
+            note=args.note,
+            abandoned=args.abandon,
+        )
+    except experiments.ExperimentError as exc:
+        raise CliError(str(exc)) from exc
+    print(f"{experiment.status.upper()}: {experiment.experiment_id}")
+    print(f"  {experiment.conclusion_note}")
+    print(f"  Slot freed — {experiments.running_count(conn)} still running.")
+    print("  Nothing here is an outcome. `mitosis experiment <id>` derives that.")
+    conn.close()
+
+
+def cmd_experiments(args: argparse.Namespace) -> None:
+    """What the colony is testing."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    if args.cell:
+        rows = experiments.list_for(conn, args.cell)
+    else:
+        rows = [
+            experiments.get(conn, r["experiment_id"])
+            for r in conn.execute("SELECT experiment_id FROM experiments ORDER BY rowid")
+        ]
+    if not rows:
+        print("No experiments.")
+        conn.close()
+        return
+    limits = population.get_limits(conn)
+    print(f"{len(rows)} experiment(s); "
+          f"{experiments.running_count(conn)}/{limits.max_parallel_experiments} running (§9.2)")
+    for experiment in rows:
+        marker = "RUNNING" if experiment.is_running else experiment.status
+        print(f"  [{marker}] {experiment.experiment_id}  rung {experiment.ladder_rung}"
+              f" ({experiment.rung_name})")
+        print(f"      cell: {experiment.cell_id}")
+        print(f"      {experiment.hypothesis}")
+        if experiment.conclusion_note:
+            print(f"      -> {experiment.conclusion_note}  (by {experiment.concluded_by})")
+    conn.close()
+
+
+def cmd_experiment(args: argparse.Namespace) -> None:
+    """§2.6's experiment report, derived on read and stored nowhere (§2.5)."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        report = experiments.report(conn, args.experiment_id)
+    except experiments.ExperimentError as exc:
+        raise CliError(str(exc)) from exc
+
+    print(f"Experiment {report.experiment_id}  [{report.status}]")
+    print(f"  cell:       {report.cell_id}")
+    print(f"  hypothesis: {report.hypothesis}")
+    print(f"  §25.1 rung: {report.ladder_rung} ({report.rung_name})")
+    print()
+    print("  Report (SPEC.md §2.6 — derived from the books, not reported by the Cell)")
+    print(f"    Synthetic net profit:          {report.synthetic_net_profit_minor_units} USD_SIM"
+          f"  (revenue {report.synthetic_revenue_minor_units}, "
+          f"spend {report.synthetic_spend_minor_units})")
+    print(f"    Real API and cloud spend:      {report.real_spend_minor_units} USD_REAL")
+    print(f"    Resource consumed:             {report.resource_spend_minor_units} RESOURCE")
+    print(f"    Model calls:                   {report.model_calls} "
+          f"({report.input_tokens} in / {report.output_tokens} out)")
+    cpu = "unmeasurable" if report.sandbox_cpu_seconds is None else report.sandbox_cpu_seconds
+    human = "unmeasurable" if report.human_minutes is None else report.human_minutes
+    print(f"    Sandbox CPU:                   {cpu}")
+    print(f"    Human labour:                  {human}")
+    gap = ("no resolved forecasts" if report.reality_gap_mean_brier is None
+           else f"{report.reality_gap_mean_brier:.3f} mean Brier")
+    print(f"    Reality gap (§8.5):            {gap}"
+          f"  ({report.resolved_predictions} resolved, "
+          f"{report.unresolved_predictions} open)")
+    if report.expected_cost_minor_units:
+        print(f"    You estimated:                 {report.expected_cost_minor_units}")
+    print()
+    for note in report.unmeasured:
+        print(f"  not measured — {note}")
+    if report.ladder_rung == 1 and report.spent_real_money:
+        print()
+        print("  NOTE: §25.1 rung 1 is the flight simulator and this experiment moved "
+              "USD_REAL.")
     conn.close()
 
 
@@ -2536,6 +2657,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="artifact_id of what was sold (Amendment A3). Optional: a retainer or "
              "a correction has no deliverable behind it.",
     )
+    revenue_parser.add_argument(
+        "--experiment", default=None,
+        help="experiment_id this was earned under (§2.6). Optional, and the report "
+             "for an experiment that earned nothing is a fact rather than a gap.",
+    )
     revenue_parser.add_argument("--note", default="")
     revenue_parser.add_argument("--idempotency-key", default=None)
     revenue_parser.set_defaults(func=cmd_record_revenue)
@@ -2708,6 +2834,45 @@ def build_parser() -> argparse.ArgumentParser:
         help="required to turn real_spending on — this removes the human from the loop",
     )
     autonomy_parser.set_defaults(func=cmd_set_autonomy)
+
+    start_exp_parser = subparsers.add_parser(
+        "start-experiment", help="begin an experiment (SPEC.md §9.2, §25.1)"
+    )
+    start_exp_parser.add_argument("--cell", required=True)
+    start_exp_parser.add_argument("--hypothesis", required=True, help="what is being tested")
+    start_exp_parser.add_argument(
+        "--rung", type=int, default=1,
+        help="§25.1 ladder rung 1-9 (default 1, the flight simulator)",
+    )
+    start_exp_parser.add_argument(
+        "--expected-cost", type=int, default=0, dest="expected_cost",
+        help="§13.1's expected cost, in minor units. Recorded, not enforced",
+    )
+    start_exp_parser.set_defaults(func=cmd_start_experiment)
+
+    conclude_exp_parser = subparsers.add_parser(
+        "conclude-experiment", help="end an experiment and free its §9.2 slot"
+    )
+    conclude_exp_parser.add_argument("experiment_id")
+    conclude_exp_parser.add_argument("--by", default="operator")
+    conclude_exp_parser.add_argument("--note", required=True, help="what was learned")
+    conclude_exp_parser.add_argument(
+        "--abandon", action="store_true",
+        help="stopped without an answer, rather than reaching one",
+    )
+    conclude_exp_parser.set_defaults(func=cmd_conclude_experiment)
+
+    experiments_parser = subparsers.add_parser(
+        "experiments", help="what the colony is testing"
+    )
+    experiments_parser.add_argument("--cell", default=None)
+    experiments_parser.set_defaults(func=cmd_experiments)
+
+    experiment_parser = subparsers.add_parser(
+        "experiment", help="§2.6's experiment report, derived from the books"
+    )
+    experiment_parser.add_argument("experiment_id")
+    experiment_parser.set_defaults(func=cmd_experiment)
 
     artifacts_parser = subparsers.add_parser(
         "artifacts", help="what the colony has made (SPEC.md §20, §31)"

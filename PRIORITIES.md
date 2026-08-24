@@ -510,7 +510,24 @@
 - [ ] **Aggregate-invoice reconciliation** — the half ADR-023 provably cannot do. Per-call reconciliation leaves ADR-020's sub-cent rounding overstatement exactly where it was (3.5¢ reconciles back through the same ceiling to the 4¢ already recorded); only an invoice *total* spanning many calls can post the correction. Additive: needs an invoice-level record, reusing all the per-call sign handling and breaker registration.
 - [ ] **Forward recovery for the gateway** — ADR-022's deferred alternative, which belongs with the reconciliation plumbing. Rollback is atomic but loses the provider's reported usage, so a crashed call still needs a human. Recording the response durably before applying the accounting (a `settling` status) would let recovery finish the settlement automatically.
 - [ ] Tighten the pre-call token estimate — `providers._estimate_tokens` is a deliberate over-estimate (2 chars/token). The provider's `count_tokens` endpoint would cut over-reservation sharply and make cost overruns (ADR-021) rarer.
-- [ ] Experiment tracking — the other Phase 2 prerequisite; also unblocks `max_parallel_experiments` and the coroner report's `experiment_ids`/`stage_reached` (currently always empty/None).
+- [x] **Experiment tracking — DONE** (2026-08-24), ADR-043. `experiments.py` + migration 0026 +
+  four CLI verbs. **The largest socket cluster in the repo, and most of it was live plumbing rather
+  than dead columns** — `experiment_id` threaded through `gateway`/`prediction`/`ledger`,
+  propagated onto ledger entries by `reservations.settle`, and `mitosis predict --experiment <id>`
+  validating nothing. Seven sections reference an experiment and none defines one; **§2.6 defines
+  the *report*, and §2.5 immediately above it ("Balances are derived") makes that report a derived
+  view rather than a stored row.** So there is **no `experiment_results` table despite §31 listing
+  one** — a stored outcome is where §0.3 leaks back in, and a guard test defends the refusal.
+  **Stage belongs to the Cell**: §10.5's singular `stage_reached` beside plural `experiment_ids`,
+  §27.2's "current experiment/stage", and §13.1's ratio all agree, so §25.1's nine rungs are the
+  only ladder and Phase 2's "stage gates" are the gates between them. §15.1's singular "current
+  experiment" is a partial unique index. **Found while building: a dead Cell's running experiment
+  leaked its §9.2 slot forever**, so the coroner seam now settles before it reports, abandoning
+  rather than concluding. `max_parallel_experiments` is enforced as a **third refusal shape**
+  (ADR-031's two plus one that frees when an experiment concludes), deliberately outside
+  `PopulationError`. 916 tests (29 new); golden expectation 19 → 20 with **balances identical in
+  every book**, and `coroner_reports.stage_reached` finally non-null after being empty since
+  migration 0007. Teeth-checked sixteen ways; hand-verified end to end on a live colony.
 - [ ] §24 gateway features left out of the slice: routing by task type (§24.3), controlled retries (a retry after `execution_unknown` risks double-billing), model competition, and reacting to provider drift as a §8.4 regime change (drift is *recorded* — `resolved_model`/`api_version` — but nothing consumes it). **Structured-output validation was struck from this list** (2026-08-22): it exists, at the deliberation layer rather than the gateway — `proposal.parse` is strict, `extra="forbid"`, with `FORBIDDEN_FIELD_SENSE` as a schema tripwire. Anything added at the gateway must not duplicate it. *Disproved by:* `proposal.parse`.
 - [ ] Remaining CLI — **narrowed 2026-08-22** from `list-cells/show-cell/kill-cell/ledger/verify-ledger`, most of which had already landed among the CLI's 42 verbs. Still genuinely absent: **`list-cells`** (`status` prints counts and per-status/per-type tallies, but no roster) and **`ledger`** (no transaction browser). Struck: `verify-ledger` (`status` prints per-book conservation and `ledger.verify_chain`; `calibration` prints `prediction.verify_chain`), `show-cell` (substantially covered by `cell-fitness`), and `kill-cell` (`reap` kills on objective criteria — a *forced* operator kill is a §10.5 question, not an additive CLI verb, and should be argued before it is built). Purely additive, no blockers. *Disproved by:* `mitosis --help`.
 - [x] **A dead Cell's estate — DONE** (2026-08-22), ADR-028. `kill()` now releases the dead Cell's
