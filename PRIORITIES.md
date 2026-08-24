@@ -288,7 +288,7 @@
   because it produces many artifacts"), so nothing counts them and a structural test guards `death`
   and `outcome`. **Rights propagate most-restrictive-wins and never reset**, closing §20.2's
   one-step launder: everything derived from a fetched page is `commercial_use: unknown` and
-  unsellable until a person establishes the rights. **Production is free, export is gated** (§28
+  unsellable until a person establishes the rights — which ADR-041 is now the way to do. **Production is free, export is gated** (§28
   Phase 8 gates *external use*; §19.3's export gateway), the opposite of the tool surface and for a
   stated reason. Amendment A3's `ledger_entries.artifact_id` is populated for the first time since
   migration 0001, and §15.2's "artifact index" — its last unbuilt memory tier — now exists. 781
@@ -355,11 +355,38 @@
   never blocked on overturning ADR-034. 839 tests (11 new across the two slices); golden expectation
   17 → 18 (ADR-039), unchanged by ADR-040. Teeth-checked ten ways across the two; hand-verified on a
   live colony, where a tick logged `ran | 2 deliberation(s); expired 0 request(s), 1 grant(s)`.
+- [x] **Rights a person can establish — DONE** (2026-08-24), ADR-041. `rights.py` + migration
+  0024 + `set-rights`/`rights`. The gap four consecutive slices flagged (ADR-035, 036, 037, 040):
+  §20.2's inheritance ran one way only, so an artifact built on a fetched page was `unknown`
+  forever and `real_commerce` could be opened and still sell nothing. **The subject is a source,
+  never an artifact** — per-artifact stamping is the laundering path with a person holding the pen,
+  and it reopens on the next artifact from the same page. **Two subject kinds**: `domain`, and
+  `colony` for the colony's own output, which was half the gap and nearly missed — a report written
+  unaided was equally unsellable and no domain attestation can reach it. **Matching is exact host,
+  deliberately unlike the egress allowlist beside it**, because over-matching there means reading a
+  page and here means *selling* under a licence that never covered it (§20.3). **Retroactive
+  without rewriting anything**: §3.6 rules out cascading into the stored columns, so
+  `check_exportable` re-derives and withdrawal is an attestation of `unknown` rather than a
+  `revoked` flag. §0.3 is enforced at both ends — an AST walk over every module bars a Cell-reachable
+  writer, and `inherit_provenance` refuses an `own_provenance` carrying `permitted`. `artifacts.
+  create`'s `own_provenance` was **the eleventh reserved socket found half-built** (declared since
+  ADR-035, never passed) and is now stored so the recomputation is exact by construction. 869 tests
+  (30 new); golden expectation 18 → 19, where the `artifacts` section is **byte-identical** and that
+  is the assertion (**balances identical in every book**). Teeth-checked fourteen ways;
+  hand-verified end to end on a live colony, which surfaced two message bugs nothing else would
+  have. A self-review then found that **§15.2's artifact index was still feeding the Cell the
+  creation-time position** — the gap moved upstream rather than closed, since a Cell reading
+  `unknown` never proposes the sale the open gate would now allow.
 - [ ] **Charter C13's router exists; C13 is still unsatisfied.** `artifacts.check_exportable`
   refuses `SIM_ADVERSARIAL` and is tested, but nothing in the kernel can *produce* that label —
   §18.2 is about lineages evolved under adversarial synthetic incentives, and the shadow economy is
   Phase 6. C13 remains the one Charter clause with no `charter_*` test, now for a precise reason
-  rather than a vague one. *Disproved by:* anything that writes `SIM_ADVERSARIAL`.
+  rather than a vague one. *Disproved by:* anything **in `src/`** that writes `SIM_ADVERSARIAL`
+  from a lineage's history — **narrowed 2026-08-24**, because ADR-041's
+  `test_charter_c13_refuses_regardless_of_any_attestation` hand-constructs the label through
+  `own_provenance` to prove the router still refuses, and a pointer reading "anything that writes
+  `SIM_ADVERSARIAL`" would have been satisfied by a test fixture exercising the gate rather than by
+  the evolutionary machinery §18.2 actually asks for.
 - [x] **The `external_publish` decision — DONE** (2026-08-23), ADR-037. `channel_registry.py` +
   migration 0022. **The flag stays off, and the reason it could not simply be turned on is that it
   was gating two capabilities from two different phases.** `external_publish` was the only flag in

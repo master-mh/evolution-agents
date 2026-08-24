@@ -6,72 +6,103 @@ arc, real-spend type registration, the first real paid call, revenue + Ollama, t
 account fix, the prediction register, death criteria, §9.3 displacement, the agent loop, the
 scheduler, the §23 approval queue, the dead-Cell estate, the rung-7 promotion path, the §25.2
 read-back, §9.2's birth cap, Auditor Cells, genome content, the tool surface, the artifact
-store, the external-action registry, the §27.1 autonomy decisions, and grant regeneration,
-2026-07-21 through 2026-08-23):
+store, the external-action registry, the §27.1 autonomy decisions, grant regeneration, and the
+expiry sweep, 2026-07-21 through 2026-08-23):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-23 — The sweep runs before the guards
+## 2026-08-24 — Rights a person can establish
 
-`scheduler.tick` (ADR-040). ADR-039 gave an unconsumed grant a regeneration path and ADR-027 gave a
-pending request one. Both had exactly one caller — `mitosis expire-approvals` — so **the machinery
-built for an absent operator only ran when the operator was present to type a command.** A cron
-tick is the thing that is actually there when nobody is.
+`rights.py` + migration 0024 + `set-rights`/`rights` (ADR-041). ADR-035 built §20.2's inheritance
+in one direction: rights tighten and never loosen, `fetchers.py` cannot read a licence, so **an
+artifact built on a fetched page was `commercial_use: unknown` forever** and ADR-037's
+`real_commerce` flag could be opened with every listing still refused at the export gate. Flagged
+by four consecutive slices. `check_exportable` had already written the instruction it could not
+carry out — *"Establish the rights position on its sources first."*
 
-### Wiring it in is one line. The placement is the decision.
+### The subject is a source, and that is the whole design
 
-The sweep runs **before `_guard`**, which is the opposite of everything else in `tick`.
+Stamping a position onto an artifact is the obvious build and it is §20.2's laundering path with a
+person holding the pen: it does not compose, it does not reach the next artifact from the same
+page, and it asks someone to rule on a derived work when what a person can actually read is a
+licence. So the operator attests a **source**, and the existing fold does the rest.
 
-Every guard below it decides whether the colony may **do** something: the metabolic alarm, the
-`real_spending` gate, vacation mode. They stop spending, deliberating, acting. The sweep only ever
-**removes** permission — it expires a request nobody decided and an approval nobody consumed, and
-it cannot authorise anything. Gating it behind the guards would invert their purpose, because **a
-halt that also stopped expiry would preserve exactly the authorisations the halt exists to stop
-being used.**
+**Two subject kinds, both real today.** `domain` for external sources. `colony` for the colony's
+own output — `inherit_provenance` starts a source-less artifact at `unknown` and says outright
+that whether the colony may sell what it wrote "is a question for a person, not a default", and
+**nothing could ask the person**. That case was half the gap and was nearly missed: the entry
+that flagged this described only fetched pages, but a report the colony wrote unaided was equally
+unsellable, and no domain attestation can reach it because there is no domain.
 
-Vacation mode is what makes that bite rather than being a nicety. §23.3 pauses external-facing work
-when the operator is unresponsive — precisely the condition under which approvals lapse unconsumed.
-Sweeping after the guard would disable the mechanism built for an absent operator *whenever the
-operator is absent*. That is the same inversion this repo hit twice in one week: a disproof pointer
-that named the bug as its own resolution, and now a guard that would have switched off the thing it
-exists to make safe.
+**Matching is exact host, deliberately unlike the egress allowlist it sits beside.** Over-matching
+on the allowlist means *reading* a page the operator did not picture; over-matching here means
+*selling* material under a licence that never covered it — §20.3's legal liability. Same-shaped
+key, opposite consequence, so the looser rule is not inherited. ADR-036 had already recorded the
+mirror of this: "scope it the same way as the neighbouring query" is not a safe default here.
 
-The alternative it displaced is the one a reader would naturally write — put the sweep beside the
-wakes, since "expire, then run what expiry produced" reads as a single step. It is two steps, and
-they belong on opposite sides of the halt.
+### Retroactive without rewriting anything — §3.6 decides it, not taste
 
-### The cost stays guarded, and that falls out rather than needing a rule
+The natural build cascades the new position into the `artifacts` rows. That would mean an artifact
+exported non-commercially under `unknown` afterwards reads as having been `permitted` at the time,
+which is not what happened. §3.6's "never edit history to correct something — post a new, signed
+adjustment" is the ledger's rule and it is the right one here, so `check_exportable` re-derives
+against current attestations (`effective_provenance`) and the stored columns stay the record. The
+attestation *is* the adjustment; withdrawal is an attestation of `unknown` with its own basis,
+which keeps *why* on the record where a `revoked` flag would leave an absence.
 
-Expiring is free. The wakes it enqueues are only *processed* by `run_ready_wakes`, which a halted
-tick returns before reaching. So a halted colony withdraws stale authority immediately and leaves
-the re-deliberation pending until a tick is allowed to run: **authority goes at once, spending
-waits.** No extra condition expresses this — it is what the placement already means.
+The cost is two notions of one artifact's rights — the drift shape this repo keeps finding in its
+own prose — contained by making the division explicit: **the effective fold is load-bearing in
+exactly one place**, and `mitosis artifact` prints it only when it differs, labelled.
 
-On a tick that does run, the regenerated wake is processed in the same tick, and that is correct
-rather than merely convenient: §23.3's staleness sits between the original approval and now, and
-"now" is already later than the window that lapsed.
+### §0.3 at both ends, and a socket that would have made a new invariant true by accident
+
+No Cell-reachable module writes an attestation — an AST walk over *every* module except `cli.py`,
+`golden.py` and `rights.py`, rather than a hand-picked subset the next module could fall outside.
+At the other end `inherit_provenance` now **refuses an `own_provenance` carrying `permitted`**:
+with no sources that declaration alone decides the artifact, so a producer able to make it would
+be defining the one canonical fact between the colony and revenue. `unknown` and `prohibited`
+remain — the asymmetry §23.5 already forces on `claimed_tier`.
+
+**Filing this through the §23 queue was the alternative and it inverts §0.3**: the queue is where
+a *Cell* asks to act, so rights would arrive as a Cell nominating its own position for a human to
+countersign, and §23.5 warns the queue will be optimised against.
+
+`artifacts.create` has taken an `own_provenance` since ADR-035 and **nothing has ever passed one**
+— the eleventh reserved socket found half-built. It was folded into the stored columns and then
+unrecoverable, harmless while the fold was the only answer and not harmless once the position is
+re-derived. Now stored (`own_provenance_json`), so the recomputation is exact by construction
+rather than by accident.
 
 ### Verification
 
-- **839 tests passing** (4 new, 0 removed; up from 835). **Golden run unchanged** — the scenario's
-  grants are not stale at wall-clock tick time, so the sweep runs and correctly finds nothing.
-- **Teeth-checked four ways**, each failing its named test: `tick` not sweeping at all (the state
-  before this slice), the sweep gated behind the guards (the inversion), a halted tick processing
-  the wakes it regenerated, and the sweep losing idempotence across ticks.
-- **Hand-verified on a live colony.** A tick logged
-  `ran | 2 deliberation(s); expired 0 request(s), 1 grant(s)` — the scheduled wake plus the
-  regenerated one — with the grant showing `expired_at_utc` set, `regenerated_wake_key` set,
-  `consumed_at_utc` NULL, the grant total still 1 (no renewal), the request still `approved`, and
-  the regenerated wake `processed`. The halted-tick path is covered by tests rather than by hand,
-  since reaching it live needs either a paid provider or a tripped alarm.
-- `TickResult` gains `requests_expired` / `grants_expired`, and the counts reach the tick log's
-  `detail` on every outcome including a halt — a halted tick that said only "nothing was woken"
-  would hide the one thing that did happen.
-- **Noted, not special-cased:** regenerated wakes are not bounded by `max_cells`, which caps only
-  scheduled research wakes, so a burst of expiries becomes a burst of deliberations in one tick.
-  That is bounded by the per-request/hour/day real-spend caps inside a tick and the metabolic alarm
-  across ticks — the same guards that bound everything else, on ADR-039's principle that a local
-  cap would be a second, weaker copy of both.
-- Next: with this, §23.3 is fully built — SLAs, expiry, regeneration on both clocks, vacation mode
-  and the metabolic alarm. The nearest open work is `set-rights`, now flagged by four consecutive
-  slices: an artifact built on a fetched page is `commercial_use: unknown` forever, so
-  `real_commerce` could be opened and still sell nothing.
+- **869 tests passing** (30 new, 0 removed; up from 839). **Golden expectation 18 → 19**: one
+  `rights_attestations` row, `rights_attested: 1`, and the `artifacts` section **byte-identical** —
+  the attestation is made after the artifact is exported precisely so that what does *not* move is
+  the assertion. A kernel that cascaded passes one scenario assertion and fails the other; one that
+  read the stored column at the gate fails the reverse. Five of thirteen `model_calls` gain exactly
+  one input token (see below); **`balances` is identical across every account in every book.**
+- **Teeth-checked fourteen ways**, each failing its named test: the cascade, the export gate reading
+  the stored column (the state before this slice), dotted-suffix matching, least-restrictive-wins
+  inverted, the §0.3 clamp removed, an attestation waiving Charter C13, wall-clock ordering, the
+  named-licence guard removed, the colony position leaking into sourced artifacts, the effective
+  fold not recursing, `own_provenance` not stored, and a Cell-reachable module calling `attest`.
+  plus the two below. **One MISSed on the first attempt and the mutation was at fault** — it added
+  an import rather than a call, and the test is about calls.
+- **A self-review found two defects the suite and the golden run both passed over**, and the first
+  is the more serious. **§15.2's artifact index was feeding the Cell the creation-time position**,
+  so an operator could establish a source's rights and the Cell whose work had just become sellable
+  would still read `unknown` and never propose selling it — the gap moved one step upstream and
+  somewhere quieter, with the export gate open and nothing ever reaching it. The index now shows the
+  effective position (reading one is not §0.3-sensitive; defining one is). That is the whole of the
+  golden run's token diff: `permitted` is two characters longer than `unknown`, the estimator is
+  2 chars/token, and the five affected calls are exactly the deliberations after the attestation.
+  Second, `rights.history()` given a `subject_kind` and no `subject` **silently returned the whole
+  table** — the worst shape for a query an operator runs to check what they attested. Both are
+  fixed, tested and teeth-checked.
+- **Hand-verified end to end on a live colony.** A source-less artifact refused commercial export;
+  `set-rights --colony` opened the gate while the stored row still read `unknown`; withdrawing
+  closed it again and `rights --history` showed both positions with both reasons. Two message bugs
+  surfaced only here and are fixed: `Attested colony colony`, and a refusal telling the operator of
+  an artifact that read nothing to "establish the rights position on its sources" — advice with no
+  route. The refusal now names the remedy that exists for the artifact in hand, with a test.
+- Next: the nearest open work is that **nothing runs the scheduler** — `tick` is composable with
+  cron per §30.1, but no supervision, no restart-on-failure and no alert when ticks stop.

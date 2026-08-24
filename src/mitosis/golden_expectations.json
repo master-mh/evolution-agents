@@ -1,5 +1,5 @@
 {
-  "expectation_version": 18,
+  "expectation_version": 19,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "e322df1a2343b8c845ac5dce31b3ee30edf2705d3bbbfec25f3a768a015dd534",
+  "semantic_hash": "983509dd9de884fbda62e8c1c2a4c83473917348a52d2bf2e9f3e03772041c1d",
   "snapshot": {
     "approval_grants": {
       "consumed": 5,
@@ -198,6 +198,7 @@
       "promotion_pool_funded": 1,
       "real_spend_limit_configured": 1,
       "request_audited": 1,
+      "rights_attested": 1,
       "tool_call_finished": 1,
       "tool_call_requested": 1
     },
@@ -679,7 +680,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3225,
+        "input_tokens": 3226,
         "mirror_minor_units": 0,
         "output_tokens": 216,
         "pricing_table_version": "2026-07-27",
@@ -711,7 +712,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3295,
+        "input_tokens": 3296,
         "mirror_minor_units": 0,
         "output_tokens": 225,
         "pricing_table_version": "2026-07-27",
@@ -727,7 +728,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3350,
+        "input_tokens": 3351,
         "mirror_minor_units": 0,
         "output_tokens": 218,
         "pricing_table_version": "2026-07-27",
@@ -759,7 +760,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3391,
+        "input_tokens": 3392,
         "mirror_minor_units": 0,
         "output_tokens": 224,
         "pricing_table_version": "2026-07-27",
@@ -775,7 +776,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3391,
+        "input_tokens": 3392,
         "mirror_minor_units": 0,
         "output_tokens": 225,
         "pricing_table_version": "2026-07-27",
@@ -1379,7 +1380,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3225,
+        "quantity": 3226,
         "resource_type": "input_tokens"
       },
       {
@@ -1409,7 +1410,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3295,
+        "quantity": 3296,
         "resource_type": "input_tokens"
       },
       {
@@ -1427,7 +1428,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3350,
+        "quantity": 3351,
         "resource_type": "input_tokens"
       },
       {
@@ -1457,7 +1458,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3391,
+        "quantity": 3392,
         "resource_type": "input_tokens"
       },
       {
@@ -1469,7 +1470,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3391,
+        "quantity": 3392,
         "resource_type": "input_tokens"
       },
       {
@@ -1477,6 +1478,16 @@
         "minor_units": 1,
         "quantity": 225,
         "resource_type": "output_tokens"
+      }
+    ],
+    "rights_attestations": [
+      {
+        "attested_by": "golden-operator",
+        "basis": "fixed scenario; the publisher's licensing page states CC-BY-4.0",
+        "commercial_use": "permitted",
+        "licence": "CC-BY-4.0",
+        "subject": "golden.test",
+        "subject_kind": "domain"
       }
     ],
     "tool_calls": [

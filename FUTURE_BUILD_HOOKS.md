@@ -813,3 +813,62 @@ actually queued for building — this file is memory, not a backlog to work thro
   end to end, and the shape of how it got there is instructive: ADR-027 built the visible half,
   ADR-039 found the invisible half by chasing a stale comment, and ADR-040 found that both halves
   only ran when a person asked. None of the three gaps were visible from the clause alone.
+
+## From `set-rights` (2026-08-24, ADR-041)
+
+- **The three "no `set-rights` complement" entries above are now closed** — one flagged at ADR-035,
+  one at ADR-036, one at ADR-037, each stating the same gap from a point further down the pipeline.
+  Worth recording that the *third* statement is the one that made it urgent, because it reached the
+  end: "the flag would be on, the channel open, and every listing refused at the export gate." The
+  entries stay above (this file is append-only); this line is the resolution.
+- **The colony half was never in any of them.** All three described artifacts derived from fetched
+  pages. A report the colony wrote unaided was equally unsellable — `inherit_provenance` starts it
+  at `unknown` on purpose — and no domain attestation can reach it. Found by reading the fold
+  rather than the entry, which is the argument for reading the code that the entry describes.
+- **A rights position is site-wide, and some sites are not.** `github.com`, a marketplace, any
+  user-content host: one licence per page, and a domain attestation is the wrong granularity for
+  them. The kernel refuses `permitted` without a named licence and records a basis, and that is all
+  it can check — the operator is trusted for the rest. **A URL-prefix subject** (`https://example.
+  com/docs/`, longest-prefix-wins) is the additive refinement, and the `subject_kind` discriminator
+  exists so it needs no schema break. It was left out because prefix normalisation (trailing slash,
+  scheme, case, query) is its own rabbit hole and no case demanded it yet.
+- **An attestation cannot say "this source contains personal data."** §20.1 lists it and
+  `contains_personal_data` folds with `any()`, so an operator could only ever *add* the flag — a
+  strictly-tightening and genuinely useful thing. Left out because the column gates nothing today:
+  `check_exportable` reads taint and `commercial_use` and never touches it. Whatever enforces
+  §20.1's retention rules will want both.
+- **`retention_rule` and `permitted_uses` are still recorded and still unenforced**, and this slice
+  makes `permitted_uses` slightly worse: an operator now writes real prose into it ("redistribution
+  and resale with attribution") and nothing reads it. The gap named at ADR-035 is unchanged; the
+  text in the column is now more likely to look load-bearing than it did.
+- **The export record points at the audit event, not at the attestation.** `artifact_exported`
+  metadata carries `commercial_use_effective` and `licence_effective`, which is enough to explain a
+  commercial export after the position is withdrawn — but there is no foreign key to the
+  attestation that authorised it, so "which statement did we rely on" is a join through timestamps.
+  An `export_attestation_id` column would close it, and would want to come with whatever enforces
+  §20.1's remaining fields rather than alone.
+- **Nothing re-checks an artifact whose rights were withdrawn after it was exported.** Export is a
+  one-time recorded act and the colony does not deliver anything (§28 Phase 8), so there is no
+  recall path and nothing to recall through. Real once there is a channel: a withdrawal ought to
+  produce a wake, or at minimum a report of what went out under the position now withdrawn.
+- **The twelfth reserved socket, and a new failure mode for the habit.** `own_provenance` was
+  declared by `artifacts.create` at ADR-035 and never passed — the eleventh — but the lesson is a
+  variant of the usual one. The earlier ten were "the thing you were about to build already
+  half-exists." This one was inert *and* would have made a new invariant true by accident:
+  `effective_provenance` recomputes exactly only because nothing had ever filled the socket, and
+  the first caller to fill it would have silently broken that. **Grep for the socket, and then ask
+  whether an empty one is load-bearing in its emptiness.**
+- **The observations block still shows the fetcher's licence, not the attested one.** `context.
+  observations_for` renders `tool_calls.licence` / `commercial_use` straight from the row, so a Cell
+  looking at a page it fetched reads `unknown` even where an operator has since attested the
+  domain. Left alone: that block is explicitly framed as untrusted external content ("came from
+  OUTSIDE the colony"), and overlaying an operator's statement inside it would put a trusted fact
+  under an untrusted banner. The artifact index was fixed instead, because that is where the
+  staleness had a consequence — a Cell deciding about its own product. Worth revisiting with
+  whatever gives operator-sourced facts their own place in the prompt.
+- **A self-review caught what the suite and the golden run did not, and the shape is worth
+  keeping.** Both defects were *downstream* of a correct mechanism: the export gate read the
+  effective position (right), and the Cell's own view of the same artifact did not (wrong), so
+  every test of the gate passed while the feature could not actually be used. The general form —
+  **fix the gate, forget the eye** — is what to look for whenever a kernel guarantee changes and
+  something else renders the same fact.

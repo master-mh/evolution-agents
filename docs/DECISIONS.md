@@ -1673,3 +1673,93 @@ from amendment ID to spec location is complete in one place:
     the per-request/hour/day real-spend caps inside the tick and by the metabolic alarm across
     ticks — the same guards that bound everything else. Noted rather than special-cased, on the
     ADR-039 principle that a local cap here would be a second, weaker copy of both.
+
+## ADR-041: Rights are established on a source, never on an artifact, and establishing them rewrites nothing
+
+- **Status:** Accepted
+- **Spec ref:** §20.1, §20.2, §20.3, §0.3, §3.6, §23.5, §19.3; Charter C13; ADR-035, ADR-036,
+  ADR-037, ADR-040
+- **Context:** ADR-035 built §20.2's rights inheritance in one direction. An artifact takes the
+  most restrictive position among its sources, `fetchers.py` cannot read a licence so every fetched
+  page is `commercial_use: unknown`, and the export gate refuses commercial export of anything not
+  `permitted`. The direction was right; the consequence was that **rights could only ever tighten**.
+  An artifact built on a fetched page was `unknown` forever, and — as ADR-037 spelled out when it
+  added the `real_commerce` flag — that flag could be opened and every listing would still be
+  refused at the export gate. Flagged as missing by four consecutive slices. `check_exportable` had
+  even written the instruction it could not carry out: *"Establish the rights position on its
+  sources first."*
+- **Decision: an operator attests a *source*; an artifact's position is re-derived, never
+  rewritten.**
+  - **The subject is a source, not an artifact.** Stamping `commercial_use` onto one artifact is
+    §20.2's laundering path with a person holding the pen. It does not compose (ten artifacts from
+    one page need ten attestations), it does not reach forward (the eleventh is `unknown` again),
+    and it asks someone to rule on a derived work when what a person can actually read is a licence.
+  - **Two subject kinds, both real today, and the discriminator is required** — ADR-037's rule that
+    the key a thing collides on is named rather than implied. `domain` covers external sources.
+    `colony` covers the colony's own output: `inherit_provenance` starts a source-less artifact at
+    `unknown` and says outright that whether the colony may sell what it wrote "is a question for a
+    person, not a default" — and until now nothing could ask the person. No domain attestation can
+    reach that case, because there is no domain.
+  - **Matching is exact host, deliberately unlike the egress allowlist beside it.**
+    `_check_egress_locked` matches `example.com` and everything under it; over-matching there means
+    *reading* a page the operator did not picture. Over-matching here means *selling* material under
+    a licence that never covered it, which §20.3 files under legal liability. Same-shaped key,
+    opposite consequence, so the looser rule is not inherited. (ADR-036 recorded the mirror of this:
+    "scope it the same way as the neighbouring query" is not a safe default in this area.)
+  - **The effective position is computed, and the stored columns are left alone (§3.6).**
+    `check_exportable` reads `effective_provenance`, which re-derives from the lineage against
+    *current* attestations. Nothing cascades into the `artifacts` table.
+  - **§0.3 is enforced at both ends, structurally.** No Cell-reachable module writes an
+    attestation — an AST walk over every module except `cli.py`, `golden.py` and `rights.py` says
+    so, and no tool declares the capability. At the other end, `inherit_provenance` **refuses an
+    `own_provenance` carrying `permitted`**: with no sources that declaration alone would decide the
+    artifact, so a producer able to make it would be defining the one canonical fact between the
+    colony and revenue. It may still declare `unknown` or `prohibited` — the same asymmetry §23.5
+    forces on `claimed_tier`, where a Cell may raise its own risk and never lower it.
+- **What it displaced.**
+  - **Filing rights through the §23 approval queue**, which is the obvious home for "an operator
+    decides, with an audit trail" and inverts §0.3. The queue is where a *Cell* asks to act, so
+    routing rights through it needs a Cell to nominate its own rights position for a human to
+    countersign — and §23.5 warns the queue "is itself part of the environment and will be optimised
+    against". A Cell that can file "please mark my sources commercially permitted" holds a lever on
+    the one gate between it and revenue. An attestation is not a request from inside the colony at
+    all.
+  - **Cascading the new position into the stored columns**, which is what "make the rights
+    retroactive" most naturally means and is ruled out by §3.6 rather than by taste: an artifact
+    exported non-commercially under `unknown` would afterwards read as having been `permitted` at
+    the time, which is not what happened. "Never edit history to correct something — post a new,
+    signed adjustment" is the ledger's rule and it is the right one here. The attestation *is* the
+    adjustment.
+  - **A `revoked` flag.** Withdrawal is a new attestation of `unknown` carrying its own basis, so
+    the record says *why* a position was withdrawn where a flag would leave an absence. One
+    mechanism, not two, and the same §3.6 move again.
+- **Consequences:**
+  - **Two notions of one artifact's rights**, which is exactly the drift this repo keeps finding in
+    its own comments. Contained by making the division of labour explicit and testable:
+    `check_exportable` is the only place the answer is load-bearing and it reads the effective one;
+    the stored columns are the record and the display. `mitosis artifact` prints the effective
+    position only when it differs, labelled.
+  - **The two export refusals now read from two different places, and that is deliberate.** Charter
+    C13 reads the taint labels *stored on the row* — taint is a fact about origin, it only unions,
+    and no attestation touches it. §20.2 reads the effective fold. `test_the_effective_taint_matches_
+    the_stored_taint` is what defends the split: if taint ever became re-derivable differently, C13
+    would be reading the weaker of two answers and nothing else would notice.
+  - **`artifacts.own_provenance_json` exists because a socket nobody has filled must not make a new
+    invariant true by accident.** `create` has taken an `own_provenance` since ADR-035 and nothing
+    has ever passed one — the eleventh reserved socket found half-built. It was folded into the
+    stored columns and then unrecoverable, which did not matter while the fold was the only answer.
+    Storing it keeps the effective position exactly recomputable for the first caller that uses it.
+  - **`permitted` requires a named licence.** "You may sell this, and I cannot say under what" is
+    the shape a hurried wave-through takes and is the only part of the operator's judgement the
+    kernel is in a position to check. A required `basis` carries the rest: a fetched page can assert
+    its own licence in its own body and a Cell chooses what to fetch, so the record has to keep "the
+    publisher's licensing page" distinguishable from "the page said so".
+  - Ordering is by insertion, not wall clock — §6.3 keeps the simulated and wall clocks unmixed, so
+    a timestamp is not a total order and two attestations in one second would otherwise have no
+    defined winner.
+  - **An attestation is not coupled to the egress allowlist**, in either direction. They are two
+    decisions — "may we read this" and "may we sell what we read" — made at different times and
+    possibly by different people, and coupling them would mean denying a domain silently erased the
+    rights record for artifacts already built from it.
+  - Golden expectation 18 → 19: one `rights_attestations` row and `rights_attested: 1`, with the
+    `artifacts` section **byte-identical** — the assertion being what does *not* move.

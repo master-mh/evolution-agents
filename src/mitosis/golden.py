@@ -82,6 +82,7 @@ from . import (
     reservations,
     resource_metering,
     revenue,
+    rights,
     tool_registry,
     tools,
 )
@@ -563,7 +564,48 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           *consumed*), so an expired grant has nothing to release and expiry
 #           has no ledger consequence. A diff that touched the books here would
 #           mean granting had quietly started holding something.
-EXPECTATION_VERSION = 18
+#   18 -> 19 (rights an operator establishes; §20.1/§20.2/§20.3, §0.3, §3.6;
+#             ADR-041).
+#           **Two sections, and the section that does *not* move is the
+#           assertion.** The scenario attests `golden.test` as CC-BY-4.0 with
+#           commercial use permitted, *after* the artifact citing it was made and
+#           exported.
+#           (a) **`rights_attestations` (new)**: one row — `domain golden.test`,
+#               `CC-BY-4.0`, `permitted`, by `golden-operator`, with its basis
+#               pinned in full. §20.3 makes an unfounded position a liability
+#               rather than a mistake, so a regression that kept the permission
+#               and dropped the operator's stated reason is precisely what this
+#               section exists to fail on.
+#           (b) **`audit_event_types`** gains `rights_attested: 1`.
+#           (c) **`artifacts` is byte-identical**, and that is the point of
+#               placing the attestation last. `commercial_use` still reads
+#               `unknown` on the one artifact in the run: §3.6 says post an
+#               adjustment rather than edit history, so establishing a rights
+#               position must not rewrite what an artifact was born with. The
+#               scenario asserts that column directly *and* asserts that
+#               `check_exportable(commercial=True)` — which refused a few lines
+#               earlier — now passes. A kernel that cascaded the new position
+#               into the table passes the second and fails the first; one that
+#               read the stored column at the export gate fails the second and
+#               would leave every pre-attestation artifact permanently
+#               unsellable, which is the gap ADR-041 was built to close.
+#           (d) **`model_calls` and `resource_usage`**: five rows of thirteen
+#               gain exactly one input token each. §15.2's artifact index shows
+#               the Cell the *effective* position rather than the stored one —
+#               otherwise an operator could establish a source's rights and the
+#               Cell whose work became sellable would still read `unknown` and
+#               never propose selling it, moving this slice's gap one step
+#               upstream instead of closing it. The five are the deliberations
+#               after the attestation; `permitted` is two characters longer than
+#               `unknown` and `providers._estimate_tokens` is 2 chars/token, so
+#               the arithmetic is exact and the count of affected calls is the
+#               count of calls that could see it.
+#           **No money moves**, in either book: an attestation is a statement
+#           about a licence and touches no accounting table at all. `balances` is
+#           identical across every account — the extra token moves the recorded
+#           raw `quantity` and rounds to the same RESOURCE charge, and USD_REAL
+#           is untouched as it must be.
+EXPECTATION_VERSION = 19
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -1407,6 +1449,39 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         reason="fixed scenario non-commercial export; exists to pin rung 8 review",
     )
 
+    # 18b. Rights an operator *establishes* (§20.1/§20.2/§3.6; ADR-041). The
+    #      refusal above is the state the colony shipped in: rights could only
+    #      ever tighten, so an artifact built on a fetched page was `unknown`
+    #      forever and `real_commerce` could be opened and still sell nothing.
+    #
+    #      **The attestation is made after the artifact exists, deliberately.**
+    #      What a replay has to pin is that establishing a position reaches
+    #      backwards *without rewriting anything*: the stored row still reads
+    #      `unknown` — it is the record of what was known when the artifact was
+    #      made (§3.6) — while the gate that was refusing now opens. An
+    #      implementation that cascaded the new position into the artifacts
+    #      table passes the second assertion and fails the first, and one that
+    #      read the stored column at the gate does the reverse.
+    rights.attest(
+        conn,
+        subject_kind=rights.SUBJECT_DOMAIN,
+        subject="golden.test",
+        licence="CC-BY-4.0",
+        permitted_uses="redistribution and resale with attribution",
+        commercial_use="permitted",
+        basis="fixed scenario; the publisher's licensing page states CC-BY-4.0",
+        attested_by="golden-operator",
+        now=SCENARIO_EPOCH,
+    )
+
+    if conn.execute(
+        "SELECT commercial_use FROM artifacts WHERE artifact_id = ?", (golden_artifact,)
+    ).fetchone()["commercial_use"] != "unknown":
+        raise AssertionError(
+            "§3.6: an attestation must not rewrite what an artifact was born with"
+        )
+    artifacts.check_exportable(conn, golden_artifact, commercial=True)
+
     #     Amendment A3's `ledger_entries.artifact_id`, populated for the first
     #     time. USD_SIM deliberately: a golden run must never move USD_REAL, and
     #     revenue is the one verb that brings money *in*.
@@ -1909,6 +1984,24 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         for row in conn.execute("SELECT * FROM artifacts ORDER BY rowid").fetchall()
     ]
 
+    # §20.1's establishable half (ADR-041). `attestation_id` and the timestamp
+    # are volatile; what a replay pins is the *position* and the fact that a
+    # person is on the record for it. `basis` is included in full rather than
+    # counted: §20.3 makes an unfounded rights position a liability, so a
+    # regression that dropped the operator's stated reason and kept the
+    # permission would be the exact failure worth catching.
+    rights_attestation_rows = [
+        {
+            "subject_kind": row["subject_kind"],
+            "subject": row["subject"],
+            "licence": row["licence"],
+            "commercial_use": row["commercial_use"],
+            "basis": row["basis"],
+            "attested_by": row["attested_by"],
+        }
+        for row in conn.execute("SELECT * FROM rights_attestations ORDER BY rowid").fetchall()
+    ]
+
     # §11.4's contribution graph. Source ids are volatile, so what is pinned is
     # the *shape*: how many edges, and of which kind.
     artifact_lineage_shape = {
@@ -2153,6 +2246,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "proposals": proposal_rows,
         "tool_calls": tool_call_rows,
         "artifacts": artifact_rows,
+        "rights_attestations": rights_attestation_rows,
         "artifact_lineage": artifact_lineage_shape,
         "external_actions": external_action_rows,
         "channel_frozen": channel_freeze_state,

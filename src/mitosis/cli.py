@@ -47,6 +47,7 @@ from . import (
     reconciliation,
     reservations,
     resource_metering,
+    rights,
     artifacts as artifacts_module,
     revenue,
     tool_registry,
@@ -1021,6 +1022,20 @@ def cmd_artifact(args: argparse.Namespace) -> None:
     print(f"    retention:      {artifact.retention_rule}")
     print(f"    sources:        {artifact.source_summary}")
     print(f"    §18.1 taint:    {', '.join(artifact.taint_labels) or 'none'}")
+
+    # ADR-041. Shown only when it differs, and labelled — the stored row is the
+    # position at creation and stays that way, so a divergence is the record
+    # working rather than a bug. Printing both unconditionally would suggest the
+    # colony holds two rights positions for every artifact; it holds one belief
+    # and one memory.
+    effective = artifacts_module.effective_provenance(conn, artifact.artifact_id)
+    if effective.commercial_use != artifact.commercial_use or effective.licence != artifact.licence:
+        print()
+        print("    Position now in force (an operator has attested since — ADR-041)")
+        print(f"      licence:        {effective.licence}")
+        print(f"      permitted uses: {effective.permitted_uses}")
+        print(f"      commercial use: {effective.commercial_use}")
+        print("      The row above is what it was born with and was not rewritten (§3.6).")
     print()
     lineage = artifacts_module.lineage_of(conn, artifact.artifact_id)
     print(f"  Built from (§11.4 contribution graph) — {len(lineage)} source(s)")
@@ -1066,6 +1081,89 @@ def cmd_export_artifact(args: argparse.Namespace) -> None:
     print(f"  commercial:     {'yes' if artifact.export_is_commercial else 'no'}")
     print(f"  commercial_use: {artifact.commercial_use}")
     print("  Recorded. Nothing was delivered — §28 Phase 8 keeps external action manual.")
+    conn.close()
+
+
+def cmd_set_rights(args: argparse.Namespace) -> None:
+    """§20.1/§20.2 — a person establishes a rights position (ADR-041).
+
+    The only writer of `rights_attestations`, and deliberately a CLI verb: §0.3
+    makes a canonical rights position an operator's to state, so there is no
+    path to this from a proposal, a tool or a grant.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    subject_kind = rights.SUBJECT_COLONY if args.colony else rights.SUBJECT_DOMAIN
+    subject = rights.SUBJECT_COLONY if args.colony else (args.domain or "")
+    try:
+        attestation = rights.attest(
+            conn,
+            subject_kind=subject_kind,
+            subject=subject,
+            licence=args.licence,
+            permitted_uses=args.permitted_uses,
+            commercial_use=args.commercial_use,
+            basis=args.basis,
+            attested_by=args.by,
+        )
+    except rights.RightsError as exc:
+        raise CliError(str(exc)) from exc
+
+    subject_label = (
+        "the colony's own output"
+        if attestation.subject_kind == rights.SUBJECT_COLONY
+        else f"domain {attestation.subject}"
+    )
+    print(f"Attested {subject_label}")
+    print(f"  licence:        {attestation.licence}")
+    print(f"  permitted uses: {attestation.permitted_uses}")
+    print(f"  commercial use: {attestation.commercial_use}")
+    print(f"  basis:          {attestation.basis}")
+    print(f"  by:             {attestation.attested_by}")
+    if attestation.is_withdrawal:
+        print("  This withdraws any earlier position — §3.6, an adjustment rather than a delete.")
+    print()
+    print("  Nothing was rewritten. Artifacts keep the rights they were born with;")
+    print("  the export gate reads the position in force (`mitosis artifact <id>`).")
+    conn.close()
+
+
+def cmd_rights(args: argparse.Namespace) -> None:
+    """What the colony currently believes about its sources' rights, and how it
+    came to believe it."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    if args.history:
+        rows = rights.history(conn)
+        if not rows:
+            print("No attestations. Every source is `unknown` — §20.2 refuses commercial export.")
+            conn.close()
+            return
+        print(f"Every attestation, newest first ({len(rows)}). Nothing is ever removed (§3.6).")
+        for a in rows:
+            print(f"  {a.attested_at_utc.isoformat()}  {a.subject_kind}:{a.subject}")
+            print(f"      commercial_use={a.commercial_use}  licence={a.licence}")
+            print(f"      by {a.attested_by} — {a.basis}")
+        conn.close()
+        return
+
+    rows = rights.in_force(conn)
+    if not rows:
+        print("No rights established.")
+        print("Every fetched page is `commercial_use: unknown` (§20.2), so nothing may be")
+        print("exported commercially. `mitosis set-rights --domain <host> ...` to establish one.")
+        conn.close()
+        return
+    print(f"Rights in force ({len(rows)} subject(s)) — §20.1")
+    for a in rows:
+        print(f"  {a.subject_kind}:{a.subject}")
+        print(f"      commercial use: {a.commercial_use}")
+        print(f"      licence:        {a.licence}")
+        print(f"      permitted uses: {a.permitted_uses}")
+        print(f"      basis:          {a.basis}  (by {a.attested_by})")
+    print()
+    print("  `--history` shows superseded positions too.")
     conn.close()
 
 
@@ -2545,6 +2643,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="this export is for commercial use, which §20.2 gates on established rights",
     )
     export_parser.set_defaults(func=cmd_export_artifact)
+
+    set_rights_parser = subparsers.add_parser(
+        "set-rights",
+        help="establish a §20.1 rights position on a source (operator-only; ADR-041)",
+    )
+    rights_subject = set_rights_parser.add_mutually_exclusive_group(required=True)
+    rights_subject.add_argument(
+        "--domain", help="bare host the position applies to, e.g. example.com"
+    )
+    rights_subject.add_argument(
+        "--colony", action="store_true",
+        help="the colony's own output — artifacts that read nothing",
+    )
+    set_rights_parser.add_argument(
+        "--licence", required=True,
+        help="the licence, e.g. CC-BY-4.0. 'unknown' is allowed and withdraws a claim",
+    )
+    set_rights_parser.add_argument(
+        "--permitted-uses", required=True, dest="permitted_uses",
+        help="what the licence actually allows, in words (§20.1)",
+    )
+    set_rights_parser.add_argument(
+        "--commercial-use", required=True, dest="commercial_use",
+        choices=sorted(rights.COMMERCIAL_USE_VALUES),
+        help="§20.2's gate. 'unknown' withdraws an earlier position",
+    )
+    set_rights_parser.add_argument(
+        "--basis", required=True,
+        help="where this came from — the publisher's licensing page, an email, counsel. "
+             "§20.3 makes an invalid position a liability, so the record has to say",
+    )
+    set_rights_parser.add_argument("--by", default="operator", help="who is attesting")
+    set_rights_parser.set_defaults(func=cmd_set_rights)
+
+    rights_parser = subparsers.add_parser(
+        "rights", help="rights positions in force, and the record of how they changed"
+    )
+    rights_parser.add_argument(
+        "--history", action="store_true", help="every attestation, including superseded ones"
+    )
+    rights_parser.set_defaults(func=cmd_rights)
 
     tools_parser = subparsers.add_parser(
         "tools", help="registered tools, their gates, and the egress allowlist (§19)"

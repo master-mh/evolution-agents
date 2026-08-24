@@ -331,7 +331,8 @@ def _artifact_index_section(conn: sqlite3.Connection, cell: Cell) -> Section | N
         lines.append(
             f"- [{item['kind']}] {item['title']}\n"
             f"    {item['content_bytes']} bytes · {state} · "
-            f"commercial use: {item['commercial_use']} · taint: {', '.join(taints)}"
+            f"commercial use: {item['commercial_use_effective']} · "
+            f"taint: {', '.join(taints)}"
         )
     return Section(
         name="What you have made (index only — the store holds the content)",
