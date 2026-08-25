@@ -2313,3 +2313,72 @@ from amendment ID to spec location is complete in one place:
     for enums — a value rendered in a shape that reads as something else — now recurring because the
     payload objects are rendered as long English strings. The mock provider structurally cannot catch
     it, because its reply is an input rather than a response to the prompt's wording.
+
+---
+
+## ADR-049: The reply format is ordered, and a payload is shown as an object — measured, because nothing else can see it
+
+- **Status:** Accepted
+- **Spec ref:** §15.1, §24, §24.1, §28 Phase 4; ADR-020, ADR-045, ADR-046, ADR-048
+- **Context:** ADR-048's live measurement found live proposal parse compliance had fallen from
+  **7/8 (2026-08-06) to 1/8**, and a controlled re-measurement put it at **0/12** — every failure the
+  same shape, the model flattening a nested payload (`hypothesis` at the top level instead of inside
+  `experiment`). Three conditional payloads (`tool_request`, `external_action`, `experiment`) have
+  been added to the schema since that 7/8 was recorded, and none of them was ever tested against a
+  model. **The whole suite and the golden run stayed green throughout**, because `MockProvider`'s
+  reply is an input rather than a response to the prompt's wording — the exact blind spot the
+  2026-08-06 enum bug was recorded under, hit again in a new place.
+- **Decision: four changes to how the format is rendered, each measured, none of them to the
+  parser.** `proposal.parse` stays strict; the instruction is what was wrong.
+  1. **A payload is rendered as a JSON object, not a sentence describing one.** These keys used to
+     render as long English strings that happened to contain braces, so a model saw
+     `"experiment": "<a sentence>"` and answered in kind. Generalises the rule the enum bug taught:
+     **every value is shown in the shape the parser wants back.**
+  2. **The skeleton is ordered, not sorted.** `sort_keys=True` alphabetised it, placing `experiment`
+     and `external_action` *above* `kind` and `summary` — so the model met two conditional payloads
+     before the field that decides whether they apply, and they read as mandatory. **This was the
+     single largest lever**, worth more than the other three together.
+  3. **Optional keys leave the skeleton and live in prose.** With `artifact` and `predictions` shown
+     as populated examples, replies came back carrying `"artifact": {"title": "", "content": ""}` —
+     a model completes the form it is given. Hiding *everything* conditional was tried and was
+     worse (0/12: the model stopped emitting the payload its own kind required), so the split is
+     **sometimes-mandatory in the skeleton, almost-always-absent in the prose.**
+  4. **The prompt names no field the parser rejects.** An intermediate draft's `hypothesis`
+     description mentioned "you do not choose what stage it runs at", and the model answered with
+     `"experiment": {"stage": "§25.1", "rung": "1"}`. **Naming a field in prose is an invitation to
+     emit it**, even inside a sentence saying the Cell does not control it.
+  - `KIND_PAYLOADS` becomes the single source for the kind-to-payload pairing that the prompt
+    describes and the three `_*_matches_kind` validators enforce. The validators keep their own
+    bodies — each carries a different argument about why its second direction matters — and a test
+    derives the pairing from the *parser* to keep the two in step.
+- **What it displaced.**
+  - **Loosening `proposal.parse`.** Accepting a flattened payload, or ignoring unknown keys, would
+    have "fixed" every one of these measurements. `extra="forbid"` is a schema tripwire (§23.5), and
+    a parser that quietly accepts a shape the schema forbids is how a Cell's payload ends up
+    somewhere no reviewer expects it.
+  - **A parse-repair retry** — re-prompting with the validation error. It is the standard remedy and
+    would probably work, but it is a second model call per failure, it is §24.3's "controlled
+    retries" which PRIORITIES still lists as unbuilt, and it treats a prompt bug by paying for it
+    twice. Logged, not built.
+  - **Reordering the five required keys among themselves.** Moving the short scalars `risk_tier` and
+    `estimated_cost_minor_units` ahead of `summary` and `rationale` looked obviously right — they
+    were the most-omitted fields, and a model that runs out of steam drops its tail. It took the
+    measured rate from **7/20 to 0/20**. Reverted; the order is now pinned with a comment saying not
+    to touch it without re-measuring.
+- **Consequences:**
+  - **Measured 0/44 → 20/56 parseable** on `llama3.2`, same scenario, three runs per arm. Decomposed
+    at n=16: replies carrying all five required fields **1 → 11**, payloads correctly nested
+    **0 → 10**, flattened **13 → 4**.
+  - **This is a repair, not a restoration.** ~36% is far below the 7/8 recorded on 2026-08-06, and
+    that number predates three conditional payloads. The binding constraint is now a 3B model rather
+    than the wording: replies stop cleanly (`stop_reason: stop`, 26–87 output tokens) and are simply
+    incomplete. **The remaining decision is a model choice, not a prompt edit**, and it belongs to
+    the operator — the kernel already takes `--provider`/`--model`.
+  - **Golden expectation 24 → 25**, two sections, **token counts only**. `proposals` and
+    `deliberations` are byte-identical, which is the assertion: a mock reply that parsed before
+    parses identically now — and that property is precisely why this regression survived a month of
+    green CI. **`balances` is identical in every account in every book.**
+  - **Two of this slice's own tests were weak and a teeth-check found both.** One asserted a bare
+    substring (`"artifact" in rule`) that its own description text satisfied; the other was
+    parametrised over `KIND_PAYLOADS`, so deleting an entry deleted a case instead of failing one —
+    the suite got quieter rather than redder. The replacement derives the pairing from the parser.

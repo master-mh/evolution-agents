@@ -162,17 +162,26 @@
   golden expectation version 4 → 5 via a reviewed migration (**no USD_REAL moves**).
 
 ## Next
-- [ ] **Proposal parse compliance has collapsed from 7/8 to 1/8, and the golden run cannot see it.**
-  Measured 2026-08-25 on eight live `llama3.2` wakes (ADR-048). **Five of seven failures are the
-  model flattening a nested payload** — `hypothesis` at the top level instead of inside
-  `experiment`, `channel`/`intent`/`artifact_id` instead of inside `external_action`. This is the
-  same class of bug the 2026-08-06 run fixed for enums (`"risk_tier": ["MEDIUM"]`): a value rendered
-  in a shape that reads as a different type. `_prompt_schema` renders each payload as a long English
-  *string*, so the model sees `"experiment": "<a sentence>"` and flattens it. **A mock provider
-  structurally cannot catch this** — its reply is an input, not a response to the prompt's wording —
-  so the whole suite and the golden run stay green while a live Cell's proposals are discarded.
-  Fixing it changes prompt text, so expect a golden expectation bump and no balance movement.
-  *Disproved by:* a live `ollama` run whose parse rate is back above ~7/8.
+- [x] **Proposal parse compliance collapsed from 7/8 to 0/12 — REPAIRED, not restored**
+  (2026-08-25), ADR-049. Four renderings of the reply format, no parser change: payloads shown as
+  JSON objects rather than sentences, the skeleton **ordered rather than alphabetised** (the largest
+  lever by far — `sort_keys=True` put `experiment` above `kind`), optional keys moved out of the
+  skeleton into prose, and no field named in prose that the parser rejects. **Measured 0/44 → 20/56**
+  on `llama3.2`; at n=16, replies carrying all five required fields 1 → 11 and correct nesting
+  0 → 10. Golden expectation 24 → 25, token counts only, `proposals` byte-identical.
+- [ ] **~36% is still far below the 7/8 of 2026-08-06, and the next move is a model, not a prompt.**
+  That baseline predates three conditional payloads. Replies now stop cleanly (`stop_reason: stop`,
+  26–87 output tokens) and are simply incomplete, which is a capability ceiling rather than an
+  ambiguity: `llama3.2` is 3B. Two options, both needing a decision rather than a slice — run
+  deliberation on a larger local model (a bigger Ollama pull), or accept the rate on the free path
+  and use a paid model where compliance matters. **Re-measure before assuming a prompt edit will
+  help**: reordering the five required keys among themselves took the rate from 7/20 to 0/20.
+  *Disproved by:* a live run on any model whose parse rate exceeds ~7/8.
+- [ ] **A parse-repair retry is the standard remedy and is deliberately unbuilt.** Re-prompting with
+  the validation error would probably lift the rate a lot. It is a second model call per failure, it
+  is §24.3's "controlled retries" (still unbuilt), and it pays twice for a prompt bug. Worth arguing
+  once the model question above is settled, because a better model may make it unnecessary.
+  *Disproved by:* anything in `deliberation` re-calling the gateway after a `ProposalError`.
 - [x] **Drive the loop with a real model — local half DONE** (2026-08-06). Ollama installed,
   `llama3.2` (3B), nine live wakes. **The first one failed to parse, and the bug was the prompt's,
   not the model's:** the schema hint rendered enum choices as JSON arrays, so the model returned

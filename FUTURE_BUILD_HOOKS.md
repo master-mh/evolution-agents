@@ -1086,3 +1086,30 @@ actually queued for building — this file is memory, not a backlog to work thro
   colony today, and the "Cell's current stage" is a two-valued field pretending to be a nine-valued
   one. Rungs 8 and 9 each mean removing a human (ADR-029), so this stays true until that is argued —
   worth remembering before reading much into the rung a tranche reports.
+
+<!-- 2026-08-25, ADR-049 (the reply format) -->
+
+- **`MockProvider` has now hidden two prompt bugs, and it will hide the third.** Both were found only
+  by counting live parses; both left the suite and the golden run fully green, because a canned reply
+  is an input rather than a response to the prompt's wording. **Any change to prompt text needs a
+  live run to be verified at all** — the golden diff will show token counts moving and say nothing
+  about whether a model can still follow it. A recurring live compliance check (a `mitosis` verb, or
+  a marked test that runs only when Ollama is up) is the obvious answer and is not built.
+- **The five required keys have a measured order that nobody can explain.** `kind`, `summary`,
+  `rationale`, `risk_tier`, `estimated_cost_minor_units` scored 7/20; moving the two scalars ahead of
+  the two free-text fields scored 0/20. The mechanism is unknown — the plausible story (a model drops
+  its tail, so put cheap fields first) predicted the opposite of what happened. Treat the order as a
+  measurement, not a design, and re-measure anything that touches it.
+- **`risk_tier` is required on `abstain` and a model keeps refusing to supply it.** `llama3.2`
+  returned `"risk_tier": null` on abstaining proposals more than once, which is arguably the more
+  sensible reading — a Cell declining to act is not stating a risk tier. Making it optional for
+  ABSTAIN is a schema change with §23.1 implications; the alternative is leaving a parse failure in
+  place for a defensible answer. Worth deciding rather than leaving.
+- **Nothing measures parse compliance in CI, so this can silently regress again the next time a kind
+  or a payload is added.** The regression took roughly a month to notice and was found by accident,
+  while chasing §13.1's numerator. Every future `ProposalKind` or payload spec should carry a live
+  measurement in its slice — the cost is about four minutes of Ollama time.
+- **The parse-repair retry is the obvious remedy and is deliberately unbuilt** (ADR-049). If it is
+  ever argued, note the shape it must not take: a retry that re-prompts with the raw validation error
+  hands a Cell the parser's internals, which is a §23.5 surface — a Cell that learns exactly which
+  fields are checked learns exactly which to game.

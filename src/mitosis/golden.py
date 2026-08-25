@@ -801,7 +801,23 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #               for all three rows and looks plausible. `stage_tranche_rung` is
 #               the key that tells the two apart, which is why it is pinned
 #               beside the ratio instead of being left implicit.
-EXPECTATION_VERSION = 24
+#   24 -> 25 (the reply format a model can actually follow; §24; ADR-049).
+#           **Two sections differ — `model_calls` and `resource_usage` — and both
+#           only in token counts.** The system prompt's schema block was
+#           restructured; nothing about what the kernel does with a reply changed.
+#           (a) `proposals` and `deliberations` are **byte-identical**, which is
+#               the assertion worth naming: the mock provider's reply is an input
+#               rather than a response to the prompt, so a scenario that parsed
+#               before parses identically now. That property is exactly why the
+#               regression this fixes was invisible to CI for a month — every
+#               test and every replay stayed green while a live Cell's proposals
+#               were being discarded.
+#           (b) `resource_usage` follows `model_calls`: input tokens are the
+#               shadow-priced quantity, so the same prompt change moves both.
+#               The RESOURCE minor units round to the same figures.
+#           **`balances` is identical in every account in every book**, and
+#           USD_REAL is untouched — prompt text costs nothing to change.
+EXPECTATION_VERSION = 25
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

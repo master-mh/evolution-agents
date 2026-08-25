@@ -173,7 +173,9 @@ def _system_prompt() -> str:
         "- Predictions are scored with a proper scoring rule and cannot be edited "
         "afterwards. State claims that will be unambiguously true or false by "
         "their horizon.\n"
-        "- Never state a probability of 0 or 1."
+        "- Never state a probability of 0 or 1.\n"
+        "- Send only the keys your chosen kind needs. A key you have nothing to "
+        "put in is left out entirely, never sent empty."
     )
 
 

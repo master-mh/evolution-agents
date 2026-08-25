@@ -136,6 +136,29 @@ class ProposalKind(StrEnum):
 #: rule about a state that cannot occur.
 STATEMENT_KINDS: frozenset["ProposalKind"] = frozenset({ProposalKind.STRATEGY})
 
+#: The payload object each kind must carry, and which no other kind may.
+#:
+#: One source of truth for a pairing that is stated in two places and has to
+#: agree in both: the three `_*_matches_kind` validators enforce it, and the
+#: prompt has to *describe* it. `_payload_rule` generates the wording from this
+#: dict for the same reason `_prompt_schema` is generated from the model —
+#: a hand-written copy drifts, and the failure lands on every Cell at once with
+#: nothing pointing at the prompt as the cause.
+#:
+#: The validators keep their own bodies rather than looping over this, because
+#: each carries a different argument about *why* its second direction matters
+#: (`experiment` is the permissive kind; `external_action` spends §21.1's shared
+#: reputation). `test_proposal_payload_pairing_matches_the_validators` is what
+#: keeps the two in step.
+#:
+#: `artifact` is deliberately absent: it pairs with no kind and is allowed
+#: alongside all of them but ABSTAIN.
+KIND_PAYLOADS: dict["ProposalKind", str] = {
+    ProposalKind.TOOL_REQUEST: "tool_request",
+    ProposalKind.EXTERNAL_ACTION: "external_action",
+    ProposalKind.EXPERIMENT: "experiment",
+}
+
 
 class RiskTier(StrEnum):
     """§23.1's tiers. Recorded, never honoured as a permission."""
@@ -544,77 +567,157 @@ def _summarise_validation_error(exc: ValidationError) -> str:
 
 
 def response_schema_hint() -> str:
-    """The schema, rendered for the prompt.
+    """The reply format, rendered for the prompt.
 
-    Generated from the model rather than hand-written, so the prompt cannot
-    drift out of step with what the parser will actually accept — a
-    hand-maintained copy would eventually describe a field that no longer
-    validates, and every Cell would fail on it at once.
+    Two parts, and the split is the whole design: a JSON skeleton of the keys
+    that are **always** present, then prose for the keys that are conditional or
+    optional. Generated from the model and from `KIND_PAYLOADS` rather than
+    hand-written, so the prompt cannot drift out of step with what the parser
+    accepts.
     """
-    return json.dumps(_prompt_schema(), indent=2, sort_keys=True)
+    # **Not sorted, and not ASCII-escaped.** `sort_keys=True` alphabetised the
+    # skeleton, which put `experiment` and `external_action` *above* `kind` and
+    # `summary` — so a model reading top-to-bottom met two conditional payloads
+    # before it met the field that decides whether they apply, and they looked
+    # exactly as mandatory as everything else. Insertion order puts the five
+    # always-required keys first and the conditional ones last, which is the
+    # order the reply should be built in. `ensure_ascii=False` keeps em-dashes
+    # as em-dashes instead of `\u2014`, which was pure noise in a prompt whose
+    # whole job is to be unambiguous.
+    return (
+        json.dumps(_prompt_schema(), indent=2, ensure_ascii=False)
+        + "\n\n"
+        + _payload_rule()
+    )
 
 
 def _prompt_schema() -> dict[str, Any]:
-    """The schema as the prompt shows it.
+    """The keys every reply carries, and only those.
 
-    **Enum choices are rendered as a string, never as a JSON array**, and that
-    is not cosmetic. Rendering `"risk_tier": ["LOW", "MEDIUM", ...]` reads to a
-    model as "this field holds a list of these values", and the first real
-    model run returned exactly that — `"risk_tier": ["MEDIUM"]` — failing
-    validation on a field it had actually chosen correctly. The ambiguity was
-    the prompt's, not the model's. A mock provider could never surface this,
-    because its reply is an input rather than a response to these words.
+    **A model fills in every key it is shown.** That is the single lesson three
+    live measurements produced, and it is stronger than "describe the fields
+    accurately":
 
-    Only `predictions` stays an array, because it genuinely is one.
+    1. **Enum choices are a string, never a JSON array** (2026-08-06). Rendering
+       `"risk_tier": ["LOW", "MEDIUM", ...]` reads as "this field holds a list",
+       and the first real run returned `"risk_tier": ["MEDIUM"]` — failing
+       validation on a field it had chosen correctly.
+    2. **A payload object is an object, never a sentence describing one**
+       (2026-08-25). These keys used to render as English strings containing
+       braces, so `llama3.2` hoisted `hypothesis` to the top level. Measured at
+       **0/12 parseable**, every failure that same flattening.
+    3. **An optional key shown in the skeleton comes back filled with nothing**
+       (2026-08-25). With `artifact` and `predictions` displayed as populated
+       examples, replies arrived carrying `"artifact": {"title": "", "content":
+       ""}` and `"summary": ""` — the model completing a form rather than
+       answering. So optional and conditional keys are described in
+       `_payload_rule` instead — where being skimmed is the desired outcome.
+    4. **The skeleton must be ordered, not sorted** (2026-08-25). `sort_keys=True`
+       alphabetised it, so `experiment` and `external_action` appeared *above*
+       `kind` and `summary`: the model met two conditional payloads before it
+       met the field that decides whether they apply, and they looked exactly as
+       mandatory as the rest. This was the single largest lever of the four.
+
+    Measured end to end on `llama3.2`, same scenario, 20 wakes per arm:
+    **0/44 parseable before, 20/56 after.** That is a real repair and not a
+    restoration — the 7/8 recorded on 2026-08-06 predates three conditional
+    payloads, and a 3B model is now the binding constraint rather than the
+    wording (ADR-049).
+
+    A mock provider can surface none of these: its reply is an input rather than
+    a response to these words (ADR-049).
     """
-    return {
+    # **This exact order is measured, and reordering within it is not safe.**
+    # The five required keys come before the conditional payloads (docstring,
+    # lesson 4). Moving the short scalars `risk_tier` and
+    # `estimated_cost_minor_units` *ahead* of `summary` and `rationale` looked
+    # obviously right — they were the most-omitted fields, and a model that runs
+    # out of steam drops its tail — and it collapsed the parse rate from 7/20
+    # back to **0/20**, with flattening returning at 15/20. Whatever the model
+    # is doing with this list, `summary` and `rationale` immediately after
+    # `kind` is holding it together. Re-measure before touching the order.
+    schema: dict[str, Any] = {
         "kind": _one_of(ProposalKind),
         "summary": f"REQUIRED string, 1-{MAX_SUMMARY_CHARS} chars",
         "rationale": f"REQUIRED string, 1-{MAX_RATIONALE_CHARS} chars",
-        "risk_tier": _one_of(RiskTier),
+        "risk_tier": _one_of(RiskTier) + " — required for every kind, abstain included",
         "estimated_cost_minor_units": "REQUIRED integer >= 0 (use 0 if nothing would be spent)",
-        "tool_request": (
-            "REQUIRED only when kind is tool_request, and forbidden otherwise: "
-            '{"tool": "<one of the tools listed in your context>", '
-            '"arguments": {"<name>": "<scalar value>"}}. Nothing runs until a '
-            "human approves the request."
-        ),
-        "external_action": (
-            "REQUIRED only when kind is external_action, and forbidden otherwise: "
-            '{"channel": "<one of the channels listed in your context>", '
-            '"intent": "what this action is for", '
-            '"artifact_id": "<optional, an artifact of yours that has been exported>"}. '
-            "A PERSON performs the action by hand — nothing is sent automatically, "
-            "and you do not choose who it goes to."
-        ),
-        "experiment": (
-            "REQUIRED only when kind is experiment, and forbidden otherwise: "
-            '{"hypothesis": "the claim this experiment would test"}. '
-            "State what could turn out to be false, not what you intend to do. "
-            "You do not choose what stage it runs at — that follows from what "
-            "the colony has already promoted you to."
-        ),
-        "artifact": (
-            "OPTIONAL, and omitted unless you actually produced something this "
-            'wake: {"kind": "<see the artifact kinds listed in your context>", '
-            '"title": "...", "content": "the deliverable itself", '
-            '"source_tool_call_ids": ["<ids of tool results you drew on>"]}. '
-            "Cite every source you used — rights carry over from them."
-        ),
-        "predictions": [
-            {
-                "claim": (
-                    "string, a claim that is unambiguously true or false once "
-                    "resolved (state a threshold, e.g. 'revenue >= 50 minor units'); "
-                    "each claim must be distinct"
-                ),
-                "probability": "number strictly between 0 and 1 (never 0 or 1)",
-                "horizon_days": (
-                    f"integer {MIN_PREDICTION_HORIZON_DAYS}-{MAX_PREDICTION_HORIZON_DAYS}"
-                ),
-            }
-        ],
     }
+    # The conditional payloads stay in the skeleton; `artifact` and
+    # `predictions` do not. That asymmetry is measured, not aesthetic — see
+    # lesson 3 above. Hiding *everything* optional and describing it in prose
+    # was tried and was worse (0/12): the model stopped emitting the payload its
+    # own `kind` required, failing with "an experiment proposal must carry an
+    # experiment" seven times out of twelve. **The skeleton is the instruction
+    # that lands; prose beneath it is read much more weakly.** So a key that is
+    # sometimes mandatory belongs in the skeleton, and a key that is almost
+    # always absent belongs in prose, where being ignored is the desired
+    # outcome.
+    schema.update(
+        {field: json.loads(_PAYLOAD_EXAMPLES[field]) for field in KIND_PAYLOADS.values()}
+    )
+    return schema
+
+
+#: Compact JSON examples for the keys `_prompt_schema` deliberately omits.
+#: Written as literal JSON so the prompt shows the exact shape it wants back —
+#: the rule that lesson 2 above cost a measurement to learn.
+_PAYLOAD_EXAMPLES: dict[str, str] = {
+    "tool_request": (
+        '{"tool": "REQUIRED, one of the tools listed in your context", '
+        '"arguments": {"<argument name>": "<scalar value>"}}'
+    ),
+    "external_action": (
+        '{"channel": "REQUIRED, one of the channels listed in your context", '
+        '"intent": "REQUIRED, what this action is for"}'
+    ),
+    "experiment": (
+        '{"hypothesis": "REQUIRED, the claim this experiment would test — state '
+        'what could turn out to be false, not what you intend to do"}'
+    ),
+}
+
+
+def _payload_rule() -> str:
+    """Everything the skeleton leaves out, in words, generated from
+    `KIND_PAYLOADS`.
+
+    A JSON skeleton has nowhere to say "include this key only for this kind" —
+    there is no way to annotate a key, and a fake `_when` member gets copied
+    into the reply. So the conditional lives here, and the skeleton stays an
+    honest picture of the minimum reply.
+    """
+    lines = [
+        "Which of the payload keys above you send is decided by your \"kind\", "
+        "and you send AT MOST ONE of them:",
+    ]
+    for kind, field in KIND_PAYLOADS.items():
+        lines.append(f'  kind "{kind.value}"  ->  keep "{field}", drop the other two')
+    other = ", ".join(f'"{k.value}"' for k in ProposalKind if k not in KIND_PAYLOADS)
+    lines.append(f"  kind {other}  ->  drop all three")
+    lines.append("")
+    lines.append("Two more keys exist and are NOT shown above, because most replies "
+                 "leave them out. Add one only if it genuinely applies:")
+    lines.append(
+        '  "predictions": [{"claim": "<true or false once resolved, e.g. \'revenue '
+        f'>= 50 minor units\'>", "probability": <between 0 and 1, never 0 or 1>, '
+        f'"horizon_days": <{MIN_PREDICTION_HORIZON_DAYS}-{MAX_PREDICTION_HORIZON_DAYS}>}}]'
+        " — only if you are actually forecasting something; each claim distinct"
+    )
+    lines.append(
+        '  "artifact": {"kind": "<an artifact kind from your context>", "title": '
+        '"<title>", "content": "<the deliverable itself>", "source_tool_call_ids": '
+        '["<ids of tool results you drew on>"]}'
+        ' — only if you actually produced a deliverable this wake, and never with '
+        'kind "abstain". Most wakes produce nothing.'
+    )
+    lines.append("")
+    lines.append(
+        "Leave out any key you are not using. Do NOT send it as an empty string, "
+        "an empty object, an empty list or null — a key with nothing in it is "
+        "rejected exactly like a wrong one."
+    )
+    return "\n".join(lines)
 
 
 def _one_of(enum_type) -> str:
