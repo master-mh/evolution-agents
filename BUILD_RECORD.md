@@ -7,89 +7,86 @@ account fix, the prediction register, death criteria, §9.3 displacement, the ag
 scheduler, the §23 approval queue, the dead-Cell estate, the rung-7 promotion path, the §25.2
 read-back, §9.2's birth cap, Auditor Cells, genome content, the tool surface, the artifact
 store, the external-action registry, the §27.1 autonomy decisions, grant regeneration, the
-expiry sweep, establishable rights, and scheduler liveness,
+expiry sweep, establishable rights, scheduler liveness, and the experiment,
 2026-07-21 through 2026-08-24):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-24 — The experiment: seven sections reference it, none defines it
+## 2026-08-25 — Attribution: the column everything asked for, and never needed
 
-`experiments.py` + migration 0026 + four CLI verbs (ADR-043). The largest socket cluster in the
-repo, and unusually most of it was **live plumbing rather than dead columns**: `experiment_id` has
-been threaded through `gateway`, `prediction` and `ledger` for months, `reservations.settle` has
-been propagating it onto ledger entries all along, and `mitosis predict --experiment <id>` accepted
-any string and validated nothing. The foreign key was exposed to the operator before the table
-existed.
+No migration. `experiments.attribution_for` + threading through `tools`, `external_actions` and
+`deliberation` (ADR-044). The slice was scheduled as "add `resource_usage.experiment_id`" —
+BUILD_RECORD said it, PRIORITIES said it, `golden.py`'s version-20 note said it, and
+`experiments.py`'s own docstring said it. All four were wrong about the mechanism.
 
-### §2.6 defines the report, and the clause above it decides the design
+### The join was always there; the stamp was not
 
-There is no §Experiments. What §2.6 does define is *"synthetic revenue/profit, real cash consumed,
-resource consumption, shadow cost, human labour, and a reality-gap estimate"* — six dimensions, so
-§10.2 and §13.2's "do not rely on a single weighted scalar" are satisfied by the definition rather
-than by a preference.
+`resource_usage.reservation_id` is `NOT NULL REFERENCES reservations(reservation_id)` — Amendment
+A6 requires precisely that — and `reservations.experiment_id` has existed since **migration 0001**.
+Every metered row was one join from its experiment the whole time. What was missing was the stamp:
+`gateway` threaded `experiment_id` into its reservations and `tools`, `external_actions` and
+`deliberation` did not. Adding the column would have worked, and would have created a second answer
+to a question the reservation already owns — a usage row stamped with one experiment hanging off a
+reservation stamped with another, with nothing in the schema preferring either. That is §2.5's
+cached-derivation trap reached from the metering side, so
+`test_resource_usage_has_no_experiment_id_column` now refuses it the way
+`test_there_is_no_experiment_results_table` refuses the other one.
 
-**§2.5, immediately above it, is "Balances are derived."** Read as neighbours, an experiment report
-is a derived view and not a stored row. So there is **no `experiment_results` table**, despite §31
-listing one — §31 offers "suggested entities" and does not mark that one Phase 1, and a stored
-outcome is exactly where §0.3 leaks back in. The surest way to keep "a Cell may explain a result and
-never define one" true is to give it no column to write, which is how `proposal.py` earns its shape.
-`test_there_is_no_experiment_results_table` defends the refusal.
+### The visible bug was the abstention; the real one was the undercount
 
-### The stage question had three witnesses and they agreed
+`human_minutes` reported `None` with a stated reason, which announces itself. **`resource_spend_
+minor_units` — §2.6's shadow-cost line — reads the same reservations through the ledger and was
+reporting a definite figure with every tool call and every human minute missing from it.** And
+`deliberation` never named its experiment to the gateway at all, so §2.6's *real cash consumed* was
+0 for any experiment whose Cell simply ran — the headline number on a paid provider, and the least
+visible failure, because 0 is plausible for work that has not spent yet. An abstaining dimension is
+loud. An undercounting one sits next to it looking identical.
 
-§10.5's coroner lists `stage_reached` (singular) beside `experiment_ids` (plural); §27.2's dashboard
-pairs them as one Cell field, "current experiment/stage"; and §13.1's `normalised_cost = expected
-experiment cost / current stage tranche` would be circular if the stage belonged to the experiment.
-**So §25.1's nine rungs are the only ladder** and Phase 2's "stage gates" are the gates between
-them — no second ladder, no stages table. `stage_reached` derives from the highest rung a Cell was
-funded at *or* ran at, because a Cell that did rung-1 simulator work and was never promoted has
-still reached rung 1.
+### Derived, never supplied
 
-### Found while building: a slot that leaks on every death
+§15.1 gives a Cell one current experiment, so which experiment bears a cost is already determined.
+A parameter would be a place to put a *different* one — §0.3 reached from the expense side, since a
+Cell that could name the experiment could make its own look cheap by naming another. So
+`attribution_for` is the single seam, an `inspect.signature` test asserts no metering entry point
+grows the parameter, and `None` stays a result rather than a gap. Two timing rules fell out:
+external-action labour is stamped **at claim, not at completion** (a person may answer days later,
+by which time the Cell may be on another experiment or dead), and a deliberation **resolves it once
+and carries it** to both the gateway call and the predictions it registers, because ADR-022 puts
+those on opposite sides of a transaction boundary.
 
-§9.2 caps *simultaneous* experiments colony-wide, and death is routine. A Cell that died mid-
-experiment left it `running` forever, so a colony killing Cells faster than it concludes experiments
-would ratchet to its cap and refuse every new one with nothing anywhere explaining the refusals —
-the "a claim held before acting is a lock and nothing sweeps it" shape ADR-036 logged for channel
-claims. The seam now **settles before it reports**, and the experiment is **abandoned, never
-concluded**: it reached no answer, and a coroner report listing a running experiment on a dead Cell
-would be a false statement rather than a thin one.
+### §1.1 wanted the number the obvious sum would have hidden
 
-The seam itself is `lifecycle.CoronerEnricher` — `lifecycle` sits below `experiments`, so §10.5's
-two fields arrive by injection rather than a back-edge, the shape `population.Displacer` established.
-
-**§9.2's cap is a third refusal shape.** ADR-031 separated durable carrying capacity (which
-justifies displacement) from a temporary birth rate (which a clock clears); this slot frees when an
-experiment *concludes*. `ExperimentCapacityError` sits deliberately outside `PopulationError` so it
-cannot be caught as either, because both would suggest the wrong remedy.
+`external_actions` bills a Cell up to its channel ceiling and records the overflow as subsidy, so
+`resource_usage.quantity` is the *billed* minutes. Summing it alone would report the colony's human
+cost as **smaller the more of it a person absorbed unpaid** — the exact quantity §1.1 subtracts to
+"expose hidden founder labour", hidden by the report built to expose it. The report carries
+billed + subsidised, with the subsidy printed beside it.
 
 ### Verification
 
-- **916 tests passing** (29 new, 0 removed; up from 887). **Golden expectation 19 → 20**, with
-  **`balances` identical in every account in every book** — an experiment is a record and a
-  derivation, and the revenue it now names was already being posted. The snapshot pins each
-  experiment's §2.6 figures *derived on the spot*, so a kernel that started caching an outcome would
-  have to keep them identical. `coroner_reports.stage_reached` moves from `null` — which it has been
-  since migration 0007 — to `"rung 7: tiny capped live experiment"`.
-- **Teeth-checked sixteen ways**, each failing its named test: the report ignoring the ledger,
-  revenue read off the cash leg, an unmeasurable dimension reported as 0, the §9.2 cap unchecked
-  (the state before this slice), that error folded into the population hierarchy, concluded
-  experiments still counting, §15.1's singular ignored, `stage_reached` from promotions alone, the
-  coroner seam never consulted, the seam made mandatory, the seam overwriting an explicit stage,
-  death not releasing the slot, death concluding rather than abandoning, `death.py` no longer
-  enriching, a rung off the ladder accepted, and unresolved forecasts folded into the reality-gap
-  mean.
-- **Hand-verified end to end on a live colony**: experiment started at rung 1, §15.1's one-at-a-time
-  refused, rung 12 refused, 12.50 USD_SIM of revenue derived into the report, concluded and the slot
-  freed, then a second experiment at rung 7 abandoned by its Cell's death with the coroner carrying
-  `rung 7: tiny capped live experiment` and both experiment ids.
-- Two gaps the live run surfaced: `record-revenue` had no `--experiment` flag despite the function
-  taking one (fixed), and re-recording revenue to attach an experiment is **correctly refused by
-  idempotency** — which means an operator who attributes revenue late cannot fix it, and §3.6 says
-  the remedy is an adjustment rather than an edit. Logged, not built.
-- **A snapshot-hygiene fix rode along**: a prediction's free-text claim embeds its approval request
-  id, so a section about *calibration* was pinning an identifier into the hash. Seeded ids are
-  reproducible only for a fixed sequence of allocations, so this slice minting one id earlier
-  produced a spurious diff. ADR-017 excludes volatile ids; this was one wearing a sentence as a
-  disguise, and it is now scrubbed.
-- Next: `resource_usage.experiment_id` is the obvious next socket — it is the one column standing
-  between §2.6's report and its last two dimensions.
+- **931 tests passing** (15 new, 0 removed; up from 916). **Golden expectation 20 → 21**, with
+  **`balances` identical in every account in every book** and USD_REAL untouched — attribution
+  decides which experiment a cost is *reported* under; it posts no entry. `human_minutes` moves
+  `null → 0` on one experiment and `null → 58` on the other; the `0` is now a *measurement* rather
+  than a decline. `resource_spend` `0 → 550`. Four deliberations gain 1–3 input tokens, all from
+  one cause: §15's experiment section renders the RESOURCE figure to the Cell, which had always
+  read `0`.
+- **Teeth-checked twelve ways**, each failing its named test: both metering paths unstamped (the
+  state before this slice), the wake unstamped, a Cell's forecasts back to `experiment_id=None`,
+  human labour summing only billed minutes, the report abstaining again, attribution ignoring
+  whether the experiment still runs, attribution read at completion instead of claim, the CLI
+  accepting any string for `--experiment`, a metering entry point growing the parameter, the column
+  being added, and the attribution re-derived instead of carried.
+- **One test could not have failed and was rewritten.** "The call and its forecasts share one
+  experiment" passes trivially on a quiet run — a re-derivation agrees too. It now uses a provider
+  that concludes the experiment *while the call is in flight*, the only moment the two designs
+  differ, and the mutation is caught.
+- **Hand-verified end to end on a live colony**: experiment started, a wake deliberating under it,
+  an approved external action claimed and completed at 47 human minutes against email's 30-minute
+  ceiling — the report showing 2 model calls, 47 minutes with 17 subsidised, 304 RESOURCE, and the
+  Cell's *own* auto-registered forecast in the reality gap. A bogus `--experiment` is refused.
+- **The live run is what found the deliberation half.** The first report read "Model calls: 0" for
+  a Cell that had just deliberated under the experiment, which no test was asking about.
+- Next: `revenue.record_revenue` refuses a re-record that only adds an experiment (correct per
+  idempotency), so an operator attributing revenue late needs §3.6's adjustment path — logged, not
+  built. Kernel-internal validation of a dangling `experiment_id` needs a seam and is in
+  FUTURE_BUILD_HOOKS.

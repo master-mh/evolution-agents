@@ -195,10 +195,16 @@ def _request_locked(
     a partially-applied version of that is either a held counterparty with
     nothing metered behind it or a charge against a claim nobody holds.
 
-    The gateway and the tool surface deliberately do **not** use this: ADR-022
-    requires their reservation to be committed *before* anything leaves the
-    machine, so for them a separate transaction is the guarantee rather than a
-    limitation. The difference is that this path makes no external call at all.
+    **The gateway deliberately does not use this**: ADR-022 requires its
+    reservation to be committed *before* anything leaves the machine, so for it
+    a separate transaction is the guarantee rather than a limitation.
+
+    The tool surface uses this core but keeps its own `BEGIN IMMEDIATE` around
+    it, which is not a contradiction: ADR-022's requirement is about the
+    *commit* happening before the external call, not about which function opens
+    the transaction. It needs the core because ADR-044 reads the §2.6 experiment
+    attribution inside the same lock that inserts it — `reservations.request`
+    would put that read outside.
     """
     existing = get_reservation_by_idempotency_key(conn, idempotency_key)
     if existing is not None:

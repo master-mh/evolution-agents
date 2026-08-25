@@ -1,5 +1,5 @@
 {
-  "expectation_version": 20,
+  "expectation_version": 21,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "e943c4f9079a601c9ae7224cef609110c5e881f00a5f6ab9c062e249a1823e01",
+  "semantic_hash": "08caceb5794e4f7b9c60e46f7ce83463a2ca2487606b4e65247576e0025f450a",
   "snapshot": {
     "approval_grants": {
       "consumed": 5,
@@ -396,7 +396,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 922,
+        "context_tokens": 923,
         "failure_reason": null,
         "made_model_call": true,
         "status": "proposed",
@@ -405,7 +405,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 949,
+        "context_tokens": 950,
         "failure_reason": null,
         "made_model_call": true,
         "status": "proposed",
@@ -423,7 +423,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 970,
+        "context_tokens": 972,
         "failure_reason": null,
         "made_model_call": true,
         "status": "proposed",
@@ -432,7 +432,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 970,
+        "context_tokens": 972,
         "failure_reason": null,
         "made_model_call": true,
         "status": "proposed",
@@ -546,29 +546,35 @@
         "cell": "cell#0",
         "concluded_by": "kernel",
         "expected_cost_minor_units": 25,
-        "human_minutes": null,
+        "human_minutes": 0,
         "hypothesis": "fixed scenario: a capped live experiment the Cell does not survive",
         "ladder_rung": 7,
         "real_spend": 0,
+        "resolved_predictions": 0,
         "resource_spend": 0,
         "sandbox_cpu_seconds": null,
         "status": "abandoned",
+        "subsidised_human_minutes": 0,
         "synthetic_net_profit": 0,
-        "synthetic_revenue": 0
+        "synthetic_revenue": 0,
+        "unresolved_predictions": 0
       },
       {
         "cell": "cell#4",
         "concluded_by": "golden-operator",
         "expected_cost_minor_units": 0,
-        "human_minutes": null,
+        "human_minutes": 58,
         "hypothesis": "fixed scenario: does the write-up earn anything",
         "ladder_rung": 1,
         "real_spend": 0,
-        "resource_spend": 0,
+        "resolved_predictions": 0,
+        "resource_spend": 550,
         "sandbox_cpu_seconds": null,
         "status": "concluded",
+        "subsidised_human_minutes": 4,
         "synthetic_net_profit": 40,
-        "synthetic_revenue": 40
+        "synthetic_revenue": 40,
+        "unresolved_predictions": 0
       }
     ],
     "external_actions": [
@@ -745,7 +751,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3450,
+        "input_tokens": 3453,
         "mirror_minor_units": 0,
         "output_tokens": 225,
         "pricing_table_version": "2026-07-27",
@@ -761,7 +767,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3505,
+        "input_tokens": 3508,
         "mirror_minor_units": 0,
         "output_tokens": 218,
         "pricing_table_version": "2026-07-27",
@@ -793,7 +799,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3546,
+        "input_tokens": 3550,
         "mirror_minor_units": 0,
         "output_tokens": 224,
         "pricing_table_version": "2026-07-27",
@@ -809,7 +815,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3546,
+        "input_tokens": 3550,
         "mirror_minor_units": 0,
         "output_tokens": 225,
         "pricing_table_version": "2026-07-27",
@@ -1443,7 +1449,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3450,
+        "quantity": 3453,
         "resource_type": "input_tokens"
       },
       {
@@ -1461,7 +1467,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3505,
+        "quantity": 3508,
         "resource_type": "input_tokens"
       },
       {
@@ -1491,7 +1497,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3546,
+        "quantity": 3550,
         "resource_type": "input_tokens"
       },
       {
@@ -1503,7 +1509,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3546,
+        "quantity": 3550,
         "resource_type": "input_tokens"
       },
       {

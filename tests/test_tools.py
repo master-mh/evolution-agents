@@ -19,6 +19,7 @@ from mitosis import (
     context,
     db,
     deliberation,
+    experiments,
     ledger,
     lifecycle,
     providers,
@@ -554,6 +555,91 @@ def test_a_tool_call_is_metered_in_resource(conn):
     assert ledger.get_balance(conn, cell_cash(cell.cell_id), Book.USD_REAL) == real_before
     assert ledger.get_balance(conn, "external_expense", Book.USD_REAL) == 0
     assert ledger.verify_conservation(conn, Book.RESOURCE)
+
+
+def test_a_metered_tool_call_is_attributed_to_the_running_experiment(conn):
+    """§2.6 via A6 (ADR-044). A tool call is RESOURCE the colony spent, and the
+    experiment report reads that spend through the reservation.
+
+    Before this, `tools` opened its RESOURCE reservation with no experiment on
+    it, so §2.6's shadow-cost dimension reported a definite figure with every
+    tool call missing from it. That is worse than the `None` the report uses for
+    a dimension it cannot measure: an abstention is visible and an undercount is
+    not.
+    """
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    experiment = experiments.start(
+        conn, cell_id=cell.cell_id, hypothesis="do bookshops publish prices",
+        ladder_rung=1, expected_cost_minor_units=0,
+    )
+    grant = _approved_grant(conn, cell)
+    # Measured as a delta: the deliberation that produced the grant is itself
+    # metered under the same experiment now, so pinning a total here would
+    # conflate two costs and pass for the wrong reason.
+    before = experiments.report(conn, experiment.experiment_id).resource_spend_minor_units
+
+    tools.execute_grant(
+        conn, grant_id=grant.grant_id, executed_by="operator", reason="r",
+        fetcher=FakeFetcher(),
+    )
+
+    call = conn.execute("SELECT * FROM tool_calls").fetchone()
+    reservation = reservations.get_reservation(conn, call["resource_reservation_id"])
+    assert reservation.experiment_id == experiment.experiment_id
+
+    report = experiments.report(conn, experiment.experiment_id)
+    assert report.resource_spend_minor_units - before == tool_registry.RESOURCE_COST_PER_CALL
+
+
+def test_a_tool_call_outside_any_experiment_stays_unattributed(conn):
+    """`None` is a result, not a gap.
+
+    Consumption with no running experiment behind it is genuinely
+    unattributed, and forcing it onto the nearest experiment would invent an
+    attribution rather than record one — the same reason `experiments` has no
+    column for a Cell to write an outcome into.
+    """
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    grant = _approved_grant(conn, cell)
+
+    tools.execute_grant(
+        conn, grant_id=grant.grant_id, executed_by="operator", reason="r",
+        fetcher=FakeFetcher(),
+    )
+
+    call = conn.execute("SELECT * FROM tool_calls").fetchone()
+    reservation = reservations.get_reservation(conn, call["resource_reservation_id"])
+    assert reservation.experiment_id is None
+
+
+def test_a_concluded_experiment_stops_collecting_new_costs(conn):
+    """§15.1's "current experiment" is what a cost is attributed to, so
+    concluding one ends its bill rather than reopening it.
+
+    A report that kept growing after its experiment concluded would make
+    `conclude` meaningless as a boundary, and §2.6's figures would depend on
+    when they were read.
+    """
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    experiment = experiments.start(
+        conn, cell_id=cell.cell_id, hypothesis="h", ladder_rung=1,
+        expected_cost_minor_units=0,
+    )
+    experiments.conclude(
+        conn, experiment_id=experiment.experiment_id, concluded_by="operator",
+        note="done",
+    )
+    grant = _approved_grant(conn, cell)
+
+    tools.execute_grant(
+        conn, grant_id=grant.grant_id, executed_by="operator", reason="r",
+        fetcher=FakeFetcher(),
+    )
+
+    assert experiments.report(conn, experiment.experiment_id).resource_spend_minor_units == 0
 
 
 def test_the_call_is_recorded_before_it_is_made(conn):

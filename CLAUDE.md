@@ -36,6 +36,11 @@ single highest-value habit in this repo. Some precedents:
   salted *hash* of a counterparty and never the counterparty — a `customers` table is the obvious
   design and the one the clause warns about (`channel_registry.py`). Dedupe needs equality, not
   identity, so everything §21.2 asks still works.
+- **§2.5** ("Balances are derived") has now refused two tables and one column: no
+  `experiment_results` despite §31 listing it, and no `resource_usage.experiment_id` despite four
+  places in this repo scheduling it as the next slice. Before adding a column that *identifies*
+  something, check whether an existing NOT NULL foreign key already reaches it — a second answer to
+  a question another table already owns is the same trap as a cached balance (ADR-043, ADR-044).
 
 Before designing a slice, `grep -n` SPEC.md for the section and read that range. **Never read
 SPEC.md wholesale** — it is large, and the relevant slice is usually 20 lines.

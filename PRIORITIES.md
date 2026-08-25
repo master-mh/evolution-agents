@@ -528,6 +528,27 @@
   `PopulationError`. 916 tests (29 new); golden expectation 19 → 20 with **balances identical in
   every book**, and `coroner_reports.stage_reached` finally non-null after being empty since
   migration 0007. Teeth-checked sixteen ways; hand-verified end to end on a live colony.
+- [x] **Experiment attribution for metered ops — DONE** (2026-08-25), ADR-044. **No migration.**
+  This entry was scheduled as "add `resource_usage.experiment_id`" and the claim was wrong about
+  the mechanism — BUILD_RECORD, `golden.py`'s version-20 note and `experiments.py`'s own docstring
+  all repeated it. `resource_usage.reservation_id` is **NOT NULL** (Amendment A6 requires it) and
+  `reservations.experiment_id` has existed since **migration 0001**, so every metered row was
+  always one join from its experiment. The gap was the **stamp**: `gateway` threaded it and
+  `tools`, `external_actions` and `deliberation` did not. The column is now *refused* by a guard
+  test — it would be a second answer to a question the reservation already owns, §2.5's
+  cached-derivation trap reached from the metering side. **The visible bug was the abstention; the
+  real one was the undercount.** `human_minutes` reported `None` with a reason, which announces
+  itself, while `resource_spend_minor_units` reported a *definite* shadow cost with every tool call
+  and every human minute missing from it — and §2.6's real-cash line read 0 for any experiment
+  whose Cell simply ran, because a wake never named its experiment to the gateway. **Attribution is
+  derived from §15.1's one current experiment and never supplied**, because a parameter is a place
+  to put a different one (§0.3 from the expense side); a structural test asserts no metering entry
+  point grows it. Human labour reports **billed + subsidised** — summing `quantity` alone would
+  make the colony's human cost *smaller* the more of it a person absorbed unpaid, hiding the exact
+  figure §1.1 subtracts. 931 tests (15 new); golden expectation 20 → 21 with **balances identical
+  in every account in every book**. Teeth-checked twelve ways; one test could not have failed and
+  was rewritten to conclude the experiment mid-call. **The live run found the deliberation half** —
+  a report reading "Model calls: 0" for a Cell that had just deliberated under the experiment.
 - [ ] §24 gateway features left out of the slice: routing by task type (§24.3), controlled retries (a retry after `execution_unknown` risks double-billing), model competition, and reacting to provider drift as a §8.4 regime change (drift is *recorded* — `resolved_model`/`api_version` — but nothing consumes it). **Structured-output validation was struck from this list** (2026-08-22): it exists, at the deliberation layer rather than the gateway — `proposal.parse` is strict, `extra="forbid"`, with `FORBIDDEN_FIELD_SENSE` as a schema tripwire. Anything added at the gateway must not duplicate it. *Disproved by:* `proposal.parse`.
 - [ ] Remaining CLI — **narrowed 2026-08-22** from `list-cells/show-cell/kill-cell/ledger/verify-ledger`, most of which had already landed among the CLI's 42 verbs. Still genuinely absent: **`list-cells`** (`status` prints counts and per-status/per-type tallies, but no roster) and **`ledger`** (no transaction browser). Struck: `verify-ledger` (`status` prints per-book conservation and `ledger.verify_chain`; `calibration` prints `prediction.verify_chain`), `show-cell` (substantially covered by `cell-fitness`), and `kill-cell` (`reap` kills on objective criteria — a *forced* operator kill is a §10.5 question, not an additive CLI verb, and should be argued before it is built). Purely additive, no blockers. *Disproved by:* `mitosis --help`.
 - [x] **A dead Cell's estate — DONE** (2026-08-22), ADR-028. `kill()` now releases the dead Cell's
@@ -559,6 +580,13 @@
   provider" **is** enforced, via `_concurrent_reserved_for_provider` and
   `_settled_spend_for_provider_since`. Only the shadow-pricing half remains. *Disproved by:*
   `real_spend_breaker._concurrent_reserved_for_provider`.
+- [ ] **A dangling `experiment_id` is unvalidated inside the kernel.** ADR-044 validated the two
+  operator-facing paths; `reservations.request`, `prediction._register_locked`,
+  `ledger.post_transaction` and `gateway.call_model` all accept the id and check nothing. They sit
+  *below* `experiments` in the layering, so this needs an injected seam rather than an import — the
+  `sweeper.ExternalOperationChecker` shape. A dangling id fails silently and only ever *subtracts*
+  from a §2.6 report. *Disproved by:* anything in `src/` raising on an unknown `experiment_id`
+  below the CLI layer.
 - [ ] Reconciling resource_usage against actual sandbox/model-gateway logs (Amendment A6's other half). **Half-unblocked 2026-08-22:** the entry said "no such logs exist until Phase 4/5", but the model-gateway half now does — `model_calls` records provider, resolved model, API version and reported usage per call. The *sandbox* half is still genuinely blocked until Phase 5. *Disproved by:* the `model_calls` table.
 
 ## Later

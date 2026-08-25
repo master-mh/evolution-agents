@@ -1911,3 +1911,85 @@ from amendment ID to spec location is complete in one place:
     record and a derivation. The expectation also scrubs a uuid that had been reaching the hash
     inside a prediction's free-text claim; unrelated to experiments, surfaced by this slice shifting
     the seeded id sequence by exactly one.
+
+---
+
+## ADR-044: A metered operation is attributed to an experiment through its reservation, and the Cell is never asked which one
+
+- **Status:** Accepted
+- **Spec ref:** §1.1, §1.2, §2.2, §2.5, §2.6, §15.1, §17.2, §19.3, §28 Phase 8, Amendment A6;
+  Charter C3; ADR-022, ADR-036, ADR-039, ADR-042, ADR-043
+- **Context:** ADR-043 shipped §2.6's six-dimension report and recorded that human labour was
+  unmeasurable because "human labour needs a `resource_usage.experiment_id` that does not exist".
+  PRIORITIES, BUILD_RECORD, `golden.py`'s version-20 migration note and `experiments.py`'s own
+  module docstring all repeated it, and the next slice was scheduled as "add the column".
+  **The claim was false about the mechanism.** `resource_usage.reservation_id` is `NOT NULL
+  REFERENCES reservations(reservation_id)` — Amendment A6 requires exactly that — and
+  `reservations.experiment_id` has existed since migration 0001. Every metered row was always one
+  join from its experiment. What was missing was the **stamp**: `gateway` threaded `experiment_id`
+  into its reservations, and `tools`, `external_actions` and `deliberation` did not.
+- **Decision: fix the plumbing, refuse the column, and derive the attribution.**
+  - **No `experiment_id` on `resource_usage`.** It would be a second answer to a question the
+    reservation already answers, and the two can disagree — a usage row stamped with one experiment
+    hanging off a reservation stamped with another, with nothing in the schema preferring either.
+    That is the cached-derivation trap §2.5 and Charter C3 exist to prevent, reached from the
+    metering side rather than the balance side. `test_resource_usage_has_no_experiment_id_column` is
+    the guard, and it asserts the `NOT NULL` the design rests on. **This slice ships no migration.**
+  - **The attribution is derived from the Cell's running experiment, never supplied.** §15.1 gives a
+    Cell one current experiment, so the answer is already determined and nothing needs to ask for
+    it. A parameter would be a *place to put a different one*, and which experiment bears a cost is
+    an answer about what an experiment cost — §0.3 reached from the expense side. A Cell that could
+    name the experiment could make its own look cheap by naming another.
+    `experiments.attribution_for` is the one seam; a structural test asserts no metering entry point
+    grows the parameter.
+  - **`None` is a result, not a gap.** Consumption with no running experiment behind it is genuinely
+    unattributed, and pushing it onto the nearest experiment would invent an attribution.
+  - **Human labour is billed + subsidised, and the subsidy is reported beside it.**
+    `external_actions` charges a Cell only up to its channel's ceiling and records the overflow as
+    subsidy, because "the minutes were already spent, so refusing to record them does not un-spend
+    them". `resource_usage.quantity` is therefore the *billed* minutes, and summing it alone would
+    state the colony's human cost as **smaller the more of it a person absorbed unpaid** — the exact
+    figure §1.1 subtracts to "expose hidden founder labour", hidden by the report built to expose
+    it. §1.1 lists labour and subsidy as separate subtractions, so the report carries both.
+  - **External-action labour is stamped at claim, not at completion.** A person may take days to say
+    how long it took, by which time the Cell may be running a different experiment or be dead. The
+    labour was given for the experiment that was open when the action was claimed, and the
+    reservation — which carries the attribution onto the ledger at settlement — is created then.
+  - **A deliberation resolves the attribution once and carries it** to both the gateway call and the
+    predictions it registers. The call happens outside every transaction (ADR-022) and the
+    predictions inside one; a second read could put a model call on one experiment and its own
+    forecasts on another, with nothing afterwards saying which was right.
+- **What it displaced.**
+  - **The column everything asked for.** It is the obvious design, it was in PRIORITIES as the next
+    slice, and it would have worked — while creating a second source of truth for an attribution the
+    reservation already owns.
+  - **A caller-supplied `experiment_id` on the metering paths**, which is how `gateway` already
+    works and would have been the consistent-looking choice. Consistency with an operator-facing
+    verb is not a reason to give a Cell's own consumption a field it could fill in.
+  - **Refusing an over-ceiling completion**, reconsidered here and left as `external_actions` had
+    it: refusing does not un-spend the minutes, it only makes the colony quieter about them.
+  - **Validating `experiment_id` inside the kernel.** `reservations` and `prediction` sit below
+    `experiments` in the layering, so a check there needs an injected seam. Validation landed at the
+    CLI, where migration 0026's complaint ("accepted any string and validated nothing") actually
+    lives; the kernel-internal case is logged in FUTURE_BUILD_HOOKS rather than half-built.
+- **Consequences:**
+  - **The bug this fixed was an undercount, not the abstention.** `human_minutes` reported `None`,
+    which is visible. `resource_spend_minor_units` — §2.6's shadow-cost line — reads the same
+    reservations through the ledger and reported a *definite* figure with every tool call and every
+    human minute missing from it. An abstaining dimension announces itself; an undercounting one
+    does not. Any future "this dimension cannot be measured" claim should be checked against what
+    the neighbouring dimensions are already reporting.
+  - **§2.6's real-cash line was the largest hole and the least visible.** A wake never named its
+    experiment, so an experiment whose Cell simply *ran* reported 0 real spend — a plausible figure
+    for work that has not spent yet. On a paid provider that is the report's headline number.
+  - **A Cell now sees the true cost of its own experiment.** §15's experiment section renders the
+    §2.6 report, so the RESOURCE figure it had always read as `0` is now real. That is the whole
+    golden-run token diff, and it is the reference ADR-043 said models were missing when every
+    proposal priced its work at 0.
+  - `tools` opens its RESOURCE reservation through `reservations._request_locked` inside its own
+    `BEGIN IMMEDIATE` rather than through `reservations.request`, so the attribution is read inside
+    the lock that inserts it. ADR-022's requirement is about the *commit* preceding the external
+    call, not about which function opens the transaction, so the guarantee is unchanged.
+  - Golden expectation 20 → 21. **`balances` is identical in every account in every book** and
+    USD_REAL is untouched: attribution decides which experiment a cost is *reported* under; it moves
+    no money and posts no entry.

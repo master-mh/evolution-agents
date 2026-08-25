@@ -87,6 +87,7 @@ from . import (
     approval,
     audit,
     deliberation,
+    experiments,
     ids,
     lifecycle,
     reservations,
@@ -271,18 +272,31 @@ def execute_grant(
     # Its own transaction, exactly as the gateway keeps reserve separate from
     # execute: the reservation must be durably committed before anything
     # leaves the machine, or a crash could bill work nobody authorised.
+    # Opened through the locked core rather than `reservations.request` so the
+    # §2.6 attribution is read *inside* the same write lock that inserts it. The
+    # transaction boundary is unchanged — still its own, still committed before
+    # anything leaves the machine — but an experiment concluding between the
+    # read and the insert can no longer stamp a reservation with an experiment
+    # that has stopped running.
     try:
-        reservation = reservations.request(
-            conn,
-            cell_id=call.cell_id,
-            book=Book.RESOURCE,
-            currency="RESOURCE",
-            maximum_amount=RESOURCE_COST_PER_CALL,
-            expires_at=now + _RESERVATION_TTL,
-            idempotency_key=f"tool_call_resource:{call.tool_call_id}",
-            external_operation_type="tool_call",
-            external_operation_id=call.tool_call_id,
-        )
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            reservation = reservations._request_locked(
+                conn,
+                cell_id=call.cell_id,
+                book=Book.RESOURCE,
+                currency="RESOURCE",
+                maximum_amount=RESOURCE_COST_PER_CALL,
+                expires_at=now + _RESERVATION_TTL,
+                idempotency_key=f"tool_call_resource:{call.tool_call_id}",
+                experiment_id=experiments.attribution_for(conn, call.cell_id),
+                external_operation_type="tool_call",
+                external_operation_id=call.tool_call_id,
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
     except Exception as exc:
         _finish(conn, call, status="failed", error=f"reservation refused: {exc}", now=now)
         raise

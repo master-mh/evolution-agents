@@ -55,6 +55,7 @@ from . import (
     audit,
     context,
     events,
+    experiments,
     gateway,
     ids,
     ledger,
@@ -353,6 +354,18 @@ def deliberate(
         budget_tokens=context_budget_tokens,
     )
 
+    # **Read once, used twice** (§2.6; ADR-044). A Cell's thinking and the
+    # forecasts it makes in the same breath must land on the same experiment,
+    # and reading the attribution again inside the write lock below could give
+    # two different answers if the experiment concluded in between — a model
+    # call on one experiment and its own predictions on another, with no way to
+    # tell afterwards which was right. So it is resolved here and carried.
+    #
+    # This is also the dimension it matters most for: §2.6's "real cash
+    # consumed" was reported as 0 for every experiment whose Cell simply *ran*,
+    # because a wake never named the experiment it was thinking about.
+    experiment_id = experiments.attribution_for(conn, cell.cell_id)
+
     # The gateway call commits its own reservation before the external call
     # (ADR-022), so it happens outside every transaction this module opens.
     call = gateway.call_model(
@@ -366,6 +379,7 @@ def deliberate(
             ),
             max_tokens=max_tokens,
         ),
+        experiment_id=experiment_id,
         idempotency_key=f"deliberation:{wake_key}",
     )
 
@@ -391,6 +405,9 @@ def deliberate(
         assembled=assembled,
         model_call_id=call.model_call_id,
         parsed=parsed,
+        # Carried rather than re-derived, so the call and the forecasts it
+        # produced cannot land on two different experiments.
+        experiment_id=experiment_id,
         proposal_sink=proposal_sink,
     )
 
@@ -520,6 +537,7 @@ def _record_proposal(
     assembled: context.AssembledContext,
     model_call_id: str,
     parsed: proposal_module.Proposal,
+    experiment_id: str | None,
     proposal_sink: ProposalSink | None,
 ) -> Deliberation:
     """Record the proposal, register its predictions, and queue it for review
@@ -600,7 +618,11 @@ def _record_proposal(
                 claim=proposed.claim,
                 probability=proposed.probability,
                 resolves_by=now + timedelta(days=proposed.horizon_days),
-                experiment_id=None,
+                # §2.6's reality-gap dimension is *about* this: a forecast made
+                # while an experiment runs is a forecast about that experiment.
+                # Hardcoding None kept every Cell's own predictions out of the
+                # one report built to score them (ADR-044).
+                experiment_id=experiment_id,
                 idempotency_key=f"deliberation:{wake_key}:{index}",
             )
             conn.execute(

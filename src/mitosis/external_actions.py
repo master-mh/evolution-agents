@@ -76,6 +76,7 @@ from . import (
     audit,
     channel_registry,
     deliberation,
+    experiments,
     ids,
     lifecycle,
     reservations,
@@ -338,6 +339,14 @@ def _claim_locked(
         maximum_amount=spec.max_billable_human_minutes * HUMAN_MINUTE_RESOURCE_COST,
         expires_at=now + RESERVATION_TTL,
         idempotency_key=f"external_action_resource:{action_id}",
+        # **Stamped at claim, not at completion.** A person may take days to
+        # come back and say how long it took, by which time the Cell may be
+        # running a different experiment or be dead. The labour was given for
+        # the experiment that was running when the action was claimed, and the
+        # reservation is the thing that carries the attribution onto the ledger
+        # when it settles, so freezing it here is both correct and the only
+        # point where the answer is still knowable.
+        experiment_id=experiments.attribution_for(conn, cell.cell_id),
         external_operation_type="external_action",
         external_operation_id=action_id,
     )

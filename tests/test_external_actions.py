@@ -22,6 +22,7 @@ from mitosis import (
     context,
     db,
     deliberation,
+    experiments,
     external_actions,
     ledger,
     lifecycle,
@@ -138,6 +139,142 @@ def _approved_grant(conn, cell, *, wake_key: str = "w1", **overrides):
     return approval.approve(
         conn, request_id=row["request_id"], decided_by="operator", reason="worth doing"
     )
+
+
+# --- §2.6/§1.1: human labour reaches the experiment that caused it -------------
+
+
+def _running_experiment(conn, cell):
+    return experiments.start(
+        conn, cell_id=cell.cell_id, hypothesis="will a bookshop reply",
+        ladder_rung=1, expected_cost_minor_units=0,
+    )
+
+
+def test_human_labour_reaches_the_report_without_a_column_for_it(conn):
+    """§2.6's "human labour", through the reservation (ADR-044).
+
+    `resource_usage` has no `experiment_id` and deliberately never will:
+    `reservation_id` is NOT NULL and a reservation has carried the experiment
+    since migration 0001, so the join already reaches. A column would be a
+    second answer to a question the reservation already answers, and two
+    answers that can disagree is what §2.5 and Charter C3 exist to prevent.
+
+    If this fails, check whether someone "fixed" the attribution by adding the
+    column — the report would still pass while the two sources drifted.
+    """
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    experiment = _running_experiment(conn, cell)
+    grant = _approved_grant(conn, cell)
+    action = external_actions.claim(
+        conn, grant_id=grant.grant_id, claimed_by="operator", counterparty=COUNTERPARTY
+    )
+    external_actions.complete(
+        conn, action_id=action.action_id, completed_by="operator",
+        outcome="positive_reply", human_minutes=12,
+    )
+
+    report = experiments.report(conn, experiment.experiment_id)
+    assert report.human_minutes == 12
+    assert report.subsidised_human_minutes == 0
+    assert report.resource_spend_minor_units > 0
+
+
+def test_subsidised_minutes_are_labour_given_not_labour_forgotten(conn):
+    """§1.1: autonomy-adjusted profit subtracts shadow-priced human labour *and*
+    founder subsidy, to expose a colony propped up by unpaid effort.
+
+    `external_actions` bills a Cell only up to its channel's ceiling and records
+    the overflow as subsidy, so `resource_usage.quantity` is the *billed*
+    minutes. A report that summed only those would state the colony's human cost
+    as smaller the more of it a person absorbed for free — quietest exactly
+    where §1.1 wants it loudest. The total is what a person gave.
+    """
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    experiment = _running_experiment(conn, cell)
+    grant = _approved_grant(conn, cell)
+    action = external_actions.claim(
+        conn, grant_id=grant.grant_id, claimed_by="operator", counterparty=COUNTERPARTY
+    )
+    ceiling = channel_registry.get_spec("email").max_billable_human_minutes
+    external_actions.complete(
+        conn, action_id=action.action_id, completed_by="operator",
+        outcome="positive_reply", human_minutes=ceiling + 9,
+    )
+
+    report = experiments.report(conn, experiment.experiment_id)
+    assert report.human_minutes == ceiling + 9
+    assert report.subsidised_human_minutes == 9
+    # The billed part is what the ledger charged; the gap is the subsidy. If
+    # these ever coincide, the split has collapsed and §1.1 lost its figure.
+    billed = conn.execute(
+        "SELECT SUM(quantity) AS q FROM resource_usage WHERE resource_type = ?",
+        (ResourceType.HUMAN_MINUTES.value,),
+    ).fetchone()["q"]
+    assert billed == ceiling
+    assert report.human_minutes > billed
+
+
+def test_labour_is_attributed_at_claim_not_at_completion(conn):
+    """A person may take days to say how long an action took, by which time the
+    Cell may be running a different experiment or be dead.
+
+    The labour was given for the experiment that was open when the action was
+    claimed, and the reservation — which is what carries the attribution onto
+    the ledger when it settles — is created then. Reading the Cell's current
+    experiment at completion time would bill the wrong one, and after a death
+    would bill none at all while the minutes were still spent.
+    """
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    first = _running_experiment(conn, cell)
+    grant = _approved_grant(conn, cell)
+    action = external_actions.claim(
+        conn, grant_id=grant.grant_id, claimed_by="operator", counterparty=COUNTERPARTY
+    )
+
+    # The world moves on between the claim and the person coming back.
+    experiments.conclude(
+        conn, experiment_id=first.experiment_id, concluded_by="operator", note="done"
+    )
+    second = experiments.start(
+        conn, cell_id=cell.cell_id, hypothesis="something else entirely",
+        ladder_rung=1, expected_cost_minor_units=0,
+    )
+
+    external_actions.complete(
+        conn, action_id=action.action_id, completed_by="operator",
+        outcome="positive_reply", human_minutes=11,
+    )
+
+    assert experiments.report(conn, first.experiment_id).human_minutes == 11
+    assert experiments.report(conn, second.experiment_id).human_minutes == 0
+
+
+def test_labour_outside_any_experiment_is_not_pushed_onto_one(conn):
+    """Unattributed consumption is a fact, not a hole to fill."""
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    grant = _approved_grant(conn, cell)
+    action = external_actions.claim(
+        conn, grant_id=grant.grant_id, claimed_by="operator", counterparty=COUNTERPARTY
+    )
+    external_actions.complete(
+        conn, action_id=action.action_id, completed_by="operator",
+        outcome="positive_reply", human_minutes=7,
+    )
+
+    # The minutes are recorded colony-wide; they simply belong to no experiment.
+    row = conn.execute(
+        "SELECT r.experiment_id AS experiment_id FROM resource_usage u "
+        "JOIN reservations r ON r.reservation_id = u.reservation_id "
+        "WHERE u.resource_type = ?",
+        (ResourceType.HUMAN_MINUTES.value,),
+    ).fetchone()
+    assert row is not None
+    assert row["experiment_id"] is None
 
 
 # --- §16.3: the colony never holds a counterparty ------------------------------

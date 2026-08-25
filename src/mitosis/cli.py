@@ -81,6 +81,29 @@ def _require_existing_db(path: str) -> None:
         raise CliError(f"no MITOSIS database found at {path!r} — run `mitosis init` first")
 
 
+def _require_experiment(conn, experiment_id: str | None) -> str | None:
+    """An operator-supplied `--experiment` must name one that exists.
+
+    Migration 0026's own comment complained that "`mitosis predict --experiment
+    <id>` has always accepted any string and validated nothing", and creating
+    the table did not by itself change that — nothing joined the two. A typo
+    here does not fail; it silently detaches the prediction or the revenue from
+    every report that would have counted it, and §2.6's report then shows a
+    smaller number with nothing anywhere saying why (ADR-044).
+
+    Existence only. A *concluded* experiment is still a legitimate target:
+    revenue lands after the work ends, and refusing it would push the operator
+    toward attaching the money to nothing at all.
+    """
+    if experiment_id is None:
+        return None
+    if experiments.get(conn, experiment_id) is None:
+        raise CliError(
+            f"no such experiment: {experiment_id!r} — `mitosis experiments` lists them"
+        )
+    return experiment_id
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     path = args.db
     already_existed = Path(path).exists()
@@ -555,7 +578,7 @@ def cmd_predict(args: argparse.Namespace) -> None:
             claim=args.claim,
             probability=args.probability,
             resolves_by=resolves_by,
-            experiment_id=args.experiment,
+            experiment_id=_require_experiment(conn, args.experiment),
             idempotency_key=args.idempotency_key,
         )
     except prediction.PredictionError as exc:
@@ -643,7 +666,7 @@ def cmd_record_revenue(args: argparse.Namespace) -> None:
             book=book,
             note=args.note,
             artifact_id=args.artifact,
-            experiment_id=args.experiment,
+            experiment_id=_require_experiment(conn, args.experiment),
             idempotency_key=args.idempotency_key,
         )
     except revenue.RevenueError as exc:
@@ -1152,8 +1175,14 @@ def cmd_experiment(args: argparse.Namespace) -> None:
     print(f"    Model calls:                   {report.model_calls} "
           f"({report.input_tokens} in / {report.output_tokens} out)")
     cpu = "unmeasurable" if report.sandbox_cpu_seconds is None else report.sandbox_cpu_seconds
-    human = "unmeasurable" if report.human_minutes is None else report.human_minutes
     print(f"    Sandbox CPU:                   {cpu}")
+    # §1.1 subtracts shadow-priced human labour *and* founder subsidy to get
+    # autonomy-adjusted profit, so the subsidised part is printed beside the
+    # total rather than inside it. A colony run on unpaid minutes should read as
+    # expensive here, not as cheap.
+    human = f"{report.human_minutes} minutes"
+    if report.subsidised_human_minutes:
+        human += f"  ({report.subsidised_human_minutes} of them subsidised — §1.1)"
     print(f"    Human labour:                  {human}")
     gap = ("no resolved forecasts" if report.reality_gap_mean_brier is None
            else f"{report.reality_gap_mean_brier:.3f} mean Brier")

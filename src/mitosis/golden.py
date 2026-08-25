@@ -646,7 +646,72 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           **`balances` is identical across every account in every book.** An
 #           experiment is a record and a derivation; it moves no money, and the
 #           revenue it now names was already being posted.
-EXPECTATION_VERSION = 20
+#   20 -> 21 (experiment attribution for metered ops; §2.6, §1.1, A6; ADR-044).
+#           Version 20's own note above says `human_minutes` is null because
+#           "`resource_usage` carries no experiment_id". That was true of the
+#           column and false of the fact: `resource_usage.reservation_id` is NOT
+#           NULL and a reservation has carried `experiment_id` since migration
+#           0001, so the join always reached. What was missing was the stamp —
+#           `tools` and `external_actions` opened RESOURCE reservations without
+#           one while the gateway threaded it.
+#           (a) **`experiments.human_minutes`**: `null` -> `0` on the rung-7 row
+#               and `null` -> `58` on the rung-1 row. The `0` is not a
+#               regression into the trap version 20 avoided — it is now a
+#               *measurement*: no external action was claimed while that
+#               experiment ran, so zero minutes is a true statement rather than
+#               a declined one. The 58 is step 19's three completed actions
+#               (34 + 4 + 20 reported), which matches `human_minutes.reported`
+#               colony-wide because every one of them was claimed while the
+#               rung-1 experiment was open.
+#           (b) **`experiments.subsidised_human_minutes` (new)**: `0` and `4`.
+#               §1.1 subtracts shadow-priced human labour *and* founder subsidy
+#               to get autonomy-adjusted profit, and `external_actions` bills a
+#               Cell only up to its channel ceiling — so summing the billed
+#               `quantity` alone would report the colony's human cost as
+#               *smaller* the more of it a person absorbed unpaid. Both halves
+#               are pinned; the total is billed + subsidised.
+#           (c) **`experiments.resource_spend`**: `0` -> `540` on the rung-1
+#               row. **This is the bug the slice was actually fixing.** The
+#               shadow-cost dimension reads the same reservations through the
+#               ledger, so it was reporting a definite figure with every tool
+#               call and every human minute missing from it. An abstaining
+#               dimension is visible; an undercounting one is not.
+#           (d) **`model_calls` and `resource_usage`**: four rows gain exactly
+#               one input token. §15's experiment section renders "Spent so far:
+#               ... {resource_spend} RESOURCE" to the Cell, which read `0` on
+#               every wake before this and now reads the real figure; the string
+#               grows two characters and `providers._estimate_tokens` is 2
+#               chars/token, so the arithmetic is exact. The four are the
+#               deliberations that ran after the first tool call was metered
+#               under the experiment — the Cell can now see what its own work
+#               costs, which is what that section's docstring says it is for.
+#           (e) **`experiments.resource_spend`**: `540` -> `550`, the second
+#               half of the same fix. A wake never named the experiment it was
+#               thinking about, so `deliberation` called the gateway with no
+#               attribution and hardcoded `experiment_id=None` on every forecast
+#               a Cell registered. Five of thirteen model calls now carry it —
+#               the five that ran while an experiment was open. §2.6's "real
+#               cash consumed" stays 0 here only because the golden provider is
+#               priced at zero; on a paid provider this was the report's largest
+#               hole, and the least visible, because 0 is a plausible figure for
+#               an experiment that has not spent yet.
+#           (f) **`deliberations.context_tokens`** +1 to +2 on four rows, and
+#               `model_calls`/`resource_usage` follow, for the same reason as
+#               (d): the RESOURCE figure rendered into §15's experiment section
+#               grew a digit.
+#           (g) **`experiments.resolved_predictions` /
+#               `unresolved_predictions` (new)**: `0`/`0` on both. §2.6's sixth
+#               dimension was derived but never pinned. It stays 0 because the
+#               scenario's five in-experiment deliberations propose no
+#               forecasts — the prediction half of (e) is covered by
+#               `tests/test_deliberation.py` rather than here, and this pin is
+#               what will notice if a future scenario starts exercising it.
+#           **`balances` is identical across every account in every book**, and
+#           USD_REAL is untouched. Attribution decides which experiment a cost is
+#           *reported* under; it moves no money and posts no entry. The RESOURCE
+#           charge is unchanged too — the extra input tokens move the recorded
+#           raw `quantity` and round to the same minor units.
+EXPECTATION_VERSION = 21
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -1837,9 +1902,23 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         )
     if golden_report.real_spend_minor_units != 0:
         raise AssertionError("a golden run must never move USD_REAL")
-    if golden_report.sandbox_cpu_seconds is not None or golden_report.human_minutes is not None:
+    if golden_report.sandbox_cpu_seconds is not None:
         raise AssertionError(
             "§2.6's unmeasurable dimensions must report as unmeasurable, never as 0"
+        )
+    #      Human labour is measured, not unmeasurable (ADR-044): step 19's
+    #      external actions were claimed while this experiment was running, so
+    #      their minutes reach it through the reservation. A regression that
+    #      stopped stamping the attribution shows up here as 0 rather than as a
+    #      silently smaller shadow cost, which is the failure this slice fixed.
+    if golden_report.human_minutes <= 0:
+        raise AssertionError(
+            "§2.6: human labour is attributable through the reservation — "
+            f"expected the experiment's minutes to be measured, got {golden_report.human_minutes}"
+        )
+    if golden_report.human_minutes <= golden_report.subsidised_human_minutes:
+        raise AssertionError(
+            "§1.1: labour given must exceed the subsidised part, or the split is inverted"
         )
 
     experiments.conclude(
@@ -2128,7 +2207,18 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
                 "real_spend": derived.real_spend_minor_units,
                 "resource_spend": derived.resource_spend_minor_units,
                 "sandbox_cpu_seconds": derived.sandbox_cpu_seconds,
+                # Both halves of §1.1's split. Pinning only the total would let
+                # a regression that stopped counting subsidised minutes pass
+                # unnoticed on any run where nothing was subsidised, and the
+                # subsidy is the figure §1.1 exists to expose.
                 "human_minutes": derived.human_minutes,
+                "subsidised_human_minutes": derived.subsidised_human_minutes,
+                # §2.6's sixth dimension. Pinned even at 0/0: it pins that the
+                # derivation still runs, and a scenario change that starts
+                # attributing forecasts shows up here instead of only in the
+                # hash.
+                "resolved_predictions": derived.resolved_predictions,
+                "unresolved_predictions": derived.unresolved_predictions,
             }
         )
 

@@ -104,6 +104,68 @@ def test_there_is_no_experiment_results_table(conn):
     assert "experiment_results" not in tables
 
 
+def test_resource_usage_has_no_experiment_id_column(conn):
+    """ADR-044's refusal, made structural — the sibling of the one above.
+
+    The obvious fix for "human labour is unattributable" is a column on
+    `resource_usage`, and PRIORITIES, BUILD_RECORD and this module's own
+    docstring all called for one. It was never needed:
+    `resource_usage.reservation_id` is NOT NULL and `reservations.experiment_id`
+    has existed since migration 0001, so every metered row is one join from its
+    experiment. A column would be a second answer to a question the reservation
+    already answers, and the two can disagree — a row stamped with one
+    experiment hanging off a reservation stamped with another, with nothing in
+    the schema preferring either.
+
+    That is the cached-derivation trap §2.5 and Charter C3 exist to prevent,
+    reached from the metering side instead of the balance side.
+    """
+    columns = {
+        r["name"] for r in conn.execute("PRAGMA table_info(resource_usage)")
+    }
+    assert "experiment_id" not in columns, (
+        "resource_usage grew an experiment_id. It is already reachable through "
+        "reservation_id (NOT NULL) — see ADR-044 before keeping this."
+    )
+    reservation_columns = {
+        r["name"] for r in conn.execute("PRAGMA table_info(reservations)")
+    }
+    assert "experiment_id" in reservation_columns
+    not_null = {
+        r["name"] for r in conn.execute("PRAGMA table_info(resource_usage)") if r["notnull"]
+    }
+    assert "reservation_id" in not_null, (
+        "the join this design rests on is only total because reservation_id "
+        "cannot be null (Amendment A6)"
+    )
+
+
+def test_the_experiment_a_cost_belongs_to_is_derived_never_supplied(conn):
+    """§0.3 reached from the expense side, made structural.
+
+    Which experiment bears a cost is an answer about what an experiment cost.
+    §15.1 gives a Cell one current experiment, so that answer is already
+    determined and nothing needs to ask for it — and a metering entry point that
+    accepted an `experiment_id` would be a place to put a different one. A Cell
+    that could name the experiment could make its own look cheap by naming
+    another, which is exactly the shape `proposal.py` has no field for.
+
+    Signatures rather than behaviour, because the failure this guards against is
+    a parameter being *added* — which no behavioural test would notice until
+    something passed it.
+    """
+    import inspect
+
+    from mitosis import external_actions, tools
+
+    for func in (tools.execute_grant, external_actions.claim, external_actions.complete):
+        assert "experiment_id" not in inspect.signature(func).parameters, (
+            f"{func.__module__}.{func.__name__} accepts an experiment_id. "
+            "Attribution is derived from the Cell's running experiment "
+            "(experiments.attribution_for), not supplied — see ADR-044."
+        )
+
+
 def test_the_report_follows_the_ledger(conn):
     """§2.5 applied to experiments: change the books, the report changes, with
     nothing recomputed or invalidated. A stored figure would drift the moment a
@@ -168,21 +230,23 @@ def test_net_profit_is_revenue_minus_spend(conn):
 
 
 def test_an_unmeasurable_dimension_reports_as_unmeasurable_not_zero(conn):
-    """§2.6 asks for sandbox CPU and human labour. Neither is attributable in
-    this kernel — §19.3's sandbox is Phase 5 and `resource_usage` carries no
-    experiment_id — and reporting `0` would be *claiming* they consumed nothing.
+    """§2.6 asks for sandbox CPU, and §19.3's sandbox is Phase 5, so nothing in
+    this kernel can attribute a CPU-second. Reporting `0` would be *claiming* it
+    consumed none — the trap ADR-042 hit when a crashed tick recorded that it
+    spent nothing: a false statement rather than a missing one.
 
-    The same trap ADR-042 hit when a crashed tick recorded that it spent
-    nothing: a false statement rather than a missing one.
+    Human labour used to be on this list and is not any more (ADR-044). It was
+    never unmeasurable; it was unstamped. If the reason a dimension abstains is
+    ever again "a column does not exist", check whether the join already reaches
+    it before believing the claim.
     """
     cell = _cell(conn)
     experiment = _start(conn, cell)
     report = experiments.report(conn, experiment.experiment_id)
     assert report.sandbox_cpu_seconds is None
-    assert report.human_minutes is None
-    assert len(report.unmeasured) == 2
+    assert len(report.unmeasured) == 1
     assert any("sandbox" in note for note in report.unmeasured)
-    assert any("HUMAN_MINUTES" in note for note in report.unmeasured)
+    assert not any("HUMAN_MINUTES" in note for note in report.unmeasured)
 
 
 def test_the_reality_gap_counts_unresolved_forecasts_separately(conn):

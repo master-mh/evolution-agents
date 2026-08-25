@@ -943,3 +943,33 @@ actually queued for building — this file is memory, not a backlog to work thro
   about calibration. Any slice that mints one id earlier produced a spurious diff there. Scrubbed
   now — but the general shape is worth watching: **ADR-017 excludes volatile ids, and free text is
   where they hide.**
+
+<!-- 2026-08-25, ADR-044 (experiment attribution for metered ops) -->
+
+- **A dangling `experiment_id` is still writable from inside the kernel.** ADR-044 validated the two
+  operator-facing paths (`mitosis predict --experiment`, `mitosis record-revenue --experiment`), but
+  `reservations.request`, `prediction._register_locked`, `ledger.post_transaction` and
+  `gateway.call_model` all accept the id and check nothing. They sit *below* `experiments` in the
+  layering, so a check needs an injected seam — the `sweeper.ExternalOperationChecker` /
+  `population.Displacer` shape — rather than an import. Worth doing before anything else starts
+  passing the id programmatically. **A dangling id fails silently and only ever *subtracts* from a
+  report**, which is the quietest way this kernel can be wrong.
+- **Revenue attributed late cannot be attached.** Re-recording revenue to add `--experiment` is
+  correctly refused by idempotency, so an operator who realises afterwards which experiment earned
+  the money has no path. §3.6 says the remedy is a signed adjustment, never an edit; there is no
+  verb for one. (Logged under ADR-043 too; unchanged and now blocking a real workflow.)
+- **`resource_usage.metadata_json` is load-bearing for one figure.** §2.6's subsidised-minutes line
+  reads `subsidised_human_minutes` out of free-text metadata, because that is where
+  `external_actions` durably records it and `resource_usage` is the row Amendment A6 makes
+  authoritative. It works and it is the right *source*, but a typed column on the metering row (or a
+  second `ResourceType`) would make the split structural. Note the trap next door: the golden
+  snapshot has already been caught pinning an id hidden in free text.
+- **`sandbox_cpu_seconds` is now the only `None` in §2.6's report**, and it is genuinely blocked on
+  §19.3's sandbox (Phase 5). `ResourceType.CPU_SECONDS` has been declared since migration 0008 and
+  nothing writes it. When the sandbox lands, attribution needs no work — it opens a RESOURCE
+  reservation like everything else and the join already reaches.
+- **The golden scenario never exercises prediction attribution.** Its five in-experiment
+  deliberations propose no forecasts, so §2.6's reality-gap dimension pins as `0/0` and the
+  prediction half of ADR-044 rests on `tests/test_deliberation.py` alone. The counts are now pinned
+  so a scenario change surfaces it; a scenario that proposed one forecast under an experiment would
+  make the golden run cover the whole report.

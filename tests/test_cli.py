@@ -947,6 +947,44 @@ def test_calibration_warns_when_predictions_are_overdue(tmp_path, capsys):
     assert "self-selected" in out
 
 
+def test_an_unknown_experiment_id_is_refused_rather_than_stored(tmp_path, capsys):
+    """Migration 0026 complained that `--experiment` "has always accepted any
+    string and validated nothing", and creating the table did not fix that —
+    nothing joined the two (ADR-044).
+
+    A typo does not fail loudly here. It silently detaches the prediction from
+    every report that would have counted it, and §2.6 then shows a smaller
+    number with nothing anywhere saying why. A dangling foreign key that only
+    ever *subtracts* from a report is the quietest possible way to be wrong.
+    """
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    capsys.readouterr()
+    assert cli.main([
+        "--db", db_path, "predict", "--cell", cell_id,
+        "--claim", "revenue >= 50", "--probability", "0.6",
+        "--experiment", "exp-that-never-existed",
+    ]) == 1
+    err = capsys.readouterr().err
+    assert "no such experiment" in err
+    # Refused, not recorded: a prediction written with a dangling id would
+    # already be in the hash chain and could not be edited out (§3.6).
+    assert cli.main(["--db", db_path, "calibration"]) == 0
+    assert "exp-that-never-existed" not in capsys.readouterr().out
+
+
+def test_revenue_refuses_an_unknown_experiment_id(tmp_path, capsys):
+    """The same hole on the money side, where it is worse: revenue attached to
+    a dangling experiment is revenue §2.6 will never report as earned."""
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    capsys.readouterr()
+    assert cli.main([
+        "--db", db_path, "record-revenue", "--cell", cell_id,
+        "--amount", "5.00", "--source", "manual", "--book", "USD_SIM",
+        "--experiment", "exp-that-never-existed",
+    ]) == 1
+    assert "no such experiment" in capsys.readouterr().err
+
+
 def test_predict_refuses_certainty_through_the_cli(tmp_path, capsys):
     db_path, cell_id = _init_and_cell(tmp_path, capsys)
     capsys.readouterr()

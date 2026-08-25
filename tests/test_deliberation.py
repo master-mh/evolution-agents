@@ -17,6 +17,7 @@ from mitosis import (
     death,
     deliberation,
     events,
+    experiments,
     ledger,
     lifecycle,
     prediction,
@@ -101,6 +102,119 @@ def _deliberate(conn, cell, reply: str | None = None, *, wake_key: str = "w1", *
 
 def _model_call_count(conn) -> int:
     return conn.execute("SELECT COUNT(*) AS n FROM model_calls").fetchone()["n"]
+
+
+def _running_experiment(conn, cell, hypothesis="does the probe find demand"):
+    return experiments.start(
+        conn, cell_id=cell.cell_id, hypothesis=hypothesis, ladder_rung=1,
+        expected_cost_minor_units=0,
+    )
+
+
+# --- §2.6: what a Cell's thinking cost, and which experiment it cost it for ---
+
+
+def test_a_cells_thinking_is_attributed_to_the_experiment_it_is_thinking_about(conn):
+    """§2.6's "real cash consumed" and "resource consumption" (ADR-044).
+
+    A wake never named the experiment it was for, so the gateway recorded the
+    call with no attribution and §2.6 reported **0 real spend** for every
+    experiment whose Cell simply ran. Model calls are the colony's main real
+    expense, so this was the largest hole in the report — and the least visible,
+    because 0 is a plausible figure for an experiment that has not spent yet.
+    """
+    cell = _make_cell(conn)
+    experiment = _running_experiment(conn, cell)
+
+    _deliberate(conn, cell)
+
+    call = conn.execute("SELECT * FROM model_calls").fetchone()
+    assert call["experiment_id"] == experiment.experiment_id
+    report = experiments.report(conn, experiment.experiment_id)
+    assert report.model_calls == 1
+    assert report.input_tokens > 0
+    assert report.resource_spend_minor_units > 0
+
+
+def test_a_cells_own_forecasts_reach_the_reality_gap_of_its_experiment(conn):
+    """§2.6's sixth dimension, from §8.5's register.
+
+    `deliberation` hardcoded `experiment_id=None` on every prediction a Cell
+    registered, so the forecasts a Cell made *while running an experiment* —
+    the ones the reality-gap estimate exists to score — were the only ones the
+    report could never see. An operator passing `--experiment` by hand was the
+    sole path in.
+    """
+    cell = _make_cell(conn)
+    experiment = _running_experiment(conn, cell)
+
+    _deliberate(conn, cell)
+
+    report = experiments.report(conn, experiment.experiment_id)
+    assert report.unresolved_predictions == 1
+    assert report.resolved_predictions == 0
+    registered = conn.execute("SELECT * FROM prediction_register").fetchone()
+    assert registered["experiment_id"] == experiment.experiment_id
+
+
+def test_a_call_and_the_forecasts_it_produced_share_one_experiment(conn):
+    """Read once, used twice.
+
+    The gateway call happens outside every transaction this module opens
+    (ADR-022) and the predictions are registered inside one. Re-deriving the
+    attribution in the second place would let an experiment concluding in
+    between put a model call on one experiment and its own forecasts on
+    another, with nothing afterwards saying which was right.
+
+    **The experiment is concluded mid-call on purpose.** Asserting that the two
+    agree on a quiet run proves nothing — a re-derivation agrees too, so the
+    test would pass for the wrong reason and could never fail. The provider
+    concludes it while the call is in flight, which is the only moment the two
+    designs give different answers.
+    """
+    cell = _make_cell(conn)
+    experiment = _running_experiment(conn, cell)
+
+    class ConcludesMidCall:
+        """Stands in for the world moving while a slow model call is out."""
+
+        name = providers.MOCK_PROVIDER
+
+        def complete(self, request):
+            experiments.conclude(
+                conn, experiment_id=experiment.experiment_id,
+                concluded_by="operator", note="ended while the call was in flight",
+            )
+            return providers.MockProvider(reply=_valid_reply()).complete(request)
+
+    deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=ConcludesMidCall(),
+        wake_key="w1", model="mock-1",
+    )
+
+    call = conn.execute("SELECT experiment_id FROM model_calls").fetchone()
+    forecast = conn.execute("SELECT experiment_id FROM prediction_register").fetchone()
+    assert call["experiment_id"] == experiment.experiment_id
+    assert forecast["experiment_id"] == experiment.experiment_id, (
+        "the forecast was attributed by a second read, which found the "
+        "experiment already concluded — the call and its predictions must "
+        "share one attribution, resolved once"
+    )
+
+
+def test_a_cell_with_no_experiment_still_deliberates_and_stays_unattributed(conn):
+    """Thinking is not gated on running an experiment — §25.1's rung 5 is
+    "shadow prediction with no action", which is most of a Cell's life. The
+    attribution is simply absent, which is a fact rather than a gap."""
+    cell = _make_cell(conn)
+
+    result = _deliberate(conn, cell)
+
+    assert result.status == "proposed"
+    call = conn.execute("SELECT experiment_id FROM model_calls").fetchone()
+    assert call["experiment_id"] is None
+    forecast = conn.execute("SELECT experiment_id FROM prediction_register").fetchone()
+    assert forecast["experiment_id"] is None
 
 
 # --- §0.3: a Cell may explain a result, never define it ----------------------

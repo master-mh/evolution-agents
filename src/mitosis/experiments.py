@@ -41,21 +41,34 @@ checked — the move ADR-018, ADR-033 and ADR-035 all make for identity, applied
 here to a state.
 
 **An unmeasurable dimension reports as unmeasurable, never as zero.** Sandbox
-CPU needs §19's sandbox (Phase 5) and human labour needs a `resource_usage`
-column that does not exist, so both are `None` with a stated reason. A report
-that showed `0` would be making a false claim rather than declining to make one
-— the same trap as a crashed tick recording that it spent nothing (ADR-042).
+CPU needs §19's sandbox (Phase 5), so it is `None` with a stated reason. A
+report that showed `0` would be making a false claim rather than declining to
+make one — the same trap as a crashed tick recording that it spent nothing
+(ADR-042).
+
+**A dimension that undercounts is worse than one that abstains, and human
+labour was doing that (ADR-044).** This module used to say human labour needed
+"a `resource_usage` column that does not exist". It never did:
+`resource_usage.reservation_id` is NOT NULL and a reservation has carried
+`experiment_id` since migration 0001, so every metered row was always one join
+from its experiment. What was missing was the *stamp* — `tools` and
+`external_actions` opened their RESOURCE reservations without one, while the
+gateway threaded it. So `human_minutes` abstained while `resource_spend_minor_
+units`, which reads the same reservations through the ledger, quietly reported a
+shadow cost with every tool call and every human minute missing from it. The
+abstention was visible; the undercount was not.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from . import audit, ids, lifecycle, population
 from .accounts import SPEND_DESTINATIONS
-from .models import Book, CellStatus
+from .models import Book, CellStatus, ResourceType
 
 STATUS_RUNNING = "running"
 STATUS_CONCLUDED = "concluded"
@@ -82,10 +95,6 @@ MAX_HYPOTHESIS_CHARS = 2_000
 #: cannot measure this" and "this measured zero" are different claims.
 UNMEASURED_SANDBOX = (
     "sandbox CPU: §19.3's sandbox does not exist (Phase 5), so no CPU is attributable"
-)
-UNMEASURED_HUMAN = (
-    "human labour: `resource_usage` carries no experiment_id, so HUMAN_MINUTES "
-    "cannot be attributed to an experiment yet"
 )
 
 
@@ -155,10 +164,16 @@ class ExperimentReport:
     input_tokens: int
     output_tokens: int
 
+    #: §2.6's "human labour", and §1.1's split of it. `human_minutes` is what a
+    #: person actually gave; `subsidised_human_minutes` is the part of that no
+    #: Cell paid for. Reporting only the billed part would make the colony
+    #: quietest about its human cost exactly where §1.1 wants it loudest.
+    human_minutes: int
+    subsidised_human_minutes: int
+
     #: `None` means not measurable in this kernel. Never zero — see the module
     #: docstring and `unmeasured`.
     sandbox_cpu_seconds: float | None
-    human_minutes: int | None
 
     reality_gap_mean_brier: float | None
     resolved_predictions: int
@@ -384,6 +399,31 @@ def current_for(conn: sqlite3.Connection, cell_id: str) -> Experiment | None:
     return _row_to_experiment(row) if row is not None else None
 
 
+def attribution_for(conn: sqlite3.Connection, cell_id: str) -> str | None:
+    """Which experiment a metered operation by this Cell belongs to, or `None`.
+
+    **Derived, never supplied.** §15.1 gives a Cell one current experiment, so
+    the attribution of work it does right now is already determined and nothing
+    needs to be asked for it. A parameter would be a place to put an answer, and
+    an answer about which experiment bears a cost is an answer about what an
+    experiment cost — §0.3's line, reached from the expense side. A Cell that
+    could name the experiment could make its own look cheap by naming another.
+
+    `None` is a real result and not a gap: consumption outside any running
+    experiment is unattributed because it *is* unattributed, and forcing it onto
+    the nearest experiment would be inventing an attribution rather than
+    recording one.
+
+    **Callers must hold the write lock.** The attribution is stamped on a
+    reservation, and reading it before the lock is the check-then-lock shape
+    this kernel has already fixed once: an experiment concluding between the
+    read and the insert would stamp a reservation with an experiment that is no
+    longer running.
+    """
+    experiment = current_for(conn, cell_id)
+    return experiment.experiment_id if experiment is not None else None
+
+
 def list_for(conn: sqlite3.Connection, cell_id: str) -> list[Experiment]:
     return [
         _row_to_experiment(row)
@@ -453,6 +493,7 @@ def report(conn: sqlite3.Connection, experiment_id: str) -> ExperimentReport:
     ).fetchone()
 
     gap = _reality_gap(conn, experiment_id)
+    labour = _human_labour(conn, experiment_id)
 
     return ExperimentReport(
         experiment_id=experiment.experiment_id,
@@ -470,12 +511,13 @@ def report(conn: sqlite3.Connection, experiment_id: str) -> ExperimentReport:
         model_calls=calls["n"],
         input_tokens=calls["input_tokens"],
         output_tokens=calls["output_tokens"],
+        human_minutes=labour[0],
+        subsidised_human_minutes=labour[1],
         sandbox_cpu_seconds=None,
-        human_minutes=None,
         reality_gap_mean_brier=gap[0],
         resolved_predictions=gap[1],
         unresolved_predictions=gap[2],
-        unmeasured=(UNMEASURED_SANDBOX, UNMEASURED_HUMAN),
+        unmeasured=(UNMEASURED_SANDBOX,),
     )
 
 
@@ -526,6 +568,49 @@ def _reality_gap(
         int(row["resolved"] or 0),
         int(row["unresolved"] or 0),
     )
+
+
+def _human_labour(conn: sqlite3.Connection, experiment_id: str) -> tuple[int, int]:
+    """§2.6's "human labour": (minutes a person gave, of which subsidised).
+
+    **Reached through the reservation, which is why no column was added.**
+    `resource_usage.reservation_id` is NOT NULL and a reservation has carried
+    `experiment_id` since migration 0001, so every metered row is already one
+    join from its experiment. A column here would be a second answer to a
+    question the reservation already answers, and two answers that can disagree
+    is the cached-derivation trap §2.5 and Charter C3 exist to prevent.
+
+    **The billed minutes are not the labour.** `external_actions` charges a Cell
+    up to its channel's ceiling and records the overflow as subsidy, precisely
+    because "the minutes were already spent, so refusing to record them does not
+    un-spend them". Summing `quantity` alone would therefore report the colony's
+    human cost as *smaller* the more of it a person absorbed unpaid — the exact
+    figure §1.1 subtracts to "expose hidden founder labour", hidden by the
+    report meant to expose it. So the total is billed + subsidised, and the
+    subsidy is reported beside it rather than folded away.
+    """
+    rows = conn.execute(
+        """
+        SELECT u.quantity AS quantity, u.metadata_json AS metadata_json
+        FROM resource_usage u
+        JOIN reservations r ON r.reservation_id = u.reservation_id
+        WHERE r.experiment_id = ? AND u.resource_type = ?
+        """,
+        (experiment_id, ResourceType.HUMAN_MINUTES.value),
+    ).fetchall()
+
+    billed = 0
+    subsidised = 0
+    for row in rows:
+        billed += int(row["quantity"])
+        # A row with no subsidy key contributes nothing, which is a true
+        # statement rather than a missing one: nothing was recorded as
+        # subsidised. Only `external_actions` writes the key today.
+        metadata = json.loads(row["metadata_json"] or "{}")
+        recorded = metadata.get("subsidised_human_minutes", 0)
+        if isinstance(recorded, int) and not isinstance(recorded, bool) and recorded > 0:
+            subsidised += recorded
+    return billed + subsidised, subsidised
 
 
 def _row_to_experiment(row: sqlite3.Row) -> Experiment:
