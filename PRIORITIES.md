@@ -612,13 +612,19 @@
   provider" **is** enforced, via `_concurrent_reserved_for_provider` and
   `_settled_spend_for_provider_since`. Only the shadow-pricing half remains. *Disproved by:*
   `real_spend_breaker._concurrent_reserved_for_provider`.
-- [ ] **A dangling `experiment_id` is unvalidated inside the kernel.** ADR-044 validated the two
-  operator-facing paths; `reservations.request`, `prediction._register_locked`,
-  `ledger.post_transaction` and `gateway.call_model` all accept the id and check nothing. They sit
-  *below* `experiments` in the layering, so this needs an injected seam rather than an import — the
-  `sweeper.ExternalOperationChecker` shape. A dangling id fails silently and only ever *subtracts*
-  from a §2.6 report. *Disproved by:* anything in `src/` raising on an unknown `experiment_id`
-  below the CLI layer.
+- [x] **A dangling `experiment_id` is unvalidated inside the kernel — DONE** (2026-08-25),
+  ADR-047. Migration 0027 + `db.raise_for_unknown_experiment`. **The injected seam this entry
+  scheduled was never needed: the layering objection is an objection to a *Python* check, and a
+  foreign key has no layer.** All four columns were bare `TEXT` because each predates the table it
+  names, and `db.connect` has set `PRAGMA foreign_keys = ON` since 0001 — enforcement was switched
+  on and waiting for a declaration. **Found while building: an *open* reservation carrying a
+  dangling id would have had its funds stranded forever**, because `settle`/`release` write new
+  ledger entries carrying the id and every exit would then be refused; the migration repairs that
+  one case to NULL and records the id it cleared, while terminal rows keep theirs as evidence
+  (§3.6). A `PRAGMA` probe said such a row was healthy — only a test that actually *released* one
+  found it. 980 tests (18 new); **golden expectation unchanged at 23**, byte-identical. Teeth-checked
+  twelve ways, two of which initially MISSED and exposed a real gap: the translator was never
+  tested against a *different* foreign key failing on the same row.
 - [ ] Reconciling resource_usage against actual sandbox/model-gateway logs (Amendment A6's other half). **Half-unblocked 2026-08-22:** the entry said "no such logs exist until Phase 4/5", but the model-gateway half now does — `model_calls` records provider, resolved model, API version and reported usage per call. The *sandbox* half is still genuinely blocked until Phase 5. *Disproved by:* the `model_calls` table.
 
 ## Later

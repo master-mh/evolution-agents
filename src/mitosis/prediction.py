@@ -58,7 +58,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import audit, ids, lifecycle
+from . import audit, db, ids, lifecycle
 
 # Below this, a probability is treated as certainty and refused. Also the clamp
 # that keeps a log score finite if a stored row ever sits outside the CHECK.
@@ -247,27 +247,33 @@ def _register_locked(
         idempotency_key=key,
         previous_hash=previous,
     )
-    conn.execute(
-        """
-        INSERT INTO prediction_register (
-            prediction_id, cell_id, experiment_id, claim, probability,
-            resolves_by_utc, created_at_utc, previous_hash, prediction_hash,
-            idempotency_key
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            prediction_id,
-            cell_id,
-            experiment_id,
-            claim.strip(),
-            probability,
-            resolves_at,
-            created_at,
-            previous,
-            prediction_hash,
-            key,
-        ),
-    )
+    try:
+        conn.execute(
+            """
+            INSERT INTO prediction_register (
+                prediction_id, cell_id, experiment_id, claim, probability,
+                resolves_by_utc, created_at_utc, previous_hash, prediction_hash,
+                idempotency_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                prediction_id,
+                cell_id,
+                experiment_id,
+                claim.strip(),
+                probability,
+                resolves_at,
+                created_at,
+                previous,
+                prediction_hash,
+                key,
+            ),
+        )
+    except sqlite3.IntegrityError as exc:
+        # Migration 0027's experiment foreign key. The row also references
+        # `cells`, so the bare message could mean either.
+        db.raise_for_unknown_experiment(conn, exc, experiment_ids=(experiment_id,))
+        raise
     audit.record(
         conn,
         event_type="prediction_registered",

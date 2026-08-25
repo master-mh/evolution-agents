@@ -51,6 +51,13 @@ single highest-value habit in this repo. Some precedents:
   places in this repo scheduling it as the next slice. Before adding a column that *identifies*
   something, check whether an existing NOT NULL foreign key already reaches it — a second answer to
   a question another table already owns is the same trap as a cached balance (ADR-043, ADR-044).
+- **The layering rule is about Python; a constraint has no layer.** Four places scheduled an injected
+  seam to validate `experiment_id`, each reasoning correctly that `ledger`/`reservations`/`prediction`
+  sit *below* `experiments` — and a foreign key sits below all of them, binds callers that never heard
+  of the seam, and has no default that skips the check. Before building a seam to enforce something,
+  ask whether the schema can make it unrepresentable instead. Then check the migration against the
+  *operation*, not the statement: a violating row that `UPDATE`s fine can still be unsettleable,
+  because the real exit path writes a child row (ADR-047).
 
 Before designing a slice, `grep -n` SPEC.md for the section and read that range. **Never read
 SPEC.md wholesale** — it is large, and the relevant slice is usually 20 lines.

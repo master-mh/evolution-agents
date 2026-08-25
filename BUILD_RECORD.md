@@ -7,74 +7,65 @@ account fix, the prediction register, death criteria, §9.3 displacement, the ag
 scheduler, the §23 approval queue, the dead-Cell estate, the rung-7 promotion path, the §25.2
 read-back, §9.2's birth cap, Auditor Cells, genome content, the tool surface, the artifact
 store, the external-action registry, the §27.1 autonomy decisions, grant regeneration, the
-expiry sweep, establishable rights, scheduler liveness, the experiment, experiment attribution, and proposed experiments,
-2026-07-21 through 2026-08-24):
+expiry sweep, establishable rights, scheduler liveness, the experiment, experiment attribution,
+proposed experiments, and the strategy kind decided, 2026-07-21 through 2026-08-26):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-26 — The kind that needed no consumer, and the wake that told a Cell to redo what worked
+## 2026-08-25 — The seam four files scheduled, and the constraint that made it unnecessary
 
-`proposal.STATEMENT_KINDS` + two context sections + one refusal in `expire_grants_due` (ADR-046).
-No migration. `ProposalKind.STRATEGY` was the last kind whose approval led nowhere, and the obvious
-reading — that it needed a consumer like the other four — is wrong. **A strategy names nothing to
-do, so approving one *is* the act.** What it lacked was a consequence, and the absence had produced
-a live bug.
+Migration 0027 + `db.raise_for_unknown_experiment` + two `except` clauses (ADR-047).
+`PRIORITIES.md`, `FUTURE_BUILD_HOOKS.md` and ADR-044 all scheduled the same next slice — an
+injected `ExperimentChecker` seam, `sweeper.ExternalOperationChecker`-shaped, because
+`reservations`, `prediction`, `ledger` and `gateway` sit *below* `experiments` in the layering.
+**The premise is true and the conclusion was wrong: the layering objection is an objection to a
+*Python* check, and a foreign key has no layer.**
 
-### Two failures, both reproduced on a live colony before the fix
+### What was actually missing was a declaration, not a mechanism
 
-1. **An approved strategy reached the Cell nowhere.** `_recent_proposals_section` showed `kind` and
-   `summary` and nothing about what any person decided, so approved, rejected, expired and
-   never-reviewed all rendered identically. For every other kind the *effect* was feedback enough —
-   a tool result appears, a balance moves, an experiment starts — which is exactly why the gap only
-   became visible on the one kind that has no effect.
-2. **Its inert grant lapsed and woke the Cell to re-propose it.** `expire_grants_due` regenerates
-   every unconsumed grant, and nothing can ever consume a strategy's. So the colony's response to
-   "a person agreed with you" was, eventually, "redo that" — the exact opposite of the feedback the
-   Cell needed, and the loudest evidence the kind was never finished.
+All four `experiment_id` columns are bare `TEXT` for one reason each — every one predates the table
+it names (`ledger_entries`/`reservations` 0001, `model_calls` 0010, `prediction_register` 0012;
+`experiments` 0026). Migration 0026's own header had already said it: "**the foreign key was exposed
+to the operator before the table existed**." Meanwhile `db.connect` has set
+`PRAGMA foreign_keys = ON` since the beginning, so enforcement was switched on and waiting. SQLite
+cannot `ALTER TABLE ADD CONSTRAINT`, so 0027 rebuilds the four tables; every copy is `ORDER BY
+rowid`, because both hash chains read their rows in rowid order and the ledger folds each
+transaction's entries into that transaction's hash — a reordered copy would read exactly like
+tamper-evidence firing.
 
-### §23.3 says *actions*
+### The bug the design nearly shipped, found by a test that did the real thing
 
-"Expired actions are regenerated and re-evaluated." A strategy names no action, so
-`proposal.STATEMENT_KINDS` is where "this kind has no consumer" is now written down rather than
-left as the absence that made it look unfinished for four months. The grant still expires — it
-lapsed, and §3.6's habit is that history is not rewritten — but nothing is woken.
-
-### §15.1's last unimplemented source
-
-The standing strategy is the Cell's most recently **approved** strategy proposal, derived from the
-queue and stored nowhere (§2.5's habit outside the ledger). That fills "relevant epigenetic state",
-the one context source §15.1 names which nothing implemented. §0.3 still holds — it is the Cell's
-own words, labelled as such — and what distinguishes it from the untrusted proposal log is not that
-the colony believes it but that **a person read that exact text and agreed to it**. The operator's
-`decision_reason` rides along: the only human-authored text a Cell ever receives, and the most
-direct steering the design offers.
-
-**Telling a Cell it was rejected is safe only because §23.4's detector already exists.** §23.5 says
-the queue "will be optimised against", and re-asking for a rejected thing is the specific
-optimisation this feedback invites — `SIGNAL_REPEAT_AFTER_REJECTION` has been watching for it since
-ADR-027, normalised so re-punctuating a rejected ask does not launder it. Had it not existed, this
-half would have had to wait.
+An **open** reservation carrying a dangling id would have had its funds committed *forever*.
+`settle` and `release` write **new** ledger entries carrying the reservation's `experiment_id`, so
+once the entry constraint existed every exit from that reservation wrote a row the key must refuse.
+**A `PRAGMA`-level probe said the row was healthy** — a bare `UPDATE` of a non-key column on a
+violating row is allowed, and that is what I checked first. Only a test that actually *released* one
+found the hole. The migration now repairs that single case to NULL — the true value, since ADR-044
+settled that unattributed is a result — and writes an `audit_events` row naming the id it cleared.
+Terminal reservations and every ledger entry keep their dangling ids untouched: nothing will write
+another entry for them, so the id is harmless evidence that a report had been undercounting, and
+§3.6 keeps it. **Repair what is still live; preserve what is already history.**
 
 ### Verification
 
-- **962 tests passing** (13 new, 0 removed; up from 949). **Golden expectation 22 → 23** with
-  **`balances` identical in every account in every book** — approving a statement moves nothing.
-  The scenario's only `strategy` proposal had **no approval request at all** (step 17 deliberated
-  without a queue sink), so the one kind whose entire meaning is the decision was the one kind no
-  replay ever had a decision for. `approval_grants.expired` moves 4 → 5 **while `regenerated` stays
-  4** — the whole §23.3 change in two integers.
-- **Teeth-checked ten ways**, each failing its named test: the statement's grant regenerating again
-  (the original bug), *no* grant regenerating (the over-fix, which the first test alone would have
-  passed against), the standing strategy keyed on the grant so a lapse revokes it, a pending
-  strategy standing, the earliest standing instead of the latest, any approved kind becoming the
-  standing strategy, the operator's reason dropped, `expired` collapsed into "not reviewed", the
-  verdict shown without its reason, and a kind with a consumer called a statement.
-- **Hand-verified end to end on a live colony**: a Cell proposed a strategy and it was approved with
-  "stay off paid advertising"; a spend request was rejected with a reason; a third sat pending. All
-  three render distinctly in the Cell's next context, the standing strategy carries the operator's
-  words, and the lapsing grant enqueued **zero** wakes while leaving the strategy standing.
-- **One near-miss worth recording**: the golden run showed a strategy request assessed HIGH against
-  a claimed LOW with *no* `understated_risk` signal, which looked like a broken detector. It is
-  correct — `_assessed_tier` folds §16.2's genome `risk_class`, and that Cell's genome declares
-  HIGH. The Cell understated nothing relative to the kernel's tier; its inheritance raised it.
-- Next: `ProposalKind` is now fully decided — four consumers, one statement, one never queued. The
-  open ground is §13.1's `normalised_cost`, which still has no stage tranche to divide by.
+- **980 tests passing** (18 new, 0 removed; up from 962). **Golden expectation unchanged at 23** —
+  hash byte-identical. A rebuild that preserves order changes no data, and the repair matches zero
+  rows on a colony whose only internal source for the value is `experiments.attribution_for`.
+- **The blast radius was zero, and that is the finding.** All 962 pre-existing tests passed against
+  the new constraint without a single edit, because every internal caller already derives the id
+  from `attribution_for`. The hole was never in what the kernel does today — it was in what the next
+  programmatic caller would have been free to do, which is exactly what ADR-044 meant by "worth doing
+  before anything else starts passing the id programmatically".
+- **Teeth-checked twelve ways**, each failing its named test: the foreign key dropped from each of
+  the four tables separately, the repair removed (the stranded-funds bug), the repair left
+  unrecorded, the repair over-reaching to terminal rows, the rebuild copy losing rowid order (both
+  chains break), the translator swallowing non-experiment `IntegrityError`s, and three more.
+  **Two mutations initially MISSED and exposed a real gap**: the translator was never tested against
+  a *different* foreign key failing on the same row — `prediction_register` and `model_calls` both
+  reference `cells` too, and all of them fail with the identical eight words. Two tests added; both
+  mutations then caught.
+- **Hand-verified end to end on a live on-disk colony** (every test until then used `:memory:`):
+  0027 applies under WAL, all four keys land, `foreign_key_check` is clean, an experiment starts, and
+  revenue and a prediction attach to it while a ghost id is refused.
+- Next: unchanged from the last entry — §13.1's `normalised_cost` still has no stage tranche to
+  divide by. Note its numerator was measured at 0 on every proposal from both models on 2026-08-06,
+  so the first step there is a re-measurement, not a migration.

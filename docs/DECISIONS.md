@@ -2154,3 +2154,81 @@ from amendment ID to spec location is complete in one place:
   - Every deliberation's prompt grows, in two places: the proposal log now carries decisions, and a
     Cell with a standing strategy carries that too. This is the first context section whose content
     a *human* wrote.
+
+---
+
+## ADR-047: A foreign key has no layer, so the injected seam four files scheduled was never needed
+
+- **Status:** Accepted
+- **Spec ref:** §2.5, §2.6, §3.6, §30.1; Charter C3; ADR-022, ADR-039, ADR-043, ADR-044
+- **Context:** Migration 0026's own header complained that `experiment_id` "has been a column in
+  `ledger_entries` ... since migration 0001 ... and validated nothing — **the foreign key was
+  exposed to the operator before the table existed**". ADR-044 then validated the two
+  operator-facing CLI verbs and explicitly deferred the rest, recording under *what it displaced*:
+  "**Validating `experiment_id` inside the kernel.** `reservations` and `prediction` sit below
+  `experiments` in the layering, so a check there needs an injected seam." PRIORITIES and
+  FUTURE_BUILD_HOOKS both then scheduled that seam by name, pointing at
+  `sweeper.ExternalOperationChecker` / `population.Displacer` as the shape to copy. The stake is
+  §2.6's report: six dimensions, every one a join on `experiment_id`, so a dangling id never fails a
+  read — it silently subtracts the work it names and the report still prints a confident number.
+- **Decision: declare the foreign key; do not build the seam.**
+  - **The layering objection is an objection to a *Python* check.** It says nothing about a
+    constraint declared in the schema, which sits below every module, binds every caller including
+    ones that never heard of the seam, and cannot be forgotten at a call site. `db.connect` has set
+    `PRAGMA foreign_keys = ON` since the beginning, so enforcement was already switched on and
+    waiting; what was missing was the declaration. All four columns were bare `TEXT` for one reason
+    each — every one predates the table it names (0001, 0001, 0010, 0012 against `experiments` in
+    0026).
+  - **SQLite cannot `ALTER TABLE ADD CONSTRAINT`, so migration 0027 rebuilds four tables**, two of
+    them feeding hash chains. Every copy is `ORDER BY rowid`: both `verify_chain`s read their rows in
+    rowid order and the ledger's folds each transaction's entries into that transaction's hash, so a
+    reordered copy would read exactly like tamper-evidence firing (§3.4).
+  - **NULL stays legal**, because a foreign key exempts it. ADR-044 settled that unattributed
+    consumption is "a result, not a gap", so the constraint refuses precisely the case that was never
+    a result — an id naming nothing — and nothing else.
+  - **An open reservation carrying a dangling id is repaired, not preserved.** `settle` and `release`
+    write *new* ledger entries carrying the reservation's `experiment_id`, so such a reservation
+    would have had no exit once the entry constraint existed: every path out writes an entry the key
+    must refuse, and its committed funds would stay committed forever. The migration clears that one
+    case to NULL — the true value — and writes an `audit_events` row naming the id it cleared. A
+    *terminal* reservation and every ledger entry keep their dangling ids untouched: nothing will
+    write another entry for them, so the id is harmless evidence that a report had been undercounting,
+    and §3.6 keeps it.
+  - **A thin translation, and it is not a check.** SQLite reports every violated foreign key as the
+    same eight words, naming no column and no value; a `model_calls` row declares four of them.
+    `db.raise_for_unknown_experiment` runs only in the error path, only after the schema has already
+    refused the row, and re-raises unchanged anything that is not this constraint — so it cannot
+    become ADR-039's "second, weaker copy". It looks the id up with a plain `SELECT` rather than an
+    `experiments` import, because the layering that made a Python *check* need a seam applies to a
+    Python *message* too.
+- **What it displaced.**
+  - **The injected `ExperimentChecker` seam**, which PRIORITIES, FUTURE_BUILD_HOOKS and ADR-044 all
+    scheduled and which would have worked. It would also have needed a new parameter on four entry
+    points, each defaulting to *no checking* — so the bug it was built to prevent, an id that fails
+    silently, would have survived intact for every caller that forgot to inject one. The constraint
+    has no default.
+  - **A `CHECK` constraint or a trigger.** There is not one trigger in this repo and there are 55
+    `REFERENCES` clauses; referential integrity already had a house mechanism.
+  - **Widening the rebuild to `reservations.cell_id` and `ledger_entries.cell_id`**, which are
+    unconstrained for exactly the same reason (`cells` also postdates 0001). True, tempting while the
+    tables are open, and a different claim needing its own argument — putting the ledger through a
+    rebuild for a reason nobody has stated yet is how a migration acquires an unexplained diff.
+  - **NULLing every dangling id to make the constraint apply cleanly**, which would have destroyed
+    the evidence that a report had been undercounting — §3.6's rule reached from the metering side.
+- **Consequences:**
+  - **This slice ships a migration and does not move the golden hash.** Expectation stays at 23,
+    byte-identical, because a rebuild that preserves order changes no data and the repair matches zero
+    rows on a colony whose only internal source for the value is `experiments.attribution_for`.
+  - **The blast radius was zero and that is the finding.** All 962 existing tests passed against the
+    new constraint unchanged, because every internal caller already derived the id from
+    `attribution_for`. The hole was never in what the kernel does today — it was in what the next
+    programmatic caller would have been free to do, which is what ADR-044 meant by "worth doing before
+    anything else starts passing the id programmatically".
+  - **A `PRAGMA`-level probe was not enough to design this safely.** Checking that a violating row can
+    still be `UPDATE`d says it is healthy; the kernel's release path writes ledger entries, not an
+    `UPDATE`, and only a test that actually released one found that its funds were stranded. The
+    general shape: probe the *operation*, not the statement you assume it uses.
+  - **A fifth attributed table is covered on the day it lands.** The structural test walks the live
+    schema for any `experiment_id` column lacking the reference, rather than listing the four — the
+    trap here was columns that predate their referent, and nothing stops the next migration
+    reintroducing exactly that.

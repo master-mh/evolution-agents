@@ -1020,3 +1020,40 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **`ProposalKind` is now fully decided** — four kinds with consumers, one statement, one never
   queued. A kind added later has to say which it is; there is no longer a precedent for leaving one
   ambiguous.
+
+<!-- 2026-08-25, ADR-047 (the experiment_id foreign keys) -->
+
+- **`reservations.cell_id` and `ledger_entries.cell_id` are unconstrained, for exactly the reason
+  `experiment_id` was.** `cells` arrives in migration 0002 and both columns are from 0001, so they
+  name a table that did not exist when they were declared — the same shape ADR-047 just closed, one
+  table over. Deliberately left alone: the tables were open during 0027's rebuild and widening it
+  there would have put the ledger through a rebuild for a reason nobody had stated. Worth its own
+  argument, and note the asymmetry — a Cell id is never legitimately NULL on a reservation
+  (`cell_id TEXT NOT NULL`), so the constraint would be strictly stronger than the experiment one.
+  Check the same trap first: is there an *open* row whose only exit writes a child row?
+- **Nothing in the kernel ever runs `PRAGMA foreign_key_check`.** It is how a pre-0027 dangling id
+  is found, and ADR-047 leaned on it as the reason preserving violating history is safe rather than
+  silent — but that argument only holds if something looks. `mitosis health` is the natural home
+  (ADR-042 built it for exactly this kind of question), and a colony with zero violations pays one
+  cheap scan to say so.
+- **`reservation_attribution_cleared` is written and never read.** Migration 0027 emits it when it
+  repairs an open reservation, so an operator upgrading an affected colony has the record — in a
+  table nothing surfaces. It will be genuinely empty on every colony this repo has run, which is
+  precisely the condition under which a reader is easy to forget and most needed if it ever fires.
+- **The typed refusal is raised at two of the four write points, and the other two inherit it by
+  ordering.** `reservations` stamps its `experiment_id` onto reserve entries before inserting its
+  own row, and `gateway` reserves before it inserts a `model_call`, so both hit the ledger's
+  translation first. Two tests pin that. If either order is ever reversed the *guarantee* is
+  unaffected — the foreign key still refuses the row — but the message degrades to SQLite's bare
+  eight words. A dead-looking `except` in `gateway.py` was deliberately not added for this: it would
+  be unreachable today, and ADR-046's lesson is that a written-down refusal beats a speculative
+  socket.
+- **Migration 0026's header names a column that does not exist.** It says `experiment_id` "has been
+  a column in `ledger_entries` and `ledger_transactions` since migration 0001" — `ledger_transactions`
+  has never had one; the attribution lives on the entries. Harmless here, but it is the recurring
+  claim-drift shape: a comment right about the direction and wrong about a specific it names, in a
+  header otherwise load-bearing enough that ADR-047 quotes it.
+- **A probe answers the question you asked, not the one that matters.** The stranded-funds bug
+  survived a deliberate SQLite probe session because the probe tested `UPDATE` on a violating row —
+  which is allowed — while the kernel's release path writes *ledger entries*. Probe the operation the
+  code actually performs, not the statement you assume it uses.

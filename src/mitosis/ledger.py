@@ -23,7 +23,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-from . import ids
+from . import db, ids
 from .accounts import SPEND_DESTINATIONS, cell_cash, cell_committed
 from .models import Book, Entry, EntrySpec, Transaction
 
@@ -176,15 +176,27 @@ def _write_transaction(
             _canonical_json(metadata or {}),
         ),
     )
-    conn.executemany(
-        """
-        INSERT INTO ledger_entries (
-            entry_id, transaction_id, account_id, amount_minor_units,
-            cell_id, team_id, experiment_id, artifact_id, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        entry_rows,
-    )
+    try:
+        conn.executemany(
+            """
+            INSERT INTO ledger_entries (
+                entry_id, transaction_id, account_id, amount_minor_units,
+                cell_id, team_id, experiment_id, artifact_id, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            entry_rows,
+        )
+    except sqlite3.IntegrityError as exc:
+        # Migration 0027's experiment foreign key, named rather than left as
+        # "FOREIGN KEY constraint failed". This is the only entry insert in the
+        # kernel, so it is also where a *reservation's* experiment_id is first
+        # refused: `reservations._request_locked` stamps its id onto these
+        # entries before inserting the reservation row, so the ledger always
+        # fails first. `test_reservations.py` pins that coupling.
+        db.raise_for_unknown_experiment(
+            conn, exc, experiment_ids=(row[6] for row in entry_rows)
+        )
+        raise
 
     txn = get_transaction(conn, transaction_id)
     assert txn is not None
