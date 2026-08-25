@@ -93,6 +93,13 @@ class ProposalKind(StrEnum):
     #: and the *rung* (§25.1), neither of which the Cell owns. Like the
     #: requests below, an approved grant is what starts one.
     EXPERIMENT = "experiment"
+    #: How the Cell intends to operate (§0.2, §15.1). **The only kind with no
+    #: consumer, and that is the decision rather than an unfinished corner
+    #: (ADR-046).** Every other kind names something to do and an approved grant
+    #: is permission to do it; a strategy names nothing, so approving one *is*
+    #: the act. What changes is what the Cell is shown from then on — §15.1's
+    #: "relevant epigenetic state", which `context` derives from the most
+    #: recently approved one rather than storing anywhere.
     STRATEGY = "strategy"
     SPEND_REQUEST = "spend_request"
     #: Ask to run a registered tool (§0.4, §19). Like SPEND_REQUEST this is a
@@ -116,6 +123,18 @@ class ProposalKind(StrEnum):
     #: domination does not reward an idle Cell, so this does not become a
     #: strategy for surviving without contributing.)
     ABSTAIN = "abstain"
+
+
+#: Kinds that ask for nothing, so approving one is agreement rather than
+#: permission. The distinction the enum's own comments already draw between a
+#: *request* and an *action*, taken one step further: these are **statements**,
+#: and §23.3's "expired actions are regenerated and re-evaluated" does not reach
+#: them, because there is no action to redo (ADR-046).
+#:
+#: ABSTAIN is deliberately absent. It is a statement too, but `approval.enqueue`
+#: never queues one, so it can never reach a grant — listing it here would be a
+#: rule about a state that cannot occur.
+STATEMENT_KINDS: frozenset["ProposalKind"] = frozenset({ProposalKind.STRATEGY})
 
 
 class RiskTier(StrEnum):

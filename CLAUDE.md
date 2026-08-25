@@ -38,6 +38,10 @@ single highest-value habit in this repo. Some precedents:
 - **§0.2**'s two-column table is load-bearing, not scene-setting. "Experiments" sits in the
   *mutable Cell* column, which is why the kernel gates an experiment's slot and rung and has no
   opinion whatever on its hypothesis.
+- **§23.3 regenerates expired *actions*** — so `ProposalKind.STRATEGY` gets no consumer and no
+  regeneration wake: approving a statement *is* the act (`proposal.STATEMENT_KINDS`). A dead-looking
+  socket is not always a missing feature; sometimes the feature is a written-down refusal plus the
+  consequence nobody had supplied (ADR-046).
 - **§16.3** makes "customer identity" non-inheritable, so the external-action registry stores a
   salted *hash* of a counterparty and never the counterparty — a `customers` table is the obvious
   design and the one the clause warns about (`channel_registry.py`). Dedupe needs equality, not

@@ -92,7 +92,7 @@ from . import (
     tool_registry,
 )
 from .models import Book, CellStatus
-from .proposal import ProposalKind, RiskTier
+from .proposal import STATEMENT_KINDS, ProposalKind, RiskTier
 
 #: The rolling window §23.4's cumulative exposure is summed over, in wall
 #: seconds. Set to match the LOW tier's SLA (§27.1: 86400) on purpose: the
@@ -1267,8 +1267,24 @@ def _expire_one_grant(
             return grant
 
         cell = lifecycle.get_cell(conn, grant.cell_id)
+        # **A statement is not regenerated** (§23.3, ADR-046). The clause says
+        # "expired *actions* are regenerated and re-evaluated", and a strategy
+        # names no action: approving one is agreement, and the agreement is not
+        # undone by the inert grant beside it lapsing. Waking the Cell here told
+        # it to re-propose something a person had already accepted — the
+        # opposite of the feedback it should have had, and the loudest evidence
+        # that this kind was never finished.
+        kind = ProposalKind(
+            conn.execute(
+                "SELECT kind FROM proposals WHERE proposal_id = ?", (grant.proposal_id,)
+            ).fetchone()["kind"]
+        )
         wake_key: str | None = None
-        if cell is not None and cell.status in {CellStatus.ALIVE, CellStatus.DORMANT}:
+        if (
+            cell is not None
+            and cell.status in {CellStatus.ALIVE, CellStatus.DORMANT}
+            and kind not in STATEMENT_KINDS
+        ):
             wake_key = f"grant-expiry:{grant_id}"
             deliberation._enqueue_wake_locked(
                 conn,

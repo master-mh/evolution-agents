@@ -976,13 +976,13 @@ actually queued for building — this file is memory, not a backlog to work thro
 
 <!-- 2026-08-25, ADR-045 (wiring ProposalKind.EXPERIMENT) -->
 
-- **`ProposalKind.STRATEGY` is now the last kind whose approval leads nowhere.** `spend_request`
-  allocates (ADR-029), `tool_request` runs a tool (ADR-034), `external_action` claims a channel
-  (ADR-036), `experiment` starts one (ADR-045), `abstain` is deliberately never queued. A strategy
-  proposal is reviewed, approved, granted — and the grant expires unconsumed. That may be correct
-  (a strategy is a statement, not an act) but nothing anywhere says so, which is how
-  `ProposalKind.EXPERIMENT` sat for four months. **Decide it explicitly**: either a consumer, or a
-  comment on the enum saying why there will never be one.
+- ~~**`ProposalKind.STRATEGY` is now the last kind whose approval leads nowhere.**~~ **Decided
+  2026-08-26, ADR-046**: no consumer, because approving a strategy *is* the act
+  (`proposal.STATEMENT_KINDS`). The guess in this entry — "that may be correct (a strategy is a
+  statement, not an act)" — was right, and stopping there would still have missed both real bugs:
+  the decision reached the Cell nowhere, and the inert grant lapsed and woke it to redo what had
+  succeeded. **Deciding a socket is not the same as finishing it**; the question "what should
+  happen instead" is where the bugs were.
 - **§13.1's `normalised_cost = expected experiment cost / current stage tranche` still has no
   tranche.** ADR-045 makes the rung a real, derived property of every Cell-proposed experiment, so
   the numerator and the *stage* now both exist; a "tranche" would be a budget attached to a rung.
@@ -999,3 +999,24 @@ actually queued for building — this file is memory, not a backlog to work thro
   with its payload in both directions. If a future kind gains a required payload, expect the same
   blast radius and the same shape of fix — and note that the size of it is not evidence the
   requirement is wrong.
+
+<!-- 2026-08-26, ADR-046 (the strategy kind decided) -->
+
+- **A standing strategy has no way to be retired.** It is superseded by the next approved one and
+  otherwise stands forever — there is no "this no longer applies". An operator who wants to withdraw
+  guidance has to wait for the Cell to propose something else, which inverts who is steering. The
+  natural shape is an operator-initiated supersession, but §0.2 puts strategy in the *mutable Cell*
+  column, so a kernel-written strategy would need its own argument.
+- **`decision_reason` now reaches a model's prompt.** It is operator-authored and therefore trusted
+  in the sense §19.4 cares about, but it is the first free text a *human* puts into a Cell's context,
+  and nothing bounds its length or checks it for anything. A very long rejection reason competes with
+  the genome for the §15.1 budget. Worth a cap before the first operator writes an essay.
+- **Only the *latest* decision is shown per proposal, and only the last `RECENT_PROPOSALS` of them.**
+  A Cell whose strategy was rejected three times running sees at most the window. That is §15.1's
+  "do not load the entire Cell history" working as intended, but it means the feedback a Cell gets
+  about a repeated refusal is weaker than the signal §23.4 records about it. If
+  `repeat_after_rejection` ever escalates to something a Cell should visibly learn from, it will want
+  its own section rather than more history.
+- **`ProposalKind` is now fully decided** — four kinds with consumers, one statement, one never
+  queued. A kind added later has to say which it is; there is no longer a precedent for leaving one
+  ambiguous.

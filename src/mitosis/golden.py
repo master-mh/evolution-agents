@@ -745,7 +745,37 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           USD_REAL is untouched. Starting an experiment opens no reservation
 #           and posts no entry; the extra input tokens move the recorded raw
 #           `quantity` and round to the same RESOURCE minor units.
-EXPECTATION_VERSION = 22
+#   22 -> 23 (the strategy kind decided; §0.2, §15.1, §23.3; ADR-046).
+#           The scenario's only `strategy` proposal had **no approval request at
+#           all** — step 17 deliberated without a queue sink — so the one kind
+#           whose entire meaning is the decision was the one kind no replay ever
+#           had a decision for. It is queued and approved now (step 17b).
+#           (a) **`approval_grants`: `expired` 4 -> 5 while `regenerated` stays
+#               4**, and total 9 -> 10 (10 -> 11 including version 21's). That
+#               pair is the whole §23.3 change in two integers: the strategy
+#               grant lapses like any other and is *not* regenerated, because
+#               the clause regenerates expired **actions** and a strategy names
+#               none. Waking the Cell to re-propose something a person had
+#               already agreed to was the exact opposite of the feedback it
+#               needed, and a kernel that resumed doing it moves `regenerated`
+#               here rather than failing quietly.
+#           (b) **`approval_requests`** gains the strategy row: claimed LOW,
+#               assessed HIGH, **no `understated_risk` signal**. Not a gap —
+#               `_assessed_tier` folds §16.2's genome `risk_class`, and this
+#               Cell's genome declares HIGH. The Cell understated nothing
+#               relative to the kernel's own tier; its inheritance raised it.
+#           (c) **`audit_event_types`**: `approval_requested` and
+#               `approval_granted` each +1, `grant_expired` 4 -> 5.
+#               `assessments.human_interventions` 9 -> 10 follows.
+#           (d) **`deliberations`, `model_calls`, `resource_usage`: only token
+#               counts move.** Two causes, both prompt text — every Cell's
+#               proposal log now carries what a person decided about each entry,
+#               and the auditor child's later contexts carry a **standing
+#               strategy** section (§15.1's "relevant epigenetic state", the one
+#               source that clause names which nothing implemented).
+#           **`balances` is identical across every account in every book.**
+#           Approving a statement moves nothing; it changes what the Cell reads.
+EXPECTATION_VERSION = 23
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -1570,13 +1600,47 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     #     exactly how ADR-031's `born_in_epoch` nearly shipped untested. This
     #     Cell's context now carries an UNTRUSTED_EXTERNAL observation, so its
     #     next proposal must come back flagged.
-    deliberation.deliberate(
+    #     It is queued too, which it had not been (ADR-046). That left the
+    #     scenario's only `strategy` proposal with **no approval request at
+    #     all** — so the one kind whose entire meaning is the decision was the
+    #     one kind no replay ever had a decision for.
+    post_fetch = deliberation.deliberate(
         conn,
         cell_id=auditor_child.cell_id,
         provider=providers.MockProvider(reply=_post_fetch_reply(tool_call.tool_call_id)),
         wake_key="golden:wake:after-tool-result",
         wake_reason=deliberation.WAKE_TOOL_RESULT,
         model="mock-1",
+        proposal_sink=approval.QueueSink(),
+    )
+
+    # 17b. A strategy approved (§0.2, §15.1, §23; ADR-046). **Approving it is
+    #      the whole act** — there is nothing to consume, and the grant minted
+    #      beside it can never be spent. Three things are pinned:
+    #
+    #      (a) The Cell's later contexts carry a **standing strategy** section,
+    #          §15.1's "relevant epigenetic state" — the one source that clause
+    #          names which nothing implemented. It is derived from this approval,
+    #          not stored, so a kernel that started caching it would have to keep
+    #          the derivation identical.
+    #      (b) Every recent-proposal line now carries **what a person decided**.
+    #          Before this, approved, rejected, expired and never-reviewed all
+    #          rendered identically, and a Cell had no way to learn the one
+    #          signal the colony most wants it to learn from.
+    #      (c) Step 19c's sweep expires this grant and **does not regenerate
+    #          it**: `expired` moves while `regenerated` does not. §23.3
+    #          regenerates expired *actions*, and a strategy names no action —
+    #          waking the Cell to re-propose something a person had already
+    #          agreed to was the exact opposite of the feedback it needed.
+    strategy_request = conn.execute(
+        "SELECT request_id FROM approval_requests WHERE proposal_id = ?",
+        (post_fetch.proposal_id,),
+    ).fetchone()
+    approval.approve(
+        conn,
+        request_id=strategy_request["request_id"],
+        decided_by="golden-operator",
+        reason="agreed: read first, then write, and cite what you read",
     )
 
     # 18. The artifact store (§20, §11.3, §19.3; ADR-035). The write-up above

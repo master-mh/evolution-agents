@@ -567,6 +567,20 @@
   `deliberation` imports `experiments` — the registry/executor split, made a third time. 949 tests
   (18 new); golden expectation 21 → 22 with **balances identical in every book**, pinning a
   `running` experiment for the first time. Teeth-checked twelve ways; hand-verified end to end.
+- [x] **`ProposalKind.STRATEGY` decided — DONE** (2026-08-26), ADR-046. **No migration.** The last
+  kind whose approval led nowhere, and the obvious reading — that it needed a consumer like the
+  other four — is wrong: **a strategy names nothing to do, so approving one *is* the act.**
+  `proposal.STATEMENT_KINDS` now says so. What it lacked was a *consequence*, and the absence had
+  produced a live bug reproduced before the fix: an approved strategy reached the Cell nowhere
+  (approved, rejected, expired and never-reviewed all rendered identically in its own proposal
+  log), **and its inert grant lapsed and woke the Cell to re-propose something a person had already
+  agreed to** — §23.3 regenerates expired *actions*, and a statement is not one. The Cell now sees
+  a **standing strategy** (§15.1's "relevant epigenetic state", the last context source that clause
+  named which nothing implemented) derived from the queue and stored nowhere, plus what a person
+  decided about every proposal **and their reason** — the only human-authored text a Cell ever
+  receives. Safe to give only because §23.4's `repeat_after_rejection` detector already existed.
+  962 tests (13 new); golden expectation 22 → 23 with **balances identical in every book**, and
+  `expired` 4 → 5 while `regenerated` stays 4. Teeth-checked ten ways; hand-verified end to end.
 - [ ] §24 gateway features left out of the slice: routing by task type (§24.3), controlled retries (a retry after `execution_unknown` risks double-billing), model competition, and reacting to provider drift as a §8.4 regime change (drift is *recorded* — `resolved_model`/`api_version` — but nothing consumes it). **Structured-output validation was struck from this list** (2026-08-22): it exists, at the deliberation layer rather than the gateway — `proposal.parse` is strict, `extra="forbid"`, with `FORBIDDEN_FIELD_SENSE` as a schema tripwire. Anything added at the gateway must not duplicate it. *Disproved by:* `proposal.parse`.
 - [ ] Remaining CLI — **narrowed 2026-08-22** from `list-cells/show-cell/kill-cell/ledger/verify-ledger`, most of which had already landed among the CLI's 42 verbs. Still genuinely absent: **`list-cells`** (`status` prints counts and per-status/per-type tallies, but no roster) and **`ledger`** (no transaction browser). Struck: `verify-ledger` (`status` prints per-book conservation and `ledger.verify_chain`; `calibration` prints `prediction.verify_chain`), `show-cell` (substantially covered by `cell-fitness`), and `kill-cell` (`reap` kills on objective criteria — a *forced* operator kill is a §10.5 question, not an additive CLI verb, and should be argued before it is built). Purely additive, no blockers. *Disproved by:* `mitosis --help`.
 - [x] **A dead Cell's estate — DONE** (2026-08-22), ADR-028. `kill()` now releases the dead Cell's

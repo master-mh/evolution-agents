@@ -2077,3 +2077,80 @@ from amendment ID to spec location is complete in one place:
     now describes the `experiment` block, and it is in every system prompt. **`balances` is identical
     in every account in every book**: starting an experiment opens no reservation and posts no entry.
     The snapshot pins a `running` experiment for the first time, which is the state §9.2 counts.
+
+---
+
+## ADR-046: A strategy has no consumer because approving it is the act, and the decision itself is what reaches the Cell
+
+- **Status:** Accepted
+- **Spec ref:** §0.2, §0.3, §2.5, §3.6, §15.1, §15.2, §19.4, §23.3, §23.4, §23.5; Amendment A19;
+  ADR-027, ADR-039, ADR-043, ADR-045
+- **Context:** `ProposalKind.STRATEGY` appeared nowhere in `src/` but its own definition — the last
+  kind whose approval led nowhere, once ADR-045 wired `EXPERIMENT`. The obvious reading was that it
+  needed a consumer like the other four. It does not: a strategy names nothing to do. What it
+  actually lacked was a *consequence*, and the absence had produced a live bug. A Cell proposed a
+  strategy, a person approved it, and **(a)** the Cell was never told — `_recent_proposals_section`
+  showed `kind` and `summary` and nothing about what anyone decided — and **(b)** the inert grant
+  minted beside the approval lapsed under `expire_grants_due`, which woke the Cell to re-propose
+  something a person had already agreed to. Both were reproduced on a live colony before the fix.
+- **Decision: name the category, give the decision its consequence, and store nothing.**
+  - **A strategy is a *statement*, not a request.** The enum's own comments already drew the line
+    between a request and an action; this goes one step further. `proposal.STATEMENT_KINDS` is where
+    "no consumer" is written down rather than left as the absence that made the kind look
+    unfinished. ABSTAIN is deliberately not in it: it is a statement too, but `approval.enqueue`
+    never queues one, so a rule about it would govern a state that cannot occur.
+  - **§23.3 regenerates expired *actions*, and a statement is not one.** `_expire_one_grant` still
+    expires the grant — it lapsed, and that is history (§3.6) — but enqueues no wake. The
+    regeneration exists so a Cell re-derives an action against a world that has moved on; there is
+    no action here to re-derive, and the agreement is not undone by the clock running out on an
+    inert row beside it.
+  - **The standing strategy is derived from the queue, never stored.** §2.5's habit applied outside
+    the ledger: the Cell's most recently approved strategy proposal *is* its standing strategy. A
+    `cell_strategies` table would give a Cell a column to write its approach into and a second answer
+    that can drift from what was actually approved. It is singular, superseded by the next approved
+    one, the way §15.1's "current experiment" is singular. **This slice ships no migration.**
+  - **It fills §15.1's "relevant epigenetic state"** — the one context source that clause names which
+    nothing implemented. §0.3 still holds: it is the Cell's own words, labelled as such. What makes
+    it different from the untrusted proposal log is not that the colony believes it, but that a
+    person read that exact text and agreed to it, and the section heading says precisely that.
+  - **The Cell is told what a person decided about every proposal, with the reason.** For the other
+    kinds the *effect* was feedback enough — a tool result appears, a balance moves, an experiment
+    starts — which is why the gap only became visible on the one kind that has no effect. Approved,
+    rejected, expired and never-reviewed had all rendered identically. "Nobody looked" and "the
+    window closed before anyone looked" stay distinct, the way `approval_requests.status` already
+    keeps them.
+  - **Telling a Cell it was rejected is safe here only because §23.4's detector already exists.**
+    §23.5 says the queue "will be optimised against by Cells", and re-asking for a rejected thing is
+    the specific optimisation this feedback invites. `SIGNAL_REPEAT_AFTER_REJECTION` has been
+    watching for it since ADR-027, normalised so re-punctuating a rejected ask does not launder it.
+    Had the detector not existed, this feedback would have had to wait for it.
+  - The operator's `decision_reason` is the only human-authored text a Cell ever receives. Trusted in
+    the sense §19.4 cares about — it did not come from outside the colony — and the most direct
+    steering the design offers.
+- **What it displaced.**
+  - **A consumer, and the verb that would have come with it.** It would have been a second human act
+    that did nothing, and it would have made "approved" and "adopted" two states with no difference
+    between them.
+  - **Not minting a grant for a statement at all.** Cleaner in principle, and rejected because
+    `approve` returns a `Grant` on every path; changing that signature to express "this kind has
+    nothing to grant" is a larger change than the fact deserves. The grant is a record that lapses.
+  - **A `cell_strategies` table**, or a `strategy` column on `cells`. Both are the obvious design and
+    both create the second source of truth §2.5 exists to prevent.
+  - **Folding every approved proposal into standing context.** §23's decisions are per-request by
+    design; turning each individual "yes" into a standing instruction would change what an operator
+    was agreeing to after the fact.
+  - **Suppressing rejections from the Cell**, on the theory that a Cell told "no" will optimise
+    against the reason. It would, and §23.4 is the countermeasure the spec already specifies —
+    withholding the signal instead would leave the Cell unable to learn the one thing the colony most
+    wants it to learn.
+- **Consequences:**
+  - **`ProposalKind` is now fully decided**: four kinds with consumers, one statement, one never
+    queued. A kind added later has to say which it is.
+  - Golden expectation 22 → 23. The scenario's only `strategy` proposal had **no approval request at
+    all** — step 17 deliberated without a queue sink — so the one kind whose entire meaning is the
+    decision was the one kind no replay ever had a decision for. `approval_grants.expired` moves
+    4 → 5 while `regenerated` stays 4, which is the whole §23.3 change in two integers. **`balances`
+    is identical in every account in every book**: approving a statement moves nothing.
+  - Every deliberation's prompt grows, in two places: the proposal log now carries decisions, and a
+    Cell with a standing strategy carries that too. This is the first context section whose content
+    a *human* wrote.
