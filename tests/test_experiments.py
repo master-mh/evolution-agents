@@ -239,13 +239,18 @@ def test_an_unmeasurable_dimension_reports_as_unmeasurable_not_zero(conn):
     never unmeasurable; it was unstamped. If the reason a dimension abstains is
     ever again "a column does not exist", check whether the join already reaches
     it before believing the claim.
+
+    **Asserts the sandbox note, not the length of the list.** This used to read
+    `len(report.unmeasured) == 1`, which made "a second dimension honestly
+    abstained" indistinguishable from "the sandbox note was lost" — and it broke
+    the moment §13.1's tranche gained a reason to abstain (ADR-048), despite
+    nothing about sandbox CPU having changed.
     """
     cell = _cell(conn)
     experiment = _start(conn, cell)
     report = experiments.report(conn, experiment.experiment_id)
     assert report.sandbox_cpu_seconds is None
-    assert len(report.unmeasured) == 1
-    assert any("sandbox" in note for note in report.unmeasured)
+    assert sum("sandbox" in note for note in report.unmeasured) == 1
     assert not any("HUMAN_MINUTES" in note for note in report.unmeasured)
 
 
@@ -581,3 +586,4 @@ def test_an_experiment_cannot_be_concluded_twice(conn):
         experiments.conclude(
             conn, experiment_id=experiment.experiment_id, concluded_by="op", note="again"
         )
+

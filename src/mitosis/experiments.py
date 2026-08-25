@@ -97,6 +97,15 @@ UNMEASURED_SANDBOX = (
     "sandbox CPU: §19.3's sandbox does not exist (Phase 5), so no CPU is attributable"
 )
 
+#: §13.1's denominator is missing. A Cell that has never been promoted has no
+#: capital allotted *for a stage* — it runs on whatever it holds, which is a
+#: balance, not a tranche. Saying so beats dividing by its balance and calling
+#: the result a stage ratio.
+UNMEASURED_TRANCHE = (
+    "normalised cost: this Cell has never been promoted, so §13.1 has no stage "
+    "tranche to divide by (a Cell's own balance is not a stage budget)"
+)
+
 
 class ExperimentError(Exception):
     pass
@@ -178,6 +187,18 @@ class ExperimentReport:
     reality_gap_mean_brier: float | None
     resolved_predictions: int
     unresolved_predictions: int
+
+    #: §13.1's `normalised_cost = expected experiment cost / current stage
+    #: tranche`, and the denominator it used. Both `None` together when the Cell
+    #: has no promotion at this rung — never 0.0, which would read as "this
+    #: experiment is free" rather than "there is no stage budget to compare it
+    #: to". The ratio is dimensionless by construction, which is the whole point
+    #: of §13.1: "Never subtract raw dollars from scores in [0,1]."
+    stage_tranche_minor_units: int | None
+    #: The rung that tranche was allotted for — the Cell's current stage, which
+    #: is not necessarily the rung this experiment runs at.
+    stage_tranche_rung: int | None
+    normalised_cost: float | None
 
     unmeasured: tuple[str, ...]
 
@@ -465,6 +486,56 @@ def stage_reached(conn: sqlite3.Connection, cell_id: str) -> str | None:
     return f"rung {rung}: {LADDER.get(int(rung), 'unknown')}"
 
 
+def stage_tranche(conn: sqlite3.Connection, cell_id: str) -> tuple[int, int] | None:
+    """§13.1's denominator: `(rung, minor_units)` the colony allotted this Cell
+    for its **current stage**, or `None` if it has never been promoted.
+
+    **This is the thirteenth socket that turned out to already exist.**
+    `normalised_cost = expected experiment cost / current stage tranche` is the
+    one line in SPEC.md that uses the word "tranche", and §10.5 names the same
+    object from the other side — "stage budget exhausted" is a death criterion.
+    Nothing needed inventing: `promotions.allocated_minor_units` has been
+    exactly this since ADR-029, and its own column comment already says what
+    makes it safe — "the amount the operator approved and **not** a figure
+    re-read from the Cell at allocation time". So the denominator is set by a
+    human, per Cell, per rung, and §23.5's "a field a Cell can fill is a field
+    it will optimise" never applies to it. **This slice ships no migration.**
+
+    Read with a plain `SELECT` rather than through `promotion`, which sits far
+    above this module — the same move `stage_reached` and
+    `experiment_grants.entitled_rung` already make. A query is not an import.
+
+    **Keyed on the Cell, never on the experiment, and ADR-043 settled why.**
+    Stage is a property of the Cell — §10.5's coroner lists `stage_reached`
+    (singular) beside `experiment_ids` (plural), §27.2's dashboard pairs them as
+    one field — and ADR-043 named §13.1 itself as the third witness: this
+    formula "would be circular if the stage belonged to the experiment". Keying
+    the denominator on `experiments.ladder_rung` would divide an experiment's
+    cost by a budget that experiment's own rung selected. The first draft of
+    this function did exactly that, and the golden run caught it by reporting
+    `None` for every experiment in a scenario that contains both a rung-7
+    promotion and a rung-7 experiment — belonging to different Cells.
+
+    **The latest promotion, not the sum of them.** §13.1 says "*current* stage
+    tranche", singular, and a tranche is an instalment rather than a running
+    total; `promotion._transfer_degradation` already reads "the Cell's latest
+    promotion" the same way.
+
+    **`None` when the Cell has never been promoted**, which today is most of
+    them. That is a real answer, not a gap: an unpromoted Cell is spending its
+    own balance, and the colony has staked no stage capital on it. Dividing by
+    that balance would produce a confident-looking ratio measuring something
+    §13.1 never named — the trap ADR-042 and ADR-043 both name, where a figure
+    that should abstain reports a number instead.
+    """
+    row = conn.execute(
+        "SELECT rung, allocated_minor_units FROM promotions WHERE cell_id = ? "
+        "ORDER BY created_at_utc DESC, rowid DESC LIMIT 1",
+        (cell_id,),
+    ).fetchone()
+    return (int(row["rung"]), int(row["allocated_minor_units"])) if row is not None else None
+
+
 def report(conn: sqlite3.Connection, experiment_id: str) -> ExperimentReport:
     """§2.6's report. Derived on every read and stored nowhere (§2.5)."""
     experiment = get(conn, experiment_id)
@@ -495,6 +566,21 @@ def report(conn: sqlite3.Connection, experiment_id: str) -> ExperimentReport:
     gap = _reality_gap(conn, experiment_id)
     labour = _human_labour(conn, experiment_id)
 
+    # §13.1. The numerator is the Cell's own estimate and the denominator is the
+    # operator's allocation, which is the asymmetry that makes the ratio worth
+    # reading: a Cell can understate what it expects to spend, and cannot touch
+    # what it was given. Both are minor units of the same book — `promotion`
+    # allocates in `cells.book` — so the division is within one book and §2.4's
+    # ban on an implicit exchange rate is not in play.
+    allotted = stage_tranche(conn, experiment.cell_id)
+    tranche_rung, tranche = allotted if allotted is not None else (None, None)
+    normalised = (
+        experiment.expected_cost_minor_units / tranche if tranche is not None else None
+    )
+    unmeasured = (UNMEASURED_SANDBOX,)
+    if tranche is None:
+        unmeasured += (UNMEASURED_TRANCHE,)
+
     return ExperimentReport(
         experiment_id=experiment.experiment_id,
         cell_id=experiment.cell_id,
@@ -517,7 +603,10 @@ def report(conn: sqlite3.Connection, experiment_id: str) -> ExperimentReport:
         reality_gap_mean_brier=gap[0],
         resolved_predictions=gap[1],
         unresolved_predictions=gap[2],
-        unmeasured=(UNMEASURED_SANDBOX,),
+        stage_tranche_minor_units=tranche,
+        stage_tranche_rung=tranche_rung,
+        normalised_cost=normalised,
+        unmeasured=unmeasured,
     )
 
 

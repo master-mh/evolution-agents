@@ -775,7 +775,33 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #               source that clause names which nothing implemented).
 #           **`balances` is identical across every account in every book.**
 #           Approving a statement moves nothing; it changes what the Cell reads.
-EXPECTATION_VERSION = 23
+#   23 -> 24 (§13.1's normalised cost; §13.1, §13.2, §10.5, §25.2; ADR-048).
+#           **One section differs — `experiments` — and it gains three keys per
+#           row. Nothing else in the snapshot moves at all**, because this slice
+#           reads existing rows and writes none: the denominator is
+#           `promotions.allocated_minor_units`, which has been the stage tranche
+#           since ADR-029. **No migration, and `balances` is identical in every
+#           account in every book.**
+#           (a) **`stage_tranche_minor_units` / `stage_tranche_rung` /
+#               `normalised_cost`.** Exactly one of the three experiments has a
+#               tranche: 30 minor units at rung 7, giving `normalised_cost` 0.0
+#               against an expected cost of 0. The other two report `None` on
+#               all three, and that is the honest reading rather than a gap —
+#               neither Cell has ever been promoted, so no stage capital was
+#               staked on it and §13.1 has nothing to divide by (`unmeasured`
+#               says so in words).
+#           (b) **The one row with a tranche is a rung-1 experiment whose
+#               tranche is at rung 7**, and that mismatch is the assertion, not
+#               an anomaly. ADR-043 established that stage belongs to the *Cell*
+#               and cited §13.1 itself — the formula "would be circular if the
+#               stage belonged to the experiment". This scenario is unusually
+#               good at catching the circular reading: its rung-7 promotion and
+#               its rung-7 experiment belong to **different Cells**, so an
+#               implementation keyed on `experiments.ladder_rung` reports `None`
+#               for all three rows and looks plausible. `stage_tranche_rung` is
+#               the key that tells the two apart, which is why it is pinned
+#               beside the ratio instead of being left implicit.
+EXPECTATION_VERSION = 24
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -2381,6 +2407,19 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
                 # hash.
                 "resolved_predictions": derived.resolved_predictions,
                 "unresolved_predictions": derived.unresolved_predictions,
+                # §13.1 (ADR-048). All three parts are pinned, because the
+                # interesting failure is not a wrong ratio — it is the
+                # denominator being keyed on the wrong thing. The scenario is
+                # unusually good at catching that: its rung-7 promotion and its
+                # rung-7 experiment belong to **different Cells**, so an
+                # implementation that keyed the tranche on the experiment's rung
+                # reports `None` for all three rows, while the correct
+                # Cell-keyed one reports a tranche at rung 7 against a rung-1
+                # experiment. Those two readings are indistinguishable from the
+                # ratio alone, and `stage_tranche_rung` is what separates them.
+                "stage_tranche_minor_units": derived.stage_tranche_minor_units,
+                "stage_tranche_rung": derived.stage_tranche_rung,
+                "normalised_cost": derived.normalised_cost,
             }
         )
 

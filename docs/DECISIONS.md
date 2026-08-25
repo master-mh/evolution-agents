@@ -2232,3 +2232,84 @@ from amendment ID to spec location is complete in one place:
     schema for any `experiment_id` column lacking the reference, rather than listing the four — the
     trap here was columns that predate their referent, and nothing stops the next migration
     reintroducing exactly that.
+
+---
+
+## ADR-048: §13.1's denominator is the promotion a person already funded, and the stage it belongs to is the Cell's
+
+- **Status:** Accepted
+- **Spec ref:** §2.5, §2.6, §10.2, §10.5, §13.1, §13.2, §23.2, §23.5, §25.1, §25.2; Charter C3;
+  ADR-029, ADR-039, ADR-042, ADR-043, ADR-045
+- **Context:** `normalised_cost = expected experiment cost / current stage tranche` is one line, and
+  **"tranche" appears exactly once in all of SPEC.md** — the object is named and never defined, the
+  same shape as the experiment before ADR-043. §10.5 names it from the other side: "stage budget
+  exhausted" is a death criterion. ADR-043 deliberately left `expected_cost_minor_units` inert
+  because the 2026-08-06 live run found it was **0 on every proposal from both models**, and
+  FUTURE_BUILD_HOOKS recorded that the ratio should not be built on until that was re-measured.
+- **Re-measured first, and the precondition has cleared.** Eight live `llama3.2` wakes against a
+  colony with a running experiment produced estimates of **10000, 1000 and 0** — no longer
+  identically zero. The plausible cause is the reference ADR-044 added: §15.1 now shows a Cell the
+  *derived* cost of its own current experiment, which is the anchor ADR-043 said models were missing.
+- **Decision: the denominator already existed — `promotions.allocated_minor_units`.**
+  - **No migration.** ADR-029 has stored, per Cell and per rung, "the amount the operator approved
+    and not a figure re-read from the Cell at allocation time". That is a stage tranche in every
+    respect §13.1 needs, and `experiments` reads it with a plain `SELECT`, the move `stage_reached`
+    and `experiment_grants.entitled_rung` already make. A query is not an import.
+  - **Keyed on the Cell, never on the experiment.** ADR-043 argued this in advance and cited §13.1
+    itself: the formula "would be circular if the stage belonged to the experiment", because the
+    experiment's own rung would then select the budget its cost is judged against. **The first draft
+    of this slice keyed it on `experiments.ladder_rung` anyway, and the golden run caught it** —
+    every experiment reported `None` in a scenario containing both a rung-7 promotion and a rung-7
+    experiment, belonging to *different* Cells. The corrected reading produces a rung-7 tranche
+    against a rung-1 experiment, and `stage_tranche_rung` is pinned beside the ratio precisely
+    because those two readings are indistinguishable from the ratio alone.
+  - **The latest promotion, not the sum.** §13.1 says "*current* stage tranche", singular; a tranche
+    is an instalment. `promotion._transfer_degradation` already reads the Cell's latest promotion the
+    same way. Summing would make a Cell look cheaper every time it was funded again.
+  - **`None` when the Cell has never been promoted, never `0.0`.** ADR-042/ADR-043's rule: an
+    unmeasurable dimension abstains and says why. `0.0` would read as "this experiment is free"; the
+    truth is that no stage capital was staked, and a Cell's own balance is not a stage budget.
+  - **Reported, never gated.** §13.2 puts experiment cost on a Pareto frontier and says "Do not rely
+    on a single weighted scalar"; §10.2 forbids the same collapse for fitness. A ratio above 1 prints
+    a line saying it is "a claim to weigh, not a rule that was broken". ADR-039 is the second reason:
+    what a Cell may actually spend is already bounded by Charter C4, the reservation system and the
+    real-spend breaker, and a cap here would be weaker than all three.
+- **What protects the ratio is ratification, not inaccessibility — stated precisely because the
+  stronger claim is tempting and false.** `promotion.allocate` reads
+  `amount = proposal["estimated_cost_minor_units"]`, so the tranche *starts life as a number the Cell
+  wrote. A Cell can raise its own denominator — by asking for more money and being given it, which is
+  §23's gate working rather than a leak. The asymmetry that makes the ratio worth reading is
+  **unreviewed versus ratified**: the numerator is a fresh claim about an experiment nobody approved,
+  the denominator is a figure a person saw under §23.2 and committed capital against, out of a pool
+  only a person can fund. What is structurally closed is revision — a Cell cannot alter the tranche
+  afterwards, and `stage_tranche(conn, cell_id)` takes no parameter through which it could steer
+  which tranche it is measured against.
+- **What it displaced.**
+  - **A per-rung tranche table in `colony_config`**, the obvious design: nine configured budgets, one
+    per rung of §25.1's ladder. It would have been a second answer to a question `promotions` already
+    owns, colony-wide where the spec's figure is per Cell, and set by nobody in particular where
+    ADR-029's is set by the person who approved it.
+  - **Keying the tranche on the experiment's rung**, which is what the first draft did and what the
+    golden run refuted.
+  - **Making §10.5's "stage budget exhausted" consume it.** The budget half of that criterion now
+    exists, and `death.py` still does not read it. Killing a Cell for exceeding its tranche would make
+    this ratio lethal, and §10.5 is the clause that most distrusts that shape — "estimated negative EV
+    alone must not kill a Cell" without strong evidence *and* an independent Auditor concurring.
+    Overspending an allocation is realised rather than estimated, so it is arguable; it is its own
+    argument, with an Auditor in it, and must not arrive behind a rename.
+- **Consequences:**
+  - **`death.py` carried a claim that had gone stale.** `_budget_exhausted` said stages "belong to
+    §25's promotion ladder and do not exist". They have existed since ADR-043/ADR-045, and this ADR
+    identifies the budget half. The docstring now says what the function does and does not read, and
+    why. This is the fourth documented instance of a comment asserting a named behaviour that no test
+    defended.
+  - **Golden expectation 23 → 24, one section.** `experiments` gains three keys per row; **nothing
+    else in the snapshot moves and `balances` is identical in every account in every book** — this
+    slice reads existing rows and writes none.
+  - **A separate live finding, logged and not fixed here: proposal parse compliance has collapsed
+    from 7/8 (2026-08-06) to 1/8.** Five of seven failures are the model flattening a nested payload
+    (`hypothesis` at the top level instead of inside `experiment`; `channel`/`intent` instead of
+    inside `external_action`). That is the *same class* of prompt-shape bug the 2026-08-06 run fixed
+    for enums — a value rendered in a shape that reads as something else — now recurring because the
+    payload objects are rendered as long English strings. The mock provider structurally cannot catch
+    it, because its reply is an input rather than a response to the prompt's wording.

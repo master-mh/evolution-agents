@@ -162,6 +162,17 @@
   golden expectation version 4 → 5 via a reviewed migration (**no USD_REAL moves**).
 
 ## Next
+- [ ] **Proposal parse compliance has collapsed from 7/8 to 1/8, and the golden run cannot see it.**
+  Measured 2026-08-25 on eight live `llama3.2` wakes (ADR-048). **Five of seven failures are the
+  model flattening a nested payload** — `hypothesis` at the top level instead of inside
+  `experiment`, `channel`/`intent`/`artifact_id` instead of inside `external_action`. This is the
+  same class of bug the 2026-08-06 run fixed for enums (`"risk_tier": ["MEDIUM"]`): a value rendered
+  in a shape that reads as a different type. `_prompt_schema` renders each payload as a long English
+  *string*, so the model sees `"experiment": "<a sentence>"` and flattens it. **A mock provider
+  structurally cannot catch this** — its reply is an input, not a response to the prompt's wording —
+  so the whole suite and the golden run stay green while a live Cell's proposals are discarded.
+  Fixing it changes prompt text, so expect a golden expectation bump and no balance movement.
+  *Disproved by:* a live `ollama` run whose parse rate is back above ~7/8.
 - [x] **Drive the loop with a real model — local half DONE** (2026-08-06). Ollama installed,
   `llama3.2` (3B), nine live wakes. **The first one failed to parse, and the bug was the prompt's,
   not the model's:** the schema hint rendered enum choices as JSON arrays, so the model returned
@@ -567,7 +578,7 @@
   `deliberation` imports `experiments` — the registry/executor split, made a third time. 949 tests
   (18 new); golden expectation 21 → 22 with **balances identical in every book**, pinning a
   `running` experiment for the first time. Teeth-checked twelve ways; hand-verified end to end.
-- [x] **`ProposalKind.STRATEGY` decided — DONE** (2026-08-26), ADR-046. **No migration.** The last
+- [x] **`ProposalKind.STRATEGY` decided — DONE** (2026-08-25), ADR-046. **No migration.** The last
   kind whose approval led nowhere, and the obvious reading — that it needed a consumer like the
   other four — is wrong: **a strategy names nothing to do, so approving one *is* the act.**
   `proposal.STATEMENT_KINDS` now says so. What it lacked was a *consequence*, and the absence had
@@ -604,6 +615,22 @@
   a publisher implementation and something that calls it. The inbox got its first producer and
   consumer with the agent loop (`enqueue_wake` / `run_ready_wakes`). *Disproved by:*
   `events.dispatch_outbox`.
+- [x] **§13.1's `normalised_cost` — DONE** (2026-08-25), ADR-048. **No migration: the denominator
+  already existed.** "tranche" appears exactly once in SPEC.md and is never defined, but
+  `promotions.allocated_minor_units` has been a per-Cell, per-rung, human-approved stage budget since
+  ADR-029 — and §10.5 names the same object from the other side ("stage budget exhausted"). Reported
+  on §2.6's report, **never gated** (§13.2's Pareto frontier; §10.2; ADR-039). **The golden run
+  caught the first draft**, which keyed the tranche on the experiment's rung — exactly the
+  circularity ADR-043 predicted, because stage belongs to the *Cell*. `None` for an unpromoted Cell,
+  never 0.0. 988 tests (8 new); golden expectation 23 → 24, one section, **no balances moved**.
+  Teeth-checked seven ways, no misses. **Numerator re-measured live first** (the precondition
+  FUTURE_BUILD_HOOKS set): estimates of 10000/1000/0, no longer identically zero as in 2026-08-06.
+- [ ] **§10.5's "stage budget exhausted" could now consume that tranche, and deliberately does not.**
+  `death._budget_exhausted` still means "the Cell holds nothing and has nothing pending". Making it
+  read the tranche would make §13.1's ratio lethal, and §10.5 is the clause that most distrusts that
+  shape — it needs strong evidence *and* an independent Auditor concurring. Overspending an
+  allocation is realised rather than estimated, so it is arguable; it needs its own argument with an
+  Auditor in it. *Disproved by:* `death._budget_exhausted` reading `promotions`.
 - [ ] Shadow-pricing `resource_usage.minor_units` from a raw quantity instead of a caller-supplied
   figure. **Split 2026-08-22:** this entry used to lead with "model gateway/provider
   identification (needed before per-provider real-spend caps can be enforced)", and that half

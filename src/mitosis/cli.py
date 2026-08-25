@@ -1243,6 +1243,20 @@ def cmd_experiment(args: argparse.Namespace) -> None:
           f"{report.unresolved_predictions} open)")
     if report.expected_cost_minor_units:
         print(f"    You estimated:                 {report.expected_cost_minor_units}")
+    # §13.1's whole purpose is unit consistency — "never subtract raw dollars
+    # from scores in [0,1]" — so the ratio is printed beside the two raw figures
+    # it came from rather than instead of them. Numerator is the Cell's own
+    # estimate; denominator is what a person allocated (§23.2). Nothing is
+    # gated on it: §13.2 puts experiment cost on a Pareto frontier, and this
+    # kernel has no business turning one dimension into a verdict.
+    if report.normalised_cost is not None:
+        print(f"    Normalised cost (§13.1):       {report.normalised_cost:.2f}x"
+              f"  ({report.expected_cost_minor_units} estimated / "
+              f"{report.stage_tranche_minor_units} allotted at the Cell's "
+              f"current stage, rung {report.stage_tranche_rung})")
+        if report.normalised_cost > 1:
+            print("      ^ asks for more than this stage was allotted — a claim to weigh, "
+                  "not a rule that was broken")
     print()
     for note in report.unmeasured:
         print(f"  not measured — {note}")

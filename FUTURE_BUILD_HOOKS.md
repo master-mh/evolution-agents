@@ -977,7 +977,7 @@ actually queued for building — this file is memory, not a backlog to work thro
 <!-- 2026-08-25, ADR-045 (wiring ProposalKind.EXPERIMENT) -->
 
 - ~~**`ProposalKind.STRATEGY` is now the last kind whose approval leads nowhere.**~~ **Decided
-  2026-08-26, ADR-046**: no consumer, because approving a strategy *is* the act
+  2026-08-25, ADR-046**: no consumer, because approving a strategy *is* the act
   (`proposal.STATEMENT_KINDS`). The guess in this entry — "that may be correct (a strategy is a
   statement, not an act)" — was right, and stopping there would still have missed both real bugs:
   the decision reached the Cell nowhere, and the inert grant lapsed and woke it to redo what had
@@ -1000,7 +1000,7 @@ actually queued for building — this file is memory, not a backlog to work thro
   blast radius and the same shape of fix — and note that the size of it is not evidence the
   requirement is wrong.
 
-<!-- 2026-08-26, ADR-046 (the strategy kind decided) -->
+<!-- 2026-08-25, ADR-046 (the strategy kind decided) -->
 
 - **A standing strategy has no way to be retired.** It is superseded by the next approved one and
   otherwise stands forever — there is no "this no longer applies". An operator who wants to withdraw
@@ -1057,3 +1057,32 @@ actually queued for building — this file is memory, not a backlog to work thro
   survived a deliberate SQLite probe session because the probe tested `UPDATE` on a violating row —
   which is allowed — while the kernel's release path writes *ledger entries*. Probe the operation the
   code actually performs, not the statement you assume it uses.
+
+<!-- 2026-08-25, ADR-048 (§13.1's normalised cost) -->
+
+- **Proposal parse compliance is 1/8 on a live model and no test can see it.** Measured on eight
+  `llama3.2` wakes. Five of seven failures flatten a nested payload; one returned `"risk_tier": null`
+  on an `abstain`, which is arguably more sensible than the schema (an abstaining Cell has no risk
+  tier to state) and is worth deciding rather than leaving as a parse failure; one emitted an invalid
+  `\$` escape. **The structural cause is that `_prompt_schema` renders each payload object as a long
+  English string**, so a model sees `"experiment": "<a sentence>"` and answers with a string-shaped
+  or flattened reply. That is the same failure the 2026-08-06 run fixed for enums, and the same
+  reason the mock provider cannot catch it. Promoted to the top of PRIORITIES `Next`.
+- **`ExperimentReport` is where a Cell-facing figure could leak into §15.1 unnoticed.** §15's
+  experiment section renders this report, so `normalised_cost` will reach a Cell's prompt the moment
+  anyone adds it there. Showing a Cell its own ratio is §23.5 bait — it is a number the Cell can move
+  by writing a smaller estimate, and telling it the score makes the estimate the thing it optimises.
+  It is deliberately not in context today; adding it should be argued, not assumed.
+- **A Cell funded twice at one rung is a case no colony has produced.** `stage_tranche` returns the
+  latest promotion, reading §13.1's "current ... tranche" as an instalment. If a colony ever
+  genuinely tops a Cell up mid-stage, "current" may want to mean the sum over the current rung
+  instead — revisit with a real case rather than in the abstract.
+- **`normalised_cost` has exactly one consumer and it is a human.** It prints on `mitosis experiment`
+  and appears in the golden snapshot; nothing computes with it. That is correct for now (§13.2's
+  Pareto selection is Phase 6), but it is precisely the "socket with no consumer" shape ADR-046 warned
+  about — so if §13.2 ever lands, check that this ratio is the dimension it wants rather than
+  assuming it, and note that §13.2 lists *five* dimensions of which this is one.
+- **`promotion.allocate` only ever issues rung 7.** So `stage_tranche_rung` is 7 or `None` in every
+  colony today, and the "Cell's current stage" is a two-valued field pretending to be a nine-valued
+  one. Rungs 8 and 9 each mean removing a human (ADR-029), so this stays true until that is argued —
+  worth remembering before reading much into the rung a tranche reports.

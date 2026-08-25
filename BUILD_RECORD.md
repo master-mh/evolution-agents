@@ -8,64 +8,77 @@ scheduler, the §23 approval queue, the dead-Cell estate, the rung-7 promotion p
 read-back, §9.2's birth cap, Auditor Cells, genome content, the tool surface, the artifact
 store, the external-action registry, the §27.1 autonomy decisions, grant regeneration, the
 expiry sweep, establishable rights, scheduler liveness, the experiment, experiment attribution,
-proposed experiments, and the strategy kind decided, 2026-07-21 through 2026-08-26):
+proposed experiments, the strategy kind decided, and the experiment_id foreign keys,
+2026-07-21 through 2026-08-25):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-25 — The seam four files scheduled, and the constraint that made it unnecessary
+## 2026-08-25 — The denominator that had been sitting in `promotions` since ADR-029
 
-Migration 0027 + `db.raise_for_unknown_experiment` + two `except` clauses (ADR-047).
-`PRIORITIES.md`, `FUTURE_BUILD_HOOKS.md` and ADR-044 all scheduled the same next slice — an
-injected `ExperimentChecker` seam, `sweeper.ExternalOperationChecker`-shaped, because
-`reservations`, `prediction`, `ledger` and `gateway` sit *below* `experiments` in the layering.
-**The premise is true and the conclusion was wrong: the layering objection is an objection to a
-*Python* check, and a foreign key has no layer.**
+`experiments.stage_tranche` + three fields on §2.6's report + one CLI line (ADR-048).
+**No migration.** `normalised_cost = expected experiment cost / current stage tranche` is one line of
+SPEC.md, and **"tranche" appears exactly once in the whole document** — named, never defined, the
+same shape the experiment itself was in before ADR-043. §10.5 names the object from the other side:
+"stage budget exhausted" is a death criterion.
 
-### What was actually missing was a declaration, not a mechanism
+### The measurement came first, and it cleared the gate
 
-All four `experiment_id` columns are bare `TEXT` for one reason each — every one predates the table
-it names (`ledger_entries`/`reservations` 0001, `model_calls` 0010, `prediction_register` 0012;
-`experiments` 0026). Migration 0026's own header had already said it: "**the foreign key was exposed
-to the operator before the table existed**." Meanwhile `db.connect` has set
-`PRAGMA foreign_keys = ON` since the beginning, so enforcement was switched on and waiting. SQLite
-cannot `ALTER TABLE ADD CONSTRAINT`, so 0027 rebuilds the four tables; every copy is `ORDER BY
-rowid`, because both hash chains read their rows in rowid order and the ledger folds each
-transaction's entries into that transaction's hash — a reordered copy would read exactly like
-tamper-evidence firing.
+FUTURE_BUILD_HOOKS had set a precondition: the numerator was `0` on every proposal from both models
+on 2026-08-06, so nothing should be built on the ratio until it was re-measured. Eight live
+`llama3.2` wakes against a colony with a running experiment returned **10000, 1000 and 0** — no
+longer identically zero. The likely cause is ADR-044's own consequence: §15.1 now shows a Cell the
+*derived* cost of its current experiment, which is the reference ADR-043 said models were missing.
 
-### The bug the design nearly shipped, found by a test that did the real thing
+### The denominator needed no building
 
-An **open** reservation carrying a dangling id would have had its funds committed *forever*.
-`settle` and `release` write **new** ledger entries carrying the reservation's `experiment_id`, so
-once the entry constraint existed every exit from that reservation wrote a row the key must refuse.
-**A `PRAGMA`-level probe said the row was healthy** — a bare `UPDATE` of a non-key column on a
-violating row is allowed, and that is what I checked first. Only a test that actually *released* one
-found the hole. The migration now repairs that single case to NULL — the true value, since ADR-044
-settled that unattributed is a result — and writes an `audit_events` row naming the id it cleared.
-Terminal reservations and every ledger entry keep their dangling ids untouched: nothing will write
-another entry for them, so the id is harmless evidence that a report had been undercounting, and
-§3.6 keeps it. **Repair what is still live; preserve what is already history.**
+`promotions.allocated_minor_units` has been, since ADR-029 and in its own column comment, "the amount
+the operator approved and **not** a figure re-read from the Cell at allocation time" — per Cell, per
+rung, human-ratified. That is a stage tranche in every respect §13.1 needs. **Thirteenth socket that
+turned out to already exist.**
+
+### The golden run caught the design error, and ADR-043 had predicted it
+
+The first draft keyed the tranche on `experiments.ladder_rung`. ADR-043 had argued against exactly
+that a slice earlier, citing §13.1 itself — the formula "would be circular if the stage belonged to
+the experiment". The scenario is unusually good at exposing it: its rung-7 promotion and its rung-7
+experiment belong to **different Cells**, so the circular reading returns `None` for all three rows
+and looks merely conservative. The correct Cell-keyed reading reports a rung-7 tranche against a
+rung-1 experiment, so `stage_tranche_rung` is pinned beside the ratio — from the ratio alone the two
+readings are indistinguishable.
+
+### Reported, never gated
+
+§13.2 puts experiment cost on a Pareto frontier and says "Do not rely on a single weighted scalar";
+§10.2 forbids the same collapse for fitness. A ratio above 1 prints "a claim to weigh, not a rule
+that was broken". §10.5's "stage budget exhausted" *could* now consume this and deliberately does
+not — that would make the ratio lethal, and it needs its own argument with an Auditor in it.
+`death.py`'s docstring claimed stages "do not exist"; it has been corrected.
+
+**One claim stated carefully because the stronger version is false:** `promotion.allocate` reads
+`amount = proposal["estimated_cost_minor_units"]`, so the tranche starts as a number the *Cell* wrote.
+A Cell can raise its own denominator — by asking for more and being given it, which is §23's gate
+working. The asymmetry worth reading is **unreviewed versus ratified**, not Cell versus colony.
 
 ### Verification
 
-- **980 tests passing** (18 new, 0 removed; up from 962). **Golden expectation unchanged at 23** —
-  hash byte-identical. A rebuild that preserves order changes no data, and the repair matches zero
-  rows on a colony whose only internal source for the value is `experiments.attribution_for`.
-- **The blast radius was zero, and that is the finding.** All 962 pre-existing tests passed against
-  the new constraint without a single edit, because every internal caller already derives the id
-  from `attribution_for`. The hole was never in what the kernel does today — it was in what the next
-  programmatic caller would have been free to do, which is exactly what ADR-044 meant by "worth doing
-  before anything else starts passing the id programmatically".
-- **Teeth-checked twelve ways**, each failing its named test: the foreign key dropped from each of
-  the four tables separately, the repair removed (the stranded-funds bug), the repair left
-  unrecorded, the repair over-reaching to terminal rows, the rebuild copy losing rowid order (both
-  chains break), the translator swallowing non-experiment `IntegrityError`s, and three more.
-  **Two mutations initially MISSED and exposed a real gap**: the translator was never tested against
-  a *different* foreign key failing on the same row — `prediction_register` and `model_calls` both
-  reference `cells` too, and all of them fail with the identical eight words. Two tests added; both
-  mutations then caught.
-- **Hand-verified end to end on a live on-disk colony** (every test until then used `:memory:`):
-  0027 applies under WAL, all four keys land, `foreign_key_check` is clean, an experiment starts, and
-  revenue and a prediction attach to it while a ghost id is refused.
-- Next: unchanged from the last entry — §13.1's `normalised_cost` still has no stage tranche to
-  divide by. Note its numerator was measured at 0 on every proposal from both models on 2026-08-06,
-  so the first step there is a re-measurement, not a migration.
+- **988 tests passing** (8 new, 0 removed; up from 980). **Golden expectation 23 → 24**, one section
+  (`experiments`, three keys per row), **`balances` identical in every account in every book** — this
+  slice reads existing rows and writes none.
+- **Teeth-checked seven ways, no misses**: the tranche keyed on the experiment's rung (the real bug —
+  and it fails the golden run too, which is what the migration note claims), `0.0` instead of `None`,
+  summing every promotion, the earliest instead of the latest, the ratio inverted, the abstention
+  losing its stated reason, and `stage_tranche` regrowing a rung parameter.
+- **One existing test was quietly brittle and is fixed**: `test_an_unmeasurable_dimension_...`
+  asserted `len(report.unmeasured) == 1`, which made "a second dimension honestly abstained"
+  indistinguishable from "the sandbox note was lost". It now asserts the sandbox note.
+- **Hand-verified live** on both branches: an unpromoted Cell prints the abstention in words, and a
+  promoted one prints `0.00x (0 estimated / 30 allotted at the Cell's current stage, rung 7)` and
+  `8.33x` with the over-tranche line.
+- **Found and NOT fixed — logged as the new top `Next` item.** Live proposal parse compliance has
+  **collapsed from 7/8 (2026-08-06) to 1/8**. Five of seven failures are the model *flattening a
+  nested payload* — `hypothesis` at the top level instead of inside `experiment`. Same class as the
+  enum bug fixed on 2026-08-06: a value rendered in a shape that reads as a different type, since
+  `_prompt_schema` renders each payload as a long English string. The mock provider structurally
+  cannot catch it, so the suite and the golden run stay green while a live Cell's proposals are
+  discarded.
+- Next: that parse regression. It gates every future measurement of anything a Cell proposes,
+  including the numerator this slice just measured.

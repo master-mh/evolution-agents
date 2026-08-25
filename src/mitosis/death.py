@@ -146,9 +146,25 @@ def contribution(conn: sqlite3.Connection, cell: Cell) -> Contribution:
 
 
 def _budget_exhausted(conn: sqlite3.Connection, cell: Cell) -> Finding | None:
-    """§10.5 "stage budget exhausted". Stages belong to §25's promotion ladder
-    and do not exist, so this is the kernel-level form: the Cell holds nothing
-    and has nothing pending.
+    """§10.5 "stage budget exhausted", in its kernel-level form: the Cell holds
+    nothing and has nothing pending.
+
+    **This docstring used to say stages "do not exist", and that stopped being
+    true.** §25.1's ladder is real as of ADR-043/ADR-045 — every experiment
+    carries a `ladder_rung`, `stage_reached` derives a Cell's climb, and ADR-048
+    identified the *budget* half as `promotions.allocated_minor_units`, the same
+    number §13.1 divides by. So the stage budget this criterion is named for now
+    exists and this function still does not read it.
+
+    **That is deliberate, not leftover.** Killing a Cell for exceeding its stage
+    tranche would make §13.1's ratio lethal, and §10.5 is the section that
+    forbids exactly that shape of inference: "estimated negative EV alone must
+    not kill a Cell" without strong evidence *and* an independent Auditor
+    concurring. Overspending an allocation is a realised fact rather than an
+    estimate, so it is arguable — but it is its own argument, and it belongs
+    with an Auditor in the loop rather than smuggled in behind a rename. What
+    stays here is the criterion no one disputes: a Cell with no money and
+    nothing in flight cannot act again.
 
     `committed > 0` means an operation is still in flight, and killing then
     would strand its reservation — so a Cell mid-call is never exhausted, even
