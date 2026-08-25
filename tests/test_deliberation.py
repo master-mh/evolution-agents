@@ -43,8 +43,14 @@ def _valid_reply(**overrides) -> str:
         "predictions": [
             {"claim": "revenue >= 50 minor units", "probability": 0.4, "horizon_days": 7}
         ],
+        "experiment": {"hypothesis": "small firms will pay for an automated month-end close"},
     }
     payload.update(overrides)
+    # The schema pairs each kind with its own payload in both directions, so a
+    # test that overrides `kind` does not inherit a block that kind may not
+    # carry.
+    if payload["kind"] != "experiment":
+        payload.pop("experiment", None)
     return json.dumps(payload)
 
 

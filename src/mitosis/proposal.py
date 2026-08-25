@@ -56,6 +56,12 @@ MAX_PREDICTIONS = 5
 #: intent that needs a page to state is a plan, and the plan belongs in the
 #: rationale where a reviewer already reads it.
 MAX_INTENT_CHARS = 300
+#: Kept equal to `experiments.MAX_HYPOTHESIS_CHARS`, which is the limit that
+#: actually bites when the experiment is started. Defined here rather than
+#: imported because `experiments` sits above this module; a structural test
+#: asserts the two agree, so they cannot drift into a proposal that parses and
+#: then fails at the one moment a human has already approved it.
+MAX_HYPOTHESIS_CHARS = 2_000
 
 #: An artifact's body, carried on the proposal that produced it. Far larger than
 #: `MAX_RATIONALE_CHARS` and that asymmetry is deliberate: §15's caps exist
@@ -80,6 +86,12 @@ class ProposalError(Exception):
 
 
 class ProposalKind(StrEnum):
+    #: Ask to run an experiment (§0.2, §9.2, §25.1). §0.2 puts "experiments" in
+    #: the **mutable Cell** column, so what is tested is entirely the Cell's —
+    #: the kernel has no opinion on the hypothesis and never rewrites it. What
+    #: it gates is the *slot* (§9.2 caps simultaneous experiments colony-wide)
+    #: and the *rung* (§25.1), neither of which the Cell owns. Like the
+    #: requests below, an approved grant is what starts one.
     EXPERIMENT = "experiment"
     STRATEGY = "strategy"
     SPEND_REQUEST = "spend_request"
@@ -205,6 +217,38 @@ class ExternalActionSpec(BaseModel):
         return value.strip()
 
 
+class ExperimentSpec(BaseModel):
+    """What the Cell wants to test (§0.2, §9.2, §15.1, §25.1).
+
+    **There is no field for which rung it runs at, and that is the whole
+    design.** §25.1 opens with "no strategy moves directly from synthetic
+    success to autonomous commerce", and its rungs run from a flight simulator
+    to bounded autonomy over real money. A Cell that could name its own rung
+    could ask for rung 7 on its first wake and need only one tired operator to
+    get it. §23.5 already settled the general form of this — "no input to a
+    queueing decision may be a value the Cell supplies about itself" — so the
+    rung is *derived* from what the colony has actually promoted this Cell to,
+    and there is nowhere here to put a different answer.
+    `FORBIDDEN_RUNG_FIELDS` makes adding one trip an alarm.
+
+    **A hypothesis, not a summary.** `summary` already says what the Cell wants
+    to do. This is the claim being tested, which §10.5's coroner asks for by
+    name ("final hypotheses") and which is the thing an experiment can turn out
+    to be wrong about.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    hypothesis: str = Field(min_length=1, max_length=MAX_HYPOTHESIS_CHARS)
+
+    @field_validator("hypothesis")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("hypothesis must not be blank")
+        return value.strip()
+
+
 class ArtifactSpec(BaseModel):
     """A deliverable the Cell produced during this wake (§28 Phase 8, §20).
 
@@ -258,6 +302,8 @@ class Proposal(BaseModel):
     tool_request: ToolRequestSpec | None = None
     #: Present exactly when `kind` is EXTERNAL_ACTION — same rule, same reason.
     external_action: ExternalActionSpec | None = None
+    #: Present exactly when `kind` is EXPERIMENT — same rule, same reason.
+    experiment: ExperimentSpec | None = None
     #: What the Cell made this wake, if anything. Allowed alongside any kind
     #: except ABSTAIN: production is not gated (§28 Phase 8 gates *external
     #: use*), so a Cell may hand over a draft while proposing what to do next.
@@ -311,6 +357,26 @@ class Proposal(BaseModel):
             raise ValueError(
                 "only an external_action proposal may carry an external_action, not "
                 f"{self.kind.value}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _experiment_matches_kind(self) -> "Proposal":
+        """An experiment proposal carries a hypothesis, and nothing else does.
+
+        Both directions again, and the second is not symmetric with the two
+        above. `experiment` is the *permissive* kind — the one a reviewer reads
+        as "yes, go think about that" — so the risk runs the other way: a
+        hypothesis attached to a `tool_request` or an `external_action` would
+        let a Cell take a §9.2 slot on the back of an approval that was read as
+        being about a fetch or an email. `experiment_grants.start_from_grant`
+        refuses the pairing again at start time.
+        """
+        if self.kind is ProposalKind.EXPERIMENT and self.experiment is None:
+            raise ValueError("an experiment proposal must carry an experiment")
+        if self.kind is not ProposalKind.EXPERIMENT and self.experiment is not None:
+            raise ValueError(
+                f"only an experiment proposal may carry an experiment, not {self.kind.value}"
             )
         return self
 
@@ -380,6 +446,29 @@ FORBIDDEN_COUNTERPARTY_FIELDS: dict[str, str] = {
     "phone": "as above",
     "contact": "as above",
     "name": "as above — and the artifact's title is where a deliverable is named",
+}
+
+
+#: Field names an `ExperimentSpec` must never carry. A third tripwire in the
+#: style of the two above, guarding the third boundary: §0.3 keeps a Cell from
+#: defining its own *result*, §16.3 keeps it from naming a *person*, and this
+#: keeps it from choosing its own *rung*.
+#:
+#: §25.1's ladder is the colony's staged-autonomy mechanism, and a rung is a
+#: statement about how much of the real world a Cell may touch. `extra="forbid"`
+#: rejects all of these today; the dict exists so that
+#: `test_a_cell_cannot_choose_its_own_rung` fails the moment one becomes a real
+#: field. The rung is derived from `promotions` — see
+#: `experiment_grants.entitled_rung`.
+FORBIDDEN_RUNG_FIELDS: dict[str, str] = {
+    "ladder_rung": "§25.1's rung is derived from what the colony promoted, never asked for",
+    "rung": "as above, by the short name",
+    "stage": "as above; §13.1's 'current stage' is the same ladder",
+    "tranche": "§13.1's stage tranche is a budget the allocator sets, not the Cell",
+    "budget": "capital comes from an approved allocation (§25.2), never self-declared",
+    "capital": "as above",
+    "real_money": "§27.1's autonomy flags are the operator's, and default to off",
+    "autonomy": "as above — autonomy is granted tool by tool (§0.4), never claimed",
 }
 
 
@@ -478,6 +567,13 @@ def _prompt_schema() -> dict[str, Any]:
             '"artifact_id": "<optional, an artifact of yours that has been exported>"}. '
             "A PERSON performs the action by hand — nothing is sent automatically, "
             "and you do not choose who it goes to."
+        ),
+        "experiment": (
+            "REQUIRED only when kind is experiment, and forbidden otherwise: "
+            '{"hypothesis": "the claim this experiment would test"}. '
+            "State what could turn out to be false, not what you intend to do. "
+            "You do not choose what stage it runs at — that follows from what "
+            "the colony has already promoted you to."
         ),
         "artifact": (
             "OPTIONAL, and omitted unless you actually produced something this "

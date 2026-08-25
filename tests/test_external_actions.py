@@ -63,6 +63,14 @@ def _reply(**overrides) -> str:
         },
     }
     payload.update(overrides)
+    # The schema pairs each kind with its own payload in both directions, so a
+    # test that overrides `kind` gets the matching block rather than a
+    # validation error about one it never asked for.
+    for kind in ("experiment", "tool_request", "external_action"):
+        if payload["kind"] != kind:
+            payload.pop(kind, None)
+    if payload["kind"] == "experiment":
+        payload.setdefault("experiment", {"hypothesis": "there is demand at this price"})
     return json.dumps(payload)
 
 

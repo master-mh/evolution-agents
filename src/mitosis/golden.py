@@ -67,6 +67,7 @@ from . import (
     deliberation,
     db,
     events,
+    experiment_grants,
     experiments,
     external_actions,
     gateway,
@@ -711,7 +712,40 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           *reported* under; it moves no money and posts no entry. The RESOURCE
 #           charge is unchanged too — the extra input tokens move the recorded
 #           raw `quantity` and round to the same minor units.
-EXPECTATION_VERSION = 21
+#   21 -> 22 (wiring ProposalKind.EXPERIMENT; §0.2, §23, §25.1; ADR-045).
+#           Every line of this diff has one of three causes.
+#           (a) **The prompt grew, so every deliberation did.** `model_calls`
+#               and `resource_usage` gain ~160 input tokens on *all eleven*
+#               calls, because `proposal.response_schema_hint()` now describes
+#               the `experiment` block and that hint is in every system prompt.
+#               A diff that touched only some calls would mean the schema hint
+#               was not reaching every wake, which is itself the bug this shape
+#               would be hiding.
+#           (b) **One reply grew**: `GOLDEN_PROPOSAL_REPLY` carries a hypothesis
+#               now, so the first call's `output_tokens` moves 181 -> 230. Only
+#               that one, because only that one uses this reply.
+#           (c) **Step 19e exists** (see the scenario). `approval_requests`: the
+#               explorer's experiment request moves `pending` -> `approved` —
+#               it had been pending in every version since 5, because nothing
+#               could approve it into anything. `approval_grants`: total 9 -> 10
+#               and consumed 5 -> 6. `audit_event_types` gains
+#               `experiment_started_from_grant: 1`, with `experiment_started`
+#               2 -> 3 and `approval_granted` 9 -> 10.
+#           **`experiments` gains a third row, and its `status` is `running`.**
+#           Every experiment in every prior version ended terminal — concluded
+#           or abandoned — so the state §9.2's cap actually counts was the one
+#           an expectation had never pinned. Its `ladder_rung` is **1**: the
+#           proposal names no rung (`ExperimentSpec` has no field for one) and
+#           the explorer was never promoted, so §25.1's "no strategy moves
+#           directly from synthetic success to autonomous commerce" shows up
+#           here as a derived value rather than a rule someone checked. The
+#           scenario also asserts `entitled_rung == 7` for the Cell that *was*
+#           promoted, because a 1 that is always 1 would pin nothing.
+#           **`balances` is identical across every account in every book**, and
+#           USD_REAL is untouched. Starting an experiment opens no reservation
+#           and posts no entry; the extra input tokens move the recorded raw
+#           `quantity` and round to the same RESOURCE minor units.
+EXPECTATION_VERSION = 22
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -739,6 +773,9 @@ GOLDEN_PROPOSAL_REPLY = json.dumps(
                 "horizon_days": 30,
             }
         ],
+        "experiment": {
+            "hypothesis": "a cheap probe of the synthetic market returns a measurable signal"
+        },
     },
     sort_keys=True,
 )
@@ -1927,6 +1964,67 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         concluded_by="golden-operator",
         note="fixed scenario: the write-up earned 40 USD_SIM",
     )
+
+    # 19e. A Cell-proposed experiment, started from its approved grant (§0.2,
+    #      §23, §25.1; ADR-045). The explorer's `experiment` proposal has been
+    #      sitting in this scenario's queue **pending** since step 13, in every
+    #      expectation version from 5 onward — nothing could approve it into
+    #      anything, because `ProposalKind.EXPERIMENT` led nowhere. That pending
+    #      row *was* the dead socket, visible in the replay the whole time.
+    #
+    #      Two things are pinned that a happier step would miss:
+    #
+    #      (a) **The rung is derived, not requested.** The proposal says nothing
+    #          about a rung — `ExperimentSpec` has no field for one — and the
+    #          explorer has never been promoted, so this starts at rung 1, the
+    #          flight simulator. §25.1's "no strategy moves directly from
+    #          synthetic success to autonomous commerce" is therefore a property
+    #          of the schema here rather than a rule someone remembered to check.
+    #      (b) **The derivation reads `promotions`, and is asserted against a
+    #          Cell that has one.** Pinning rung 1 alone would pass against an
+    #          `entitled_rung` that returned the constant 1, which is exactly the
+    #          detector-that-cannot-fail trap. The auditor's child was promoted
+    #          to rung 7 at step 14, so the two together say the function reads
+    #          something.
+    experiment_request = conn.execute(
+        """
+        SELECT r.request_id AS request_id
+        FROM approval_requests r JOIN proposals p ON p.proposal_id = r.proposal_id
+        WHERE p.kind = 'experiment' AND r.status = 'pending'
+        """
+    ).fetchone()
+    if experiment_request is None:
+        raise AssertionError(
+            "the explorer's experiment proposal should still be awaiting a decision"
+        )
+    experiment_grant = approval.approve(
+        conn,
+        request_id=experiment_request["request_id"],
+        decided_by="golden-operator",
+        reason="fixed scenario: a cheap simulator probe is worth a slot",
+    )
+    proposed_experiment = experiment_grants.start_from_grant(
+        conn, grant_id=experiment_grant.grant_id, started_by="golden-operator"
+    )
+    if proposed_experiment.ladder_rung != experiment_grants.FLIGHT_SIMULATOR_RUNG:
+        raise AssertionError(
+            "§25.1: an unpromoted Cell's own experiment starts at the flight "
+            f"simulator, got rung {proposed_experiment.ladder_rung}"
+        )
+    if proposed_experiment.proposal_id is None:
+        raise AssertionError(
+            "a Cell-proposed experiment must record which proposal asked for it — "
+            "migration 0026 has had the foreign key since ADR-043"
+        )
+    if experiment_grants.entitled_rung(conn, auditor_child.cell_id) != 7:
+        raise AssertionError(
+            "§25.2: a Cell promoted to rung 7 is entitled to rung 7 — an "
+            "`entitled_rung` that ignored `promotions` would still pass the rung-1 "
+            "assertion above"
+        )
+    #      Left **running** on purpose. Every experiment in prior versions ended
+    #      terminal (concluded or abandoned), so `running` — the state §9.2's cap
+    #      actually counts — was the one an expectation never pinned.
 
     # 20. Simulated clock.
     clock.advance(conn, timedelta(days=7))

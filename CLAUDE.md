@@ -31,7 +31,13 @@ single highest-value habit in this repo. Some precedents:
   register takes threshold claims ("revenue >= 50"), never point estimates.
 - **§0.3** — "a Cell may *explain* a result; it may never *define* the canonical result" — is why
   the proposal schema has no field for what a Cell earned or achieved (`proposal.py`).
-- **§25.1**'s promotion ladder is why the agent loop proposes but cannot act.
+- **§25.1**'s promotion ladder is why the agent loop proposes but cannot act — and why a Cell's
+  proposed experiment gets its rung from `promotions` rather than from the proposal: a field a Cell
+  can fill is a field it will optimise (§23.5), so the schema gives the answer nowhere to live
+  (`experiment_grants.py`).
+- **§0.2**'s two-column table is load-bearing, not scene-setting. "Experiments" sits in the
+  *mutable Cell* column, which is why the kernel gates an experiment's slot and rung and has no
+  opinion whatever on its hypothesis.
 - **§16.3** makes "customer identity" non-inheritable, so the external-action registry stores a
   salted *hash* of a counterparty and never the counterparty — a `customers` table is the obvious
   design and the one the clause warns about (`channel_registry.py`). Dedupe needs equality, not

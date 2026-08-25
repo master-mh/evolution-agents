@@ -549,6 +549,24 @@
   in every account in every book**. Teeth-checked twelve ways; one test could not have failed and
   was rewritten to conclude the experiment mid-call. **The live run found the deliberation half** —
   a report reading "Model calls: 0" for a Cell that had just deliberated under the experiment.
+- [x] **`ProposalKind.EXPERIMENT` wired — DONE** (2026-08-25), ADR-045. **No migration.**
+  `experiment_grants.py` + an `ExperimentSpec` payload. The kind existed since migration 0013 and
+  appeared **nowhere else in `src/`**: a Cell could propose an experiment, it reached §23's queue,
+  an operator could approve it, and the grant sat inert — every experiment in the colony was one a
+  person typed by hand, and `experiments.proposal_id` could never be filled. The golden run had
+  been carrying a permanently `pending` experiment request since expectation version 5.
+  **§0.2's table decides what the kernel may judge**: it puts "experiments" in the *mutable Cell*
+  column, so the hypothesis is the Cell's and nothing reads or rewrites it; what the kernel gates
+  is the §9.2 slot and the §25.1 rung. **The rung has nowhere to be named** — `ExperimentSpec` has
+  no field for one (`FORBIDDEN_RUNG_FIELDS`, the third tripwire in `proposal.py`) and
+  `entitled_rung` reads `promotions`, so §25.1's "no strategy moves directly from synthetic success
+  to autonomous commerce" is a property of the schema. **"Reached" and "entitled to" are different
+  questions over the same two tables**: `stage_reached` unions promotions with experiments and
+  `entitled_rung` deliberately does not, or ADR-043's recorded-but-unenforced operator `--rung`
+  would become a permanent ratchet. The consumer is a new module because `approval` imports
+  `deliberation` imports `experiments` — the registry/executor split, made a third time. 949 tests
+  (18 new); golden expectation 21 → 22 with **balances identical in every book**, pinning a
+  `running` experiment for the first time. Teeth-checked twelve ways; hand-verified end to end.
 - [ ] §24 gateway features left out of the slice: routing by task type (§24.3), controlled retries (a retry after `execution_unknown` risks double-billing), model competition, and reacting to provider drift as a §8.4 regime change (drift is *recorded* — `resolved_model`/`api_version` — but nothing consumes it). **Structured-output validation was struck from this list** (2026-08-22): it exists, at the deliberation layer rather than the gateway — `proposal.parse` is strict, `extra="forbid"`, with `FORBIDDEN_FIELD_SENSE` as a schema tripwire. Anything added at the gateway must not duplicate it. *Disproved by:* `proposal.parse`.
 - [ ] Remaining CLI — **narrowed 2026-08-22** from `list-cells/show-cell/kill-cell/ledger/verify-ledger`, most of which had already landed among the CLI's 42 verbs. Still genuinely absent: **`list-cells`** (`status` prints counts and per-status/per-type tallies, but no roster) and **`ledger`** (no transaction browser). Struck: `verify-ledger` (`status` prints per-book conservation and `ledger.verify_chain`; `calibration` prints `prediction.verify_chain`), `show-cell` (substantially covered by `cell-fitness`), and `kill-cell` (`reap` kills on objective criteria — a *forced* operator kill is a §10.5 question, not an additive CLI verb, and should be argued before it is built). Purely additive, no blockers. *Disproved by:* `mitosis --help`.
 - [x] **A dead Cell's estate — DONE** (2026-08-22), ADR-028. `kill()` now releases the dead Cell's

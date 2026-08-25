@@ -1993,3 +1993,87 @@ from amendment ID to spec location is complete in one place:
   - Golden expectation 20 → 21. **`balances` is identical in every account in every book** and
     USD_REAL is untouched: attribution decides which experiment a cost is *reported* under; it moves
     no money and posts no entry.
+
+---
+
+## ADR-045: A Cell proposes what to test; the colony decides at which rung, and reads the answer out of its own promotions
+
+- **Status:** Accepted
+- **Spec ref:** §0.2, §0.3, §0.4, §9.2, §13.1, §15.1, §23.1, §23.3, §23.5, §25.1, §25.2, §28;
+  Charter C8; ADR-027, ADR-029, ADR-034, ADR-036, ADR-039, ADR-043, ADR-044
+- **Context:** `ProposalKind.EXPERIMENT` has existed since migration 0013 and appeared **nowhere
+  else in `src/`**. A Cell could propose an experiment, the proposal reached §23's queue, an
+  operator could approve it — and the grant sat inert, because `experiments.start` was reachable
+  only from the operator's own CLI verb. Every experiment in the colony was one a person typed out
+  by hand, and `experiments.proposal_id`, a foreign key ADR-043 added in migration 0026 for exactly
+  this, could never be filled. The golden run had been carrying the evidence since expectation
+  version 5: one `experiment` approval request, permanently `pending`.
+- **Decision: §0.2's two-column table decides what this may and may not judge.**
+  - **The hypothesis is the Cell's; the slot and the rung are not.** §0.2 puts "experiments" in the
+    **mutable Cell** column beside prompts, strategy and market hypothesis, and puts "capital +
+    population allocator" and "permissions + approvals" in the immutable kernel. So nothing in
+    `experiment_grants` reads, validates, scores or rewrites a hypothesis. What it gates is the §9.2
+    slot (a colony-wide scarce resource) and the §25.1 rung (staged autonomy). An operator approving
+    one of these approves a cost and a stage, never a scientific opinion.
+  - **The rung is derived from `promotions`, and `ExperimentSpec` has no field for one.** §25.1 opens
+    with "no strategy moves directly from synthetic success to autonomous commerce". A Cell that
+    could name its own rung could ask for rung 7 on its first wake and need one distracted operator
+    to get it. §23.5 already generalised this — "the approval queue is itself part of the environment
+    and will be optimised against by Cells" — so the schema gives the answer nowhere to live, and
+    `FORBIDDEN_RUNG_FIELDS` makes adding one trip an alarm. Floor is rung 1, the flight simulator,
+    which by the ladder's own definition touches nothing outside the colony.
+  - **"Reached" and "entitled to" are different questions over the same two tables.**
+    `experiments.stage_reached` maxes over `promotions.rung` *and* `experiments.ladder_rung`, because
+    a Cell that ran rung-1 work has genuinely reached rung 1. `entitled_rung` reads `promotions`
+    only. Running at a rung is something that happened; being promoted to one is a decision a person
+    made against §25.2 evidence. Unioning them would turn ADR-043's deliberately
+    recorded-but-unenforced operator flag (`start-experiment --rung 7`) into a permanent ratchet on
+    what the Cell may then ask for by itself.
+  - **The consumer is a new module, because the layering forbids the two obvious homes.** `approval`
+    imports `deliberation`, which imports `experiments`, so `experiments` cannot import `approval` —
+    the grant-consuming half has to sit above. That is the registry/executor split this kernel
+    already makes twice (`tool_registry`/`tools`, `channel_registry`/`external_actions`): everything
+    that reads or refuses stays low enough for `context`, and the part that spends a grant sits above
+    `approval`.
+  - **A refusal must not spend the approval.** §9.2's cap and §15.1's one-running rule are timing,
+    not verdicts, so the consumption and the start share one transaction and both roll back. A
+    briefly-full colony that destroyed approvals a person had already given would send the Cell back
+    through propose-review-approve for no reason but the clock.
+  - **One CLI verb, two provenances.** `start-experiment` takes either `--grant` or
+    `--cell/--hypothesis`; the experiment that results is the same object and only the asker differs.
+    `--rung` with `--grant` is refused outright rather than ignored, because accepting it silently
+    would teach an operator the rung is theirs to set on this path.
+- **What it displaced.**
+  - **A `ladder_rung` on the proposal**, which is the obvious schema, is what a model would expect to
+    fill in, and is how `estimated_cost_minor_units` already works. Cost is recorded and
+    inert (ADR-043); a rung would have been load-bearing, and that asymmetry is the whole decision.
+  - **Making the `experiment` payload optional.** Requiring it broke 71 tests, all of them fixtures
+    using `experiment` as the neutral kind — a real signal, and the wrong one to obey. An experiment
+    that cannot state what it is testing is a summary, and §10.5's coroner asks for "final
+    hypotheses" by name.
+  - **Putting the consumer in `promotion.py`**, which already imports `approval` and already owns
+    §25.1's ladder. Rejected: `promotion.allocate` is about capital, and an experiment grant
+    authorises no spending at all.
+  - **Auto-starting on approval.** The queue records authority; it has never spent it (ADR-027), and
+    a grant that started something the moment a person clicked approve would erase the distinction.
+  - **A dead-Cell check in the new module.** `experiments._start_locked` already refuses one inside
+    the same transaction with a better message. ADR-039's "second, weaker copy" applies to guards as
+    much as to gates.
+- **Consequences:**
+  - **`test_only_the_promotion_module_consumes_a_grant` is loosened a third time**, which is the
+    friction it exists to create. The argument is that this is the only one of the four consumers
+    that *provably cannot climb §25.1's ladder*: `promotion` hands over capital, `tools` runs a
+    fetch, `external_actions` spends a person's attention — this one writes a row and takes a §9.2
+    slot, moves no money, opens no reservation, and stamps a rung it read out of `promotions`. The
+    scheduler is barred from it for a different reason than the other three: an experiment started on
+    a timer spends nothing, but it consumes a §9.2 slot, and a colony that ratcheted itself to its
+    own cap unattended would refuse every experiment a person then wanted to run.
+  - The §2.6 report (ADR-043) and the cost attribution (ADR-044) now apply to experiments the colony
+    chose for itself, not only to ones an operator typed. `experiments.proposal_id` is populated for
+    the first time.
+  - `startable-experiments` shows the rung before anything starts, because the rung is the one thing
+    about the experiment that is *not* in the proposal the operator reviewed.
+  - Golden expectation 21 → 22. Every deliberation gains ~160 input tokens — the prompt's schema hint
+    now describes the `experiment` block, and it is in every system prompt. **`balances` is identical
+    in every account in every book**: starting an experiment opens no reservation and posts no entry.
+    The snapshot pins a `running` experiment for the first time, which is the state §9.2 counts.

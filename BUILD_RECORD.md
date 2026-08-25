@@ -7,86 +7,85 @@ account fix, the prediction register, death criteria, §9.3 displacement, the ag
 scheduler, the §23 approval queue, the dead-Cell estate, the rung-7 promotion path, the §25.2
 read-back, §9.2's birth cap, Auditor Cells, genome content, the tool surface, the artifact
 store, the external-action registry, the §27.1 autonomy decisions, grant regeneration, the
-expiry sweep, establishable rights, scheduler liveness, and the experiment,
+expiry sweep, establishable rights, scheduler liveness, the experiment, and experiment attribution,
 2026-07-21 through 2026-08-24):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-25 — Attribution: the column everything asked for, and never needed
+## 2026-08-25 — The proposal kind that led nowhere, and the rung a Cell may not name
 
-No migration. `experiments.attribution_for` + threading through `tools`, `external_actions` and
-`deliberation` (ADR-044). The slice was scheduled as "add `resource_usage.experiment_id`" —
-BUILD_RECORD said it, PRIORITIES said it, `golden.py`'s version-20 note said it, and
-`experiments.py`'s own docstring said it. All four were wrong about the mechanism.
+`experiment_grants.py` + an `ExperimentSpec` payload (ADR-045). No migration.
+`ProposalKind.EXPERIMENT` has existed since migration 0013 and appeared **nowhere else in `src/`**.
+A Cell could propose an experiment, it reached §23's queue, an operator could approve it — and the
+grant sat inert, because `experiments.start` was reachable only from the operator's own CLI verb.
+Every experiment in the colony was one a person typed by hand, and `experiments.proposal_id`, the
+foreign key ADR-043 added for exactly this, could never be filled.
 
-### The join was always there; the stamp was not
+**The golden run had been carrying the evidence since expectation version 5**: one `experiment`
+approval request, permanently `pending`, in every replay for four months.
 
-`resource_usage.reservation_id` is `NOT NULL REFERENCES reservations(reservation_id)` — Amendment
-A6 requires precisely that — and `reservations.experiment_id` has existed since **migration 0001**.
-Every metered row was one join from its experiment the whole time. What was missing was the stamp:
-`gateway` threaded `experiment_id` into its reservations and `tools`, `external_actions` and
-`deliberation` did not. Adding the column would have worked, and would have created a second answer
-to a question the reservation already owns — a usage row stamped with one experiment hanging off a
-reservation stamped with another, with nothing in the schema preferring either. That is §2.5's
-cached-derivation trap reached from the metering side, so
-`test_resource_usage_has_no_experiment_id_column` now refuses it the way
-`test_there_is_no_experiment_results_table` refuses the other one.
+### §0.2's table decides what the kernel may judge
 
-### The visible bug was the abstention; the real one was the undercount
+Its two columns put **"experiments" in the mutable Cell side**, beside prompts, strategy and market
+hypothesis — and "capital + population allocator" and "permissions + approvals" on the immutable
+kernel side. So nothing in the new module reads, validates or rewrites a hypothesis: what is tested
+is the Cell's business. What the kernel gates is the **§9.2 slot** (a colony-wide scarce resource)
+and the **§25.1 rung**. An operator approving one of these approves a cost and a stage, never a
+scientific opinion.
 
-`human_minutes` reported `None` with a stated reason, which announces itself. **`resource_spend_
-minor_units` — §2.6's shadow-cost line — reads the same reservations through the ledger and was
-reporting a definite figure with every tool call and every human minute missing from it.** And
-`deliberation` never named its experiment to the gateway at all, so §2.6's *real cash consumed* was
-0 for any experiment whose Cell simply ran — the headline number on a paid provider, and the least
-visible failure, because 0 is plausible for work that has not spent yet. An abstaining dimension is
-loud. An undercounting one sits next to it looking identical.
+### The rung has nowhere to be named
 
-### Derived, never supplied
+§25.1 opens with "no strategy moves directly from synthetic success to autonomous commerce", and a
+Cell that could name its own rung could ask for rung 7 on its first wake and need one distracted
+operator to get it. §23.5 already generalised the problem — the queue "will be optimised against by
+Cells" — so `ExperimentSpec` has **no rung field at all** (`FORBIDDEN_RUNG_FIELDS` is the third
+tripwire in `proposal.py`, after §0.3's and §16.3's) and `entitled_rung` reads the answer out of
+`promotions`. §25.1 becomes a property of the schema rather than a rule someone remembered to check.
 
-§15.1 gives a Cell one current experiment, so which experiment bears a cost is already determined.
-A parameter would be a place to put a *different* one — §0.3 reached from the expense side, since a
-Cell that could name the experiment could make its own look cheap by naming another. So
-`attribution_for` is the single seam, an `inspect.signature` test asserts no metering entry point
-grows the parameter, and `None` stays a result rather than a gap. Two timing rules fell out:
-external-action labour is stamped **at claim, not at completion** (a person may answer days later,
-by which time the Cell may be on another experiment or dead), and a deliberation **resolves it once
-and carries it** to both the gateway call and the predictions it registers, because ADR-022 puts
-those on opposite sides of a transaction boundary.
+**"Reached" and "entitled to" turn out to be different questions over the same two tables.**
+`experiments.stage_reached` maxes over `promotions.rung` *and* `experiments.ladder_rung`, because a
+Cell that ran rung-1 work has genuinely reached rung 1. `entitled_rung` deliberately does not:
+unioning them would turn ADR-043's recorded-but-unenforced `start-experiment --rung 7` into a
+permanent ratchet on what the Cell may then ask for by itself.
 
-### §1.1 wanted the number the obvious sum would have hidden
+### Where it had to live
 
-`external_actions` bills a Cell up to its channel ceiling and records the overflow as subsidy, so
-`resource_usage.quantity` is the *billed* minutes. Summing it alone would report the colony's human
-cost as **smaller the more of it a person absorbed unpaid** — the exact quantity §1.1 subtracts to
-"expose hidden founder labour", hidden by the report built to expose it. The report carries
-billed + subsidised, with the subsidy printed beside it.
+`approval` imports `deliberation`, which imports `experiments` — so `experiments` **cannot** import
+`approval`, and the consumer cannot live there. That is the registry/executor split this kernel
+already makes twice: everything that reads or refuses stays low enough for `context`, and the part
+that spends a grant sits above `approval`.
 
 ### Verification
 
-- **931 tests passing** (15 new, 0 removed; up from 916). **Golden expectation 20 → 21**, with
-  **`balances` identical in every account in every book** and USD_REAL untouched — attribution
-  decides which experiment a cost is *reported* under; it posts no entry. `human_minutes` moves
-  `null → 0` on one experiment and `null → 58` on the other; the `0` is now a *measurement* rather
-  than a decline. `resource_spend` `0 → 550`. Four deliberations gain 1–3 input tokens, all from
-  one cause: §15's experiment section renders the RESOURCE figure to the Cell, which had always
-  read `0`.
-- **Teeth-checked twelve ways**, each failing its named test: both metering paths unstamped (the
-  state before this slice), the wake unstamped, a Cell's forecasts back to `experiment_id=None`,
-  human labour summing only billed minutes, the report abstaining again, attribution ignoring
-  whether the experiment still runs, attribution read at completion instead of claim, the CLI
-  accepting any string for `--experiment`, a metering entry point growing the parameter, the column
-  being added, and the attribution re-derived instead of carried.
-- **One test could not have failed and was rewritten.** "The call and its forecasts share one
-  experiment" passes trivially on a quiet run — a re-derivation agrees too. It now uses a provider
-  that concludes the experiment *while the call is in flight*, the only moment the two designs
-  differ, and the mutation is caught.
-- **Hand-verified end to end on a live colony**: experiment started, a wake deliberating under it,
-  an approved external action claimed and completed at 47 human minutes against email's 30-minute
-  ceiling — the report showing 2 model calls, 47 minutes with 17 subsidised, 304 RESOURCE, and the
-  Cell's *own* auto-registered forecast in the reality gap. A bogus `--experiment` is refused.
-- **The live run is what found the deliberation half.** The first report read "Model calls: 0" for
-  a Cell that had just deliberated under the experiment, which no test was asking about.
-- Next: `revenue.record_revenue` refuses a re-record that only adds an experiment (correct per
-  idempotency), so an operator attributing revenue late needs §3.6's adjustment path — logged, not
-  built. Kernel-internal validation of a dangling `experiment_id` needs a seam and is in
-  FUTURE_BUILD_HOOKS.
+- **949 tests passing** (18 new, 0 removed; up from 931). **Golden expectation 21 → 22**, with
+  **`balances` identical in every account in every book** — starting an experiment opens no
+  reservation and posts no entry. Every deliberation gains ~160 input tokens, one cause: the
+  prompt's schema hint now describes the `experiment` block and it is in every system prompt. The
+  snapshot pins a **`running`** experiment for the first time — the state §9.2's cap actually
+  counts, and the one every prior version missed because all its experiments ended terminal.
+- **`test_only_the_promotion_module_consumes_a_grant` loosened a third time**, which is the friction
+  it exists to create. The argument: this is the only one of the four consumers that *provably
+  cannot climb the ladder* — `promotion` hands over capital, `tools` runs a fetch,
+  `external_actions` spends a person's attention; this one writes a row and stamps a rung it read
+  from `promotions`. The scheduler is barred for a different reason than the other three: an
+  experiment on a timer spends nothing but consumes a §9.2 slot, and a colony that ratcheted itself
+  to its own cap unattended would refuse every experiment a person then wanted to run.
+- **Teeth-checked twelve ways**, each failing its named test: `entitled_rung` returning a constant,
+  `entitled_rung` unioning experiments the way `stage_reached` does, the grant consumed outside the
+  rollback, no kind check, a consumed grant reusable, an expired grant still acting,
+  `startable_grants` listing what would refuse, `ExperimentSpec` growing a `ladder_rung`, both
+  directions of the payload/kind rule, the hypothesis taken from `summary` instead of the frozen
+  payload, and `proposal_id` left null.
+- **Requiring the payload broke 71 tests**, all fixtures using `experiment` as the neutral kind. A
+  real signal and the wrong one to obey: an experiment that cannot state what it is testing is a
+  summary, and §10.5's coroner asks for "final hypotheses" by name. The fixtures now pair each kind
+  with its own payload.
+- **Hand-verified end to end on a live colony**: a Cell proposed an experiment, the kernel assessed
+  MEDIUM against its claimed LOW (§23.5), an operator approved it, `startable-experiments` showed
+  the rung *before* anything started, and the grant started it at rung 1. A second start on the same
+  grant is refused; `--rung` with `--grant` is refused outright rather than ignored.
+- **A guard was removed, not added**: the new module's dead-Cell check shadowed a better message from
+  `experiments._start_locked` inside the same transaction. ADR-039's "second, weaker copy" applies to
+  guards as much as to gates.
+- Next: `ProposalKind.STRATEGY` and `SPEND_REQUEST`-adjacent kinds are now the only ones whose
+  approval leads nowhere in particular; and §13.1's `normalised_cost` still has no stage tranche to
+  divide by, which is the next thing an experiment's rung could be made to mean.

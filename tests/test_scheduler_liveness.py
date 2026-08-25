@@ -21,6 +21,7 @@ from mitosis.models import Book, EntrySpec
 REPLY = json.dumps({
     "kind": "experiment", "summary": "probe", "rationale": "none",
     "risk_tier": "LOW", "estimated_cost_minor_units": 0, "predictions": [],
+    "experiment": {"hypothesis": "the probe finds a signal"},
 })
 
 

@@ -29,6 +29,7 @@ from . import (
     deliberation,
     displacement,
     events,
+    experiment_grants,
     experiments,
     external_actions,
     gateway,
@@ -1077,28 +1078,79 @@ def cmd_set_autonomy(args: argparse.Namespace) -> None:
 
 
 def cmd_start_experiment(args: argparse.Namespace) -> None:
-    """§9.2/§25.1 — begin an experiment (ADR-043)."""
+    """§9.2/§25.1 — begin an experiment (ADR-043), by hand or from an approved
+    proposal (ADR-045).
+
+    Two provenances for one act, deliberately one verb: the experiment that
+    results is the same object either way, and the difference is who asked. The
+    Cell-proposed path takes no `--rung` — that is derived from what the colony
+    promoted the Cell to, and offering the flag would suggest otherwise.
+    """
     _require_existing_db(args.db)
+    if args.grant:
+        if args.cell or args.hypothesis:
+            raise CliError(
+                "--grant already names the cell and the hypothesis (from the approved "
+                "proposal); drop --cell/--hypothesis"
+            )
+        if args.rung is not None:
+            raise CliError(
+                "--rung cannot be given with --grant: §25.1's rung for a Cell-proposed "
+                "experiment is derived from its promotions, never chosen (§23.5)"
+            )
+    elif not (args.cell and args.hypothesis):
+        raise CliError("give either --grant, or both --cell and --hypothesis")
+
     conn = db.connect_and_migrate(args.db)
     try:
-        experiment = experiments.start(
-            conn,
-            cell_id=args.cell,
-            hypothesis=args.hypothesis,
-            expected_cost_minor_units=args.expected_cost,
-            ladder_rung=args.rung,
-        )
-    except experiments.ExperimentError as exc:
+        if args.grant:
+            experiment = experiment_grants.start_from_grant(
+                conn, grant_id=args.grant, started_by=args.started_by
+            )
+        else:
+            experiment = experiments.start(
+                conn,
+                cell_id=args.cell,
+                hypothesis=args.hypothesis,
+                expected_cost_minor_units=args.expected_cost,
+                ladder_rung=args.rung if args.rung is not None else 1,
+            )
+    except (experiments.ExperimentError, experiment_grants.ExperimentGrantError) as exc:
         raise CliError(str(exc)) from exc
     print(f"Experiment {experiment.experiment_id}")
     print(f"  cell:       {experiment.cell_id}")
     print(f"  hypothesis: {experiment.hypothesis}")
     print(f"  §25.1 rung: {experiment.ladder_rung} ({experiment.rung_name})")
+    if args.grant:
+        print(f"  from:       proposal {experiment.proposal_id} (grant {args.grant})")
+        print("  The rung is what this Cell has been promoted to, not what it asked for.")
     limits = population.get_limits(conn)
     print(f"  running:    {experiments.running_count(conn)}"
           f"/{limits.max_parallel_experiments} (§9.2)")
     if experiment.ladder_rung == 1:
         print("  Rung 1 is the flight simulator — no real money should reach this.")
+    conn.close()
+
+
+def cmd_startable_experiments(args: argparse.Namespace) -> None:
+    """Approved experiment proposals waiting to be started, and the rung each
+    would run at (ADR-045)."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    startable = experiment_grants.startable_grants(conn)
+    if not startable:
+        print("No approved experiment proposals are ready to start.")
+        print("  `mitosis approvals` shows what is still waiting on a decision.")
+        conn.close()
+        return
+    print(f"{len(startable)} approved experiment proposal(s) ready to start:")
+    for item in startable:
+        print(f"  grant {item['grant_id']}")
+        print(f"      cell:  {item['cell_id']}")
+        print(f"      asks:  {item['summary']}")
+        print(f"      would run at rung {item['ladder_rung']} ({item['rung_name']}) "
+              f"— derived from its promotions, not requested")
+        print(f"      expires: {item['expires_at_utc']}")
     conn.close()
 
 
@@ -2867,17 +2919,36 @@ def build_parser() -> argparse.ArgumentParser:
     start_exp_parser = subparsers.add_parser(
         "start-experiment", help="begin an experiment (SPEC.md §9.2, §25.1)"
     )
-    start_exp_parser.add_argument("--cell", required=True)
-    start_exp_parser.add_argument("--hypothesis", required=True, help="what is being tested")
     start_exp_parser.add_argument(
-        "--rung", type=int, default=1,
-        help="§25.1 ladder rung 1-9 (default 1, the flight simulator)",
+        "--grant", default=None,
+        help="approved experiment grant to start from (§23, §25.1). The cell, the "
+             "hypothesis and the rung all come from the approved proposal and the "
+             "Cell's promotions — give this OR --cell/--hypothesis",
+    )
+    start_exp_parser.add_argument("--cell", default=None)
+    start_exp_parser.add_argument(
+        "--hypothesis", default=None, help="what is being tested"
+    )
+    start_exp_parser.add_argument(
+        "--rung", type=int, default=None,
+        help="§25.1 ladder rung 1-9 (default 1, the flight simulator). Operator path "
+             "only: a Cell never chooses its own rung",
     )
     start_exp_parser.add_argument(
         "--expected-cost", type=int, default=0, dest="expected_cost",
         help="§13.1's expected cost, in minor units. Recorded, not enforced",
     )
+    start_exp_parser.add_argument(
+        "--started-by", default="operator", dest="started_by",
+        help="who started it, recorded in the audit log",
+    )
     start_exp_parser.set_defaults(func=cmd_start_experiment)
+
+    startable_parser = subparsers.add_parser(
+        "startable-experiments",
+        help="approved experiment proposals ready to start, and the rung each would run at",
+    )
+    startable_parser.set_defaults(func=cmd_startable_experiments)
 
     conclude_exp_parser = subparsers.add_parser(
         "conclude-experiment", help="end an experiment and free its §9.2 slot"

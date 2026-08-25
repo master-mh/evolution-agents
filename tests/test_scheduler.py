@@ -25,6 +25,7 @@ REPLY = json.dumps({
     "kind": "experiment", "summary": "probe the market",
     "rationale": "no realised record yet", "risk_tier": "LOW",
     "estimated_cost_minor_units": 0, "predictions": [],
+    "experiment": {"hypothesis": "the market responds to a cheap probe"},
 })
 
 

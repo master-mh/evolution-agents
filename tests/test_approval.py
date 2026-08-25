@@ -40,8 +40,17 @@ def _reply(**overrides) -> str:
         "risk_tier": "LOW",
         "estimated_cost_minor_units": 5,
         "predictions": [],
+        "experiment": {"hypothesis": "there is demand at this price point"},
     }
     payload.update(overrides)
+    # The schema pairs each kind with its own payload in both directions, so a
+    # test that overrides `kind` gets the matching block rather than a
+    # validation error about one it never asked for.
+    for kind in ("experiment", "tool_request", "external_action"):
+        if payload["kind"] != kind:
+            payload.pop(kind, None)
+    if payload["kind"] == "experiment":
+        payload.setdefault("experiment", {"hypothesis": "there is demand at this price"})
     return json.dumps(payload)
 
 
@@ -705,13 +714,24 @@ def test_only_the_promotion_module_consumes_a_grant():
     §28 Phase 8 names — and not the 8 that reaching a real counterparty
     superficially suggests.
 
-    What it still forbids is the *next* unargued step. Only these three may
-    write a grant's `consumed_at_utc`, and nothing scheduled may reach any of
-    them — the scheduler must not import them, or "a human runs each execution"
-    quietly becomes rung 9's bounded autonomy.
+    **The fourth is ADR-045's `experiment_grants.py`, and it is the only one of
+    the four that provably cannot climb.** The other three each hand a Cell a
+    capability at the moment the grant is consumed: capital, a fetch, a person's
+    attention. This one writes a row in `experiments` and takes a §9.2 slot. No
+    money moves, no reservation opens, nothing leaves the machine — and the
+    §25.1 rung it stamps is *read from `promotions`*, so it cannot grant a rung
+    the colony had not already granted. It is structurally incapable of being
+    the unargued step this test exists to catch, which is exactly why it is
+    still listed here rather than exempted: the list is the record of who may,
+    not a judgement about who is dangerous.
+
+    What it still forbids is the *next* unargued step. Only these four may write
+    a grant's `consumed_at_utc`, and nothing scheduled may reach any of them —
+    the scheduler must not import them, or "a human runs each execution" quietly
+    becomes rung 9's bounded autonomy.
     """
     source_dir = Path(__file__).resolve().parents[1] / "src" / "mitosis"
-    allowed = {"promotion.py", "tools.py", "external_actions.py"}
+    allowed = {"promotion.py", "tools.py", "external_actions.py", "experiment_grants.py"}
 
     consumers = []
     for path in sorted(source_dir.glob("*.py")):
@@ -746,6 +766,16 @@ def test_only_the_promotion_module_consumes_a_grant():
     assert "external_actions" not in scheduler_source, (
         "scheduler.py must not reach the external-action registry — §28 Phase 8 "
         "requires every external action be taken by a person"
+    )
+    # And for the fourth consumer, where the worry is different in kind. An
+    # experiment started on a timer spends no money and touches nothing — it
+    # takes a §9.2 slot. A scheduler that could start them would let the colony
+    # ratchet itself to its own cap unattended and refuse every experiment a
+    # person then wanted to run, which is the leak ADR-043 already had to fix
+    # once on the death path.
+    assert "experiment_grants" not in scheduler_source, (
+        "scheduler.py must not start experiments — a timer that consumes §9.2 slots "
+        "exhausts the colony's capacity with nobody watching"
     )
 
 

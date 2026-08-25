@@ -973,3 +973,29 @@ actually queued for building — this file is memory, not a backlog to work thro
   prediction half of ADR-044 rests on `tests/test_deliberation.py` alone. The counts are now pinned
   so a scenario change surfaces it; a scenario that proposed one forecast under an experiment would
   make the golden run cover the whole report.
+
+<!-- 2026-08-25, ADR-045 (wiring ProposalKind.EXPERIMENT) -->
+
+- **`ProposalKind.STRATEGY` is now the last kind whose approval leads nowhere.** `spend_request`
+  allocates (ADR-029), `tool_request` runs a tool (ADR-034), `external_action` claims a channel
+  (ADR-036), `experiment` starts one (ADR-045), `abstain` is deliberately never queued. A strategy
+  proposal is reviewed, approved, granted — and the grant expires unconsumed. That may be correct
+  (a strategy is a statement, not an act) but nothing anywhere says so, which is how
+  `ProposalKind.EXPERIMENT` sat for four months. **Decide it explicitly**: either a consumer, or a
+  comment on the enum saying why there will never be one.
+- **§13.1's `normalised_cost = expected experiment cost / current stage tranche` still has no
+  tranche.** ADR-045 makes the rung a real, derived property of every Cell-proposed experiment, so
+  the numerator and the *stage* now both exist; a "tranche" would be a budget attached to a rung.
+  This is the natural next thing an experiment's rung could be made to *mean* rather than merely
+  record — and the first design where the rung would become load-bearing, which deserves its own
+  argument (ADR-043 deliberately kept `expected_cost_minor_units` inert for exactly that reason).
+- **An experiment concluded by its own Cell is still the Cell's word.** `experiments.conclude`
+  accepts any `concluded_by`, and ADR-043 argued that ending an experiment is declaring it
+  *finished*, not declaring that it *worked*. Now that a Cell can start one through a grant, the
+  symmetric question is whether it should be able to end one without a person — currently it can,
+  through the CLI, only because a human runs the verb. Worth stating before anything automates it.
+- **The `experiment` payload requirement broke 71 test fixtures on landing**, all of them using
+  `experiment` as the neutral kind for a test about something else. The fixtures now pair each kind
+  with its payload in both directions. If a future kind gains a required payload, expect the same
+  blast radius and the same shape of fix — and note that the size of it is not evidence the
+  requirement is wrong.
