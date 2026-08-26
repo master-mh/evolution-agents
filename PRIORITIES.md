@@ -175,27 +175,33 @@
   project's history ran at Ollama's default 0.8. But the fix is not to set it, because
   **parse rate is maximised by the setting that destroys the colony**:
 
-  | arm | parsed | **distinct/wake** | median latency |
-  |---|---|---|---|
-  | `llama3.2` t=0.8 (control) | 7/16, replicated 7/16 | 0.25, replicated 0.19 | 11.3 / 12.4 s |
-  | `qwen2.5` t=0.8 | 14/16, replicated 13/16 | 0.12, replicated **0.56** | 162.5 / **38.1** s |
-  | `llama3.2` t=0.0 | **16/16** | **0.06** (1 reply × 16) | 6.3 s |
-  | `qwen2.5` t=0.0 | **0/16** | **0.00** (1 reply × 16) | 14.6 s |
+  Final figures, **n=32 per arm** (4 runs × 8):
 
-  `qwen2.5` wins on compliance and it replicates (14/16 then 13/16 vs 7/16 twice; ADR-049's
-  flattening gone, 0/16 vs 3/16). **The first draft's case against it was wrong on both legs and is
-  corrected in ADR-050**: "14× slower" was 3× once the box was not thrashing, and "fewer distinct
-  proposals" reversed on re-measurement. At `temperature: 0` **both** models collapse to one
-  byte-identical reply per run, landing at **16/16** (`llama3.2`, a valid experiment) or **0/16**
-  (`qwen2.5`, an `abstain` the schema rejects) by luck of which reply they converge on — so a t=0
-  parse rate is one sample reported sixteen times. Control re-measured at 7/16 vs ADR-049's 20/56
-  (p = 0.38, NS), so the scenario is comparable. Zero USD_REAL in any arm.
-- [ ] **The `distinct/wake` metric needs a bigger n before it can rank anything.** It moved 4.7× on
-  the same model at the same temperature (`qwen2.5` t=0.8: 0.12 then 0.56), while parse rate held to
-  within one. It is only trustworthy at t=0, where the variance is provably zero because the replies
-  are byte-identical. Anything that tunes against it needs more runs per arm, or a better diversity
-  measure than distinct summary strings.
-  *Disproved by:* a diversity figure that replicates across two arms of the same model.
+  | arm | parsed | per-run parsed | distinct **/wake** | distinct **/parsed** | median latency |
+  |---|---|---|---|---|---|
+  | `llama3.2` t=0.8 | 11/32 | [3, 3, 4, 1] | 0.156 | **0.455** | 9.0 s |
+  | `llama3.2` t=0.0 | **32/32** | [8, 8, 8, 8] | 0.125 | **0.125** | 10.8 s |
+  | `qwen2.5` t=0.8 | **22/32** | [6, 7, 6, 3] | **0.344** | **0.500** | 37.5 s |
+  | `qwen2.5` t=0.0 | **0/32** | [0, 0, 0, 0] | 0.000 | 0.000 | 15.4 s |
+
+  `qwen2.5` wins on compliance and it replicates (**22/32 vs 11/32**, p = 0.0059). **The first
+  draft's case against it was wrong on both legs and is corrected in ADR-050**: "14× slower" was
+  ~3.7× once the box was not thrashing, and "fewer distinct proposals" reversed outright — at n=32
+  `qwen2.5` is *more* diverse on both columns. At `temperature: 0` **both** models collapse to one
+  distinct proposal per run, landing at **32/32** (`llama3.2`, a valid experiment) or **0/32**
+  (`qwen2.5`, an `abstain` the schema rejects) by luck of which one they converge on. Zero USD_REAL
+  in any arm.
+- [x] **The `distinct/wake` metric — RE-MEASURED AT n=32, AND IT WAS MIS-SPECIFIED, NOT JUST NOISY**
+  (2026-08-26). It divides by *wakes*, so it charges a model for replies that never parsed — and t=0
+  parses everything, which is the whole point of that arm. On it, `llama3.2` t=0.8 vs t=0.0 is 0.156
+  vs 0.125 and the temperature effect nearly disappears; on `distinct/parsed` it is 0.455 vs 0.125,
+  a 3.6× gap. **Both columns are now reported.** `qwen2.5`'s diversity advantage is confirmed on both.
+- [ ] **`distinct summary strings` is still a weak diversity measure even when correctly normalised.**
+  Two rewordings of one idea count as two proposals, which flatters exactly the runs where a model is
+  circling a single theme — visible in `qwen2.5` t=0.8's run 0, where six parses gave three
+  "Fetch the latest bank feed…" variants. If diversity is ever going to carry weight in the
+  genome-temperature slice (§14.2's counterfactual twins), it needs a semantic measure, not string
+  equality. Cheap version: cluster on `kind` plus a normalised token set.
 - [ ] **`temperature` belongs in the genome, not the kernel — and the socket is already there.**
   §14.1 lists "temperature/sampling mutation" as a prompt-mutation operator, putting sampling in the
   *mutable Cell* column, so a provider constant would delete a mutation dimension the spec

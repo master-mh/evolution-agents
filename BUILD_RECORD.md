@@ -20,31 +20,41 @@ ADR-049 left one item: at ~36% compliance the remaining gap was "a **model** dec
 edit," and PRIORITIES carried it as *pull a bigger local model and re-measure*. Pulled `qwen2.5` (7B)
 and measured three arms, n=16 each, fresh colony per run.
 
-| arm | parsed | **distinct/wake** | median latency |
-|---|---|---|---|
-| `llama3.2` t=0.8 (control) | 7/16, replicated 7/16 | 0.25, replicated 0.19 | 11.3 / 12.4 s |
-| `qwen2.5` t=0.8 | 14/16, replicated 13/16 | 0.12, replicated **0.56** | 162.5 / **38.1** s |
-| `llama3.2` t=0.0 | **16/16** | **0.06** (1 reply × 16) | 6.3 s |
-| `qwen2.5` t=0.0 | **0/16** | **0.00** (1 reply × 16) | 14.6 s |
+Final figures, **n=32 per arm** (4 runs × 8):
 
-Each t=0.8 arm measured twice. **Parse rates replicate; diversity figures do not** — see the
-correction in ADR-050.
+| arm | parsed | per-run parsed | distinct **/wake** | distinct **/parsed** | median latency |
+|---|---|---|---|---|---|
+| `llama3.2` t=0.8 | 11/32 | [3, 3, 4, 1] | 0.156 | **0.455** | 9.0 s |
+| `llama3.2` t=0.0 | **32/32** | [8, 8, 8, 8] | 0.125 | **0.125** | 10.8 s |
+| `qwen2.5` t=0.8 | **22/32** | [6, 7, 6, 3] | **0.344** | **0.500** | 37.5 s |
+| `qwen2.5` t=0.0 | **0/32** | [0, 0, 0, 0] | 0.000 | 0.000 | 15.4 s |
+
+**Two diversity columns, because they disagree.** `distinct/wake` divides by wakes, charging a model
+for replies that never parsed — and t=0 parses everything, so the temperature effect nearly vanishes
+on it (0.156 vs 0.125). `distinct/parsed` conditions on producing a proposal: **3.6× (0.455 vs
+0.125)**. ADR-050 originally published the confounded column alone.
 
 ### The hypothesis was refuted, and so was its obvious replacement
 
-- **`qwen2.5` wins on parse rate, and that replicates** — 14/16 then 13/16 against 7/16 twice,
-  precisely ADR-049's failure class vanishing (flattened **0/16 vs 3/16**). **The case against it in
-  the first draft of this entry did not survive re-measurement**: "14× slower" was 3× once the box
-  was not thrashing, and "fewer distinct proposals" reversed outright. Both withdrawn; see ADR-050's
-  correction. It is a live option, deferred behind the temperature question, not a rejected one.
+- **`qwen2.5` wins on parse rate and it replicates** — **22/32 vs 11/32** at n=32 (p = 0.0059),
+  precisely ADR-049's failure class vanishing (flattened 0/16 vs 3/16). **The case against it in the
+  first draft of this entry did not survive re-measurement**: "14× slower" was ~3.7× once the box was
+  not thrashing, and "fewer distinct proposals" reversed outright — at n=32 `qwen2.5` is *more*
+  diverse on both columns. It is now the better model on every axis measured except latency; a live
+  option deferred behind the temperature question, not a rejected one.
 - **Nobody had ever set the sampling temperature.** `providers.py` sends `num_predict` and nothing
   else, and neither model pins one, so every deliberation in this project's history — ADR-049's
   measurements included — ran at Ollama's default 0.8. At `temperature: 0` **both** models collapse to
-  a single byte-identical reply per run (1 distinct `response_hash` per 8 calls), while §15.1's
-  context of its own recent proposals grows (1522 → 1628 tokens) and changes nothing. **Which reply
+  **one distinct proposal per run of 8** (`[1,1,1,1]` across four runs, both models). **Which proposal
   they collapse onto is arbitrary and decides the whole score:** `llama3.2` lands on a valid
-  experiment (**16/16**), `qwen2.5` on an `abstain` the schema rejects (**0/16**). At t=0 a parse rate
-  is one sample reported sixteen times.
+  experiment (**32/32**), `qwen2.5` on an `abstain` the schema rejects (**0/32**).
+- **The two t=0 failures are mechanically different, and only one is repetition.** `llama3.2` emits
+  **4 distinct replies per run** — its prompt grows as proposals accrete (1522 → 1628, identically in
+  all four runs) and greedy decoding on a changed prompt changes the text, yet the proposal never
+  moves. **The context moved four times and the Cell did not.** `qwen2.5` emits **1 byte-identical
+  reply per run**, and that is *caused by* its 0% parse rate: nothing parses → no proposal recorded →
+  §15.1's recent-proposals section stays empty → prompt frozen at 1537 tokens → same reply forever.
+  **A deterministic dead loop**, which the colony cannot think its way out of.
 - **So the finding is the metric, not the model.** Parse rate is maximised by a setting that deletes
   the colony's variation *and* does not reliably buy compliance — the same setting scores 16/16 on one
   model and 0/16 on another. Anything tuning compliance from here must report distinct proposals per
@@ -71,10 +81,13 @@ correction in ADR-050.
 - **Zero USD_REAL moved in any arm.** `qwen2.5` was newly exercised through the priced path and its
   bare tag settled at zero; conservation OK per book, hash chains valid, breaker 0/100, A6 linkage
   complete. **1004 tests and the golden run still green** — nothing changed to break them.
-- **The harness was lost to a wiped scratchpad for the second time**, and rebuilding it is what
-  surfaced both errors — the rebuild ran fast enough to expose that the original latency was
-  environmental. FUTURE_BUILD_HOOKS has logged "nothing measures parse compliance in CI" since
-  ADR-049; that gap has now cost the harness twice and a published figure once.
+- **Three published claims withdrawn across two corrections, and sample size caught none of them.**
+  "14× slower" was a thrashing box; "fewer distinct proposals" was a metric that charges a model for
+  replies that never parsed; "byte-identical on all four t=0 runs" was a check that had only ever run
+  against one of the two models, the other's data having been wiped. Re-running at n=32 confirmed the
+  headline and changed nothing about it — **every real error needed a second angle, not more
+  samples.** FUTURE_BUILD_HOOKS has logged "nothing measures parse compliance in CI" since ADR-049;
+  that gap has now cost the harness twice and three published figures once each.
 - Next: **`temperature` as a genome field** (§14.1), carrying §14.2's counterfactual-twin obligation
   — the first real decision is whether sampling is inherited, mutated, or both. The `risk_tier`-on-
   abstain schema question is now well-evidenced and cheap — it is what `qwen2.5` deterministically

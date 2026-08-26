@@ -2396,22 +2396,31 @@ from amendment ID to spec location is complete in one place:
   `model_calls.response_text`, which keeps the raw reply even where the `deliberations` row keeps only
   the validation error.
 
-  | arm | parsed | **distinct/wake** | median latency |
-  |---|---|---|---|
-  | `llama3.2` t=0.8 (control) | 7/16, replicated 7/16 | 0.25, replicated 0.19 | 11.3 / 12.4 s |
-  | `qwen2.5` 7B t=0.8 | 14/16, replicated 13/16 | 0.12, replicated **0.56** | 162.5 / **38.1** s |
-  | `llama3.2` t=0.0 | **16/16** | **0.06** (1 reply × 16) | 6.3 s |
-  | `qwen2.5` 7B t=0.0 | **0/16** | **0.00** (1 reply × 16) | 14.6 s |
+  **Final figures, n=32 per arm (4 runs × 8 wakes), superseding the n=16 numbers this ADR was first
+  written from.** Two diversity columns are given because they disagree and the disagreement matters.
 
-  Every arm n=16 (2 runs × 8). Each t=0.8 arm was measured twice — see the correction below, which
-  is why two figures are given. **Parse rates replicate; the diversity figures do not.**
+  | arm | parsed | per-run parsed | distinct **/wake** | distinct **/parsed** | median latency |
+  |---|---|---|---|---|---|
+  | `llama3.2` t=0.8 | 11/32 | [3, 3, 4, 1] | 0.156 | **0.455** | 9.0 s |
+  | `llama3.2` t=0.0 | **32/32** | [8, 8, 8, 8] | 0.125 | **0.125** | 10.8 s |
+  | `qwen2.5` 7B t=0.8 | **22/32** | [6, 7, 6, 3] | **0.344** | **0.500** | 37.5 s |
+  | `qwen2.5` 7B t=0.0 | **0/32** | [0, 0, 0, 0] | 0.000 | 0.000 | 15.4 s |
+
+  - **`distinct/wake` divides by wakes, so an unparseable reply counts as a non-diverse one.** That
+    flatters whichever arm parses most — which at t=0 is the entire point of the arm. On this column
+    `llama3.2` t=0.8 (0.156) and t=0.0 (0.125) look nearly equal, which is an artifact.
+  - **`distinct/parsed` conditions on having produced a proposal at all**, separating "said nothing
+    usable" from "said the same thing again". On this column t=0.8 is **3.6× more diverse** than t=0
+    for `llama3.2` (0.455 vs 0.125). This is the column that answers the diversity question; the
+    first is reported alongside it only because ADR-050 originally published it alone.
 
   The control re-measures at 7/16 against ADR-049's recorded 20/56 (Fisher one-sided p = 0.38, not
   significant) — the scenario is comparable, so the arms can be read against that baseline.
 - **Decision: change neither the model nor the temperature. The hypothesis PRIORITIES scheduled is
   refuted, and so is its obvious replacement.**
-  1. **`qwen2.5` beats `llama3.2` on parse rate, and that part replicates.** 14/16 then 13/16 against
-     7/16 twice (p = 0.012 on the first pair), and the win is exactly ADR-049's failure class
+  1. **`qwen2.5` beats `llama3.2` on parse rate, and that part replicates.** At n=32 it is
+     **22/32 vs 11/32** (p = 0.0059), after 14/16 then 13/16 against 7/16 twice at n=16, and the win
+     is exactly ADR-049's failure class
      disappearing: **flattened 0/16 vs 3/16**, with `hypothesis: Extra inputs are not permitted` and
      "an experiment proposal must carry an experiment" — 6 of the control's 9 failures — absent
      entirely. **The case against it, as first written here, did not survive re-measurement**; see
@@ -2420,14 +2429,25 @@ from amendment ID to spec location is complete in one place:
   2. **Temperature was never set, and setting it is worse.** Neither provider sends one
      (`providers.py` sends `num_predict` and nothing else), and neither model pins one in its
      Modelfile, so every deliberation this project has ever run — including ADR-049's — sampled at
-     Ollama's default **0.8**. Forcing `temperature: 0` collapses **both** models to a single
-     byte-identical reply per run (1 distinct `response_hash` across 8 calls, verified on all four
-     t=0 runs) — so this is greedy decoding, not a small-model artifact. **Which reply they collapse
-     onto is arbitrary, and it decides the entire score:** `llama3.2` lands on a well-formed
-     experiment proposal and scores **16/16**; `qwen2.5` lands on an `abstain` the schema rejects and
-     scores **0/16**. Same setting, opposite extremes. **At t=0 a parse rate is one sample reported
-     sixteen times**, and `llama3.2`'s perfect score — the result that nearly became a one-line commit
-     to `providers.py` — was luck.
+     Ollama's default **0.8**. Forcing `temperature: 0` collapses **both** models to **one distinct
+     proposal per run of 8** — `[1,1,1,1]` distinct summaries across four runs, for both models — so
+     this is greedy decoding, not a small-model artifact. **Which proposal they collapse onto is
+     arbitrary, and it decides the entire score:** `llama3.2` lands on a well-formed experiment and
+     scores **32/32**; `qwen2.5` lands on an `abstain` the schema rejects and scores **0/32**
+     (p = 8e-10 against its own t=0.8 arm). Same setting, opposite extremes. **At t=0 a parse rate is
+     one sample reported eight times per run**, and `llama3.2`'s perfect score — the result that
+     nearly became a one-line commit to `providers.py` — was luck.
+  4. **The two models fail at t=0 in mechanically different ways, and only one is mere repetition.**
+     - `llama3.2` emits **4 distinct raw replies per run of 8**, not one: its prompt *grows* as
+       proposals accrete (1522 → 1578 → 1603 → 1628 input tokens, identical in all four runs) and
+       greedy decoding on a changed prompt yields changed text. **The context moved four times and
+       the proposal never did** — a sharper demonstration than a static prompt could give that §15.1
+       showing a Cell its own recent proposals does not deter self-repetition.
+     - `qwen2.5` emits **1 byte-identical reply per run** (1 distinct `response_hash` across 8 calls,
+       all four runs) — and that is *caused by* its 0% parse rate. Nothing parses, so no proposal is
+       recorded, so §15.1's recent-proposals section stays empty, so the prompt never changes (1537
+       tokens, every call), so the reply never changes. **A deterministic dead loop**, and a worse
+       failure than repetition: the colony cannot escape it by thinking again.
   3. **Therefore parse rate is the wrong objective, and this ADR's real content is the metric.**
      It is maximised at exactly the setting that deletes the system's purpose. §15.1 shows a Cell its
      own recent proposals *so it does not repeat itself*, and at t=0 that context grew (1522 → 1628
@@ -2498,3 +2518,38 @@ the model. Recorded here rather than silently rewritten, because the wrong numbe
   teeth-check a guard by reintroducing the bug; the analogue for a measurement is to re-run the arm
   you are about to draw a conclusion from. Two of three conclusions here came from single arms, and
   both of those were wrong. **A measurement that is going to be written down gets replicated first.**
+
+### Second correction (2026-08-26): re-measured at n=32, and a third claim withdrawn
+
+Each arm was re-run at **4 runs × 8 wakes = 32**, on the metric question the first correction left
+open. Three things changed.
+
+- **"1 distinct `response_hash` across 8 calls, verified on all four t=0 runs" — WRONG for
+  `llama3.2`, and the verification never covered it.** That check ran only against `qwen2.5`'s
+  databases; `llama3.2`'s had been lost to a wiped scratchpad, and the claim was generalised across
+  a model it had never been tested on. `llama3.2` at t=0 produces **4 distinct replies per run**, not
+  1. What collapses to 1 is the distinct *summary*. The corrected mechanism is now in point 4 above,
+  and it argues the original point harder: the prompt provably moved and the proposal did not.
+- **The diversity metric was confounded, and the confound favoured the conclusion.**
+  `distinct/wake` divides by wakes, so it charges a model for replies that never parsed — and t=0
+  parses everything. On that column `llama3.2` t=0.8 and t=0.0 differ by 0.156 vs 0.125 and the
+  temperature effect nearly vanishes. On `distinct/parsed` it is 0.455 vs 0.125, a 3.6× gap. **Both
+  columns are now reported.** The first correction called this metric untrustworthy for ranking two
+  *models*; it was also mis-specified for ranking two *temperatures*.
+- **`qwen2.5`'s diversity advantage is confirmed, closing the first correction's open question.**
+  At n=32 it beats `llama3.2` on both columns at t=0.8 (0.344 vs 0.156 per wake; 0.500 vs 0.455 per
+  parsed) as well as on parse rate. The n=16 figure that started this — "fewer distinct proposals
+  than the 3B model" — was wrong in the direction, not merely noisy.
+
+**What n=32 bought, stated plainly.** Parse rates were already stable and stayed stable; per-run
+spreads are `[3,3,4,1]`, `[6,7,6,3]`, `[8,8,8,8]`, `[0,0,0,0]`. Nothing about the headline changed.
+What changed is that **two of the three supporting claims turned out to rest on artifacts** — one on
+a metric definition, one on a verification that had never run on half its subject. Neither was
+findable by adding samples; both needed the numbers looked at from a second angle. **Sample size was
+not this measurement's weak point, and increasing it would not have caught either error.**
+
+**The decision is unchanged and now rests on cleaner ground:** do not pin temperature in the kernel
+(§14.1 makes sampling a mutation operator, and t=0 does not reliably buy compliance in any case —
+32/32 on one model, 0/32 on another), and `qwen2.5` stays a live option deferred behind the
+temperature question rather than a rejected one. **`qwen2.5` is now the better model on every axis
+measured except latency**, where it is ~3.7× slower.

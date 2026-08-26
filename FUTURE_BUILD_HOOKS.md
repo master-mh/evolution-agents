@@ -1168,3 +1168,24 @@ actually queued for building — this file is memory, not a backlog to work thro
   `summary`, `risk_tier` and `estimated_cost_minor_units`. Three independent observations now
   (`llama3.2`'s `"risk_tier": null`, `qwen2.5`'s stochastic failures, and this). If the schema keeps
   requiring a risk tier for declining to act, that is the single most-hit parse failure left.
+- **`distinct/wake` was mis-specified, not merely noisy** (n=32 re-measurement, ADR-050's second
+  correction). Dividing by *wakes* charges a model for replies that never parsed, and the t=0 arms
+  parse either everything or nothing — so the metric flatters exactly the setting under test. On it,
+  `llama3.2` t=0.8 vs t=0.0 reads 0.156 vs 0.125 (effect nearly gone); on `distinct/parsed` it reads
+  0.455 vs 0.125. **Report both, or report the conditional one.**
+- **Distinct summary *strings* is still the wrong diversity measure even normalised correctly.** Two
+  rewordings of one idea count as two — `qwen2.5` t=0.8 run 0 scored 3 distinct from six parses that
+  were all "Fetch the latest bank feed…" variants. §14.2's counterfactual twins will need a semantic
+  measure before diversity can gate anything.
+- **A t=0 Cell whose replies do not parse enters a deterministic dead loop.** `qwen2.5` at t=0 scored
+  0/32 with a byte-identical reply every wake, *because* nothing parsed: no proposal recorded → §15.1's
+  recent-proposals section stays empty → prompt frozen (1537 tokens, all 32 calls) → same reply. By
+  contrast `llama3.2` at t=0 parsed everything, so its prompt grew (1522 → 1628) and it emitted 4
+  distinct replies per run — while still proposing the same thing every time. **The context is the
+  only thing that varies a greedy Cell, and a Cell that cannot parse cannot change its own context.**
+  Anything that sets a low temperature needs an escape hatch for this.
+- **Sample size was not the weak point.** Three published claims were withdrawn across two
+  corrections; **none would have been caught by more samples.** One was a thrashing box, one a metric
+  definition, one a verification that had only ever run against half its subject. Re-running at n=32
+  confirmed the headline and changed nothing about it. **Ask what would falsify a number before
+  asking for more of it.**
