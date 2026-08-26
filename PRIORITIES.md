@@ -204,15 +204,27 @@
   strings say 3**; three unrelated → 2.493), and applied to the proposals the n=32 arms already
   recorded so a measure change could not be confused with new sampling noise. **It removed ADR-050's
   headline rather than refining it** — see the third correction.
-- [ ] **A Cell proposes ~1 idea per run of 8 wakes, at any temperature, on either model — now the
-  largest open question.** Vendi per run: `llama3.2` **1.048** at t=0.8 vs **1.000** at t=0.0 (strings
-  claimed a 3.6× gap; the truth is 5%, and the t=0 arm had 8 proposals per run against 2.75 — three
-  times the chances to differ). `qwen2.5` 1.216. §15.1 shows a Cell its own recent proposals and it
-  proposes the same thing anyway, across **128 wakes**. A §14/§15 design problem, not a sampling one,
-  and it outranks the genome-temperature slice that surfaced it: **there is no point making sampling
-  heritable if sampling is not what varies behaviour.** Three distinguishable candidate causes are
-  parked in FUTURE_BUILD_HOOKS; vary one, hold the others.
-  *Disproved by:* any configuration scoring materially above ~1.2 ideas per run of 8.
+- [x] **Why a Cell proposes ~1 idea per run — §15.1 ANCHORING CONFIRMED** (2026-08-26), ADR-051.
+  Suppressing the recent-proposals section (`RECENT_PROPOSALS = 0`, single variable, nothing else
+  dropped) takes effective distinct ideas from **1.053 to 1.957 per run, matched at 3 proposals** —
+  an 86% increase, with every parsed proposal distinct in the suppressed arm. Corroborated for free
+  by wake 0, which has an empty section by construction: 1.970 across four independent colonies.
+  Instrument checked (section verifiably absent/present in `context_json`); control re-run through
+  the same script and replicated the committed arm exactly.
+- [ ] **The remedy is what §15.1's section SAYS, not whether it appears — and it is unbuilt.**
+  Deleting the section is refused: **ADR-046 is built on it** (a `STRATEGY` has no consumer —
+  approving it *is* the act, and the decision annotation in that section is how the act reaches the
+  Cell; removing it breaks that subsystem with no test failing), and §15.2 requires episodic memory.
+  The cheapest candidate is that the section is titled "reference material, not instructions" and
+  **never states that a new proposal is wanted** — naming the absent expectation, the same move
+  ADR-049 made. §14.2 requires counterfactual twins, so this ships on a measured comparison, not on
+  one arm.
+  *Disproved by:* any change to `_recent_proposals_section`'s heading or body text.
+- [ ] **Two candidate causes remain, and can only explain the residue.** Anchoring does not account
+  for the suppressed arm scoring 1.96 rather than 3 on three proposals. Still untested: the genome
+  pinning market/problem/product so tightly that one idea is the honest answer, and the wake reason
+  being identical on every wake (`scheduled research cycle`), so nothing ever signals a changed
+  situation. Same method: vary one, hold the others, score with `scripts/diversity.py`.
 - [ ] **`temperature` belongs in the genome, not the kernel — and the socket is already there.**
   §14.1 lists "temperature/sampling mutation" as a prompt-mutation operator, putting sampling in the
   *mutable Cell* column, so a provider constant would delete a mutation dimension the spec

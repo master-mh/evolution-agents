@@ -9,96 +9,69 @@ read-back, §9.2's birth cap, Auditor Cells, genome content, the tool surface, t
 store, the external-action registry, the §27.1 autonomy decisions, grant regeneration, the
 expiry sweep, establishable rights, scheduler liveness, the experiment, experiment attribution,
 proposed experiments, the strategy kind decided, the experiment_id foreign keys, §13.1's
-normalised cost, and the reply format a model can follow, 2026-07-21 through 2026-08-25):
+normalised cost, the reply format a model can follow, and the temperature/diversity
+measurement, 2026-07-21 through 2026-08-26):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-26 — The Cell proposes one idea per run at any temperature
+## 2026-08-26 — The Cell repeats itself because §15.1 shows it what it just said
 
-A measurement, and two refusals (ADR-050). **No code changed, no migration, no test added.**
+A measurement and a refusal (ADR-051). **No code changed, no migration, no test added.**
 
-ADR-049 left one item: at ~36% compliance the remaining gap was "a **model** decision, not a prompt
-edit," and PRIORITIES carried it as *pull a bigger local model and re-measure*. Pulled `qwen2.5` (7B)
-and measured three arms, n=16 each, fresh colony per run.
+ADR-050's third correction left one question at the front: a Cell proposes ~1 effective idea per run
+of 8 wakes, at any temperature, on either model — why? FUTURE_BUILD_HOOKS parked three candidate
+causes. This tests the first.
 
-Final figures, **n=32 per arm** (4 runs × 8):
+`context.RECENT_PROPOSALS = 0` suppresses §15.1's recent-proposals section entirely. Single variable:
+context was 833 tokens against a 1200 budget with `dropped: []`, so nothing else moves. Both arms
+`llama3.2` t=0.8, 4 runs × 8 wakes, **same script** — the control was re-run rather than reused,
+because this thread has twice been bitten by instrument differences.
 
-| arm | parsed | per-run parsed | distinct **/wake** | distinct **/parsed** | median latency |
-|---|---|---|---|---|---|
-| `llama3.2` t=0.8 | 11/32 | [3, 3, 4, 1] | 0.156 | **0.455** | 9.0 s |
-| `llama3.2` t=0.0 | **32/32** | [8, 8, 8, 8] | 0.125 | **0.125** | 10.8 s |
-| `qwen2.5` t=0.8 | **22/32** | [6, 7, 6, 3] | **0.344** | **0.500** | 37.5 s |
-| `qwen2.5` t=0.0 | **0/32** | [0, 0, 0, 0] | 0.000 | 0.000 | 15.4 s |
+| arm | parsed | proposals/run | **ideas/run (Vendi, matched at 3)** |
+|---|---|---|---|
+| section shown (control) | 11/32 | 2.75 | **1.053** |
+| section suppressed | 17/32 | 4.25 | **1.957** |
 
-**Two diversity columns, because they disagree.** `distinct/wake` divides by wakes, charging a model
-for replies that never parsed — and t=0 parses everything, so the temperature effect nearly vanishes
-on it (0.156 vs 0.125). `distinct/parsed` conditions on producing a proposal: **3.6× (0.455 vs
-0.125)**. ADR-050 originally published the confounded column alone.
+**An 86% increase in effective distinct ideas**, and in the suppressed arm *every parsed proposal was
+distinct* (4/4, 3/3, 5/5, 5/5).
 
-### The hypothesis was refuted, and so was its obvious replacement
+### Corroborated for free, before anything was run
 
-- **`qwen2.5` wins on parse rate and it replicates** — **22/32 vs 11/32** at n=32 (p = 0.0059),
-  precisely ADR-049's failure class vanishing (flattened 0/16 vs 3/16). **The case against it in the
-  first draft of this entry did not survive re-measurement**: "14× slower" was ~3.7× once the box was
-  not thrashing, and "fewer distinct proposals" reversed outright — at n=32 `qwen2.5` is *more*
-  diverse on both columns. It is now the better model on every axis measured except latency; a live
-  option deferred behind the temperature question, not a rejected one.
-- **Nobody had ever set the sampling temperature.** `providers.py` sends `num_predict` and nothing
-  else, and neither model pins one, so every deliberation in this project's history — ADR-049's
-  measurements included — ran at Ollama's default 0.8. At `temperature: 0` **both** models collapse to
-  **one distinct proposal per run of 8** (`[1,1,1,1]` across four runs, both models). **Which proposal
-  they collapse onto is arbitrary and decides the whole score:** `llama3.2` lands on a valid
-  experiment (**32/32**), `qwen2.5` on an `abstain` the schema rejects (**0/32**).
-- **The two t=0 failures are mechanically different, and only one is repetition.** `llama3.2` emits
-  **4 distinct replies per run** — its prompt grows as proposals accrete (1522 → 1628, identically in
-  all four runs) and greedy decoding on a changed prompt changes the text, yet the proposal never
-  moves. **The context moved four times and the Cell did not.** `qwen2.5` emits **1 byte-identical
-  reply per run**, and that is *caused by* its 0% parse rate: nothing parses → no proposal recorded →
-  §15.1's recent-proposals section stays empty → prompt frozen at 1537 tokens → same reply forever.
-  **A deterministic dead loop**, which the colony cannot think its way out of.
-- **So the finding is the metric, not the model — and the metric was wrong three times before it was
-  right.** A semantic measure (Vendi score over embedded summaries: the *effective number of distinct
-  ideas*, 1.0 when everything paraphrases one idea) removes this entry's original headline rather than
-  refining it. **The diversity temperature was supposedly destroying was never there:** `llama3.2`
-  scores **1.048 ideas per run at t=0.8 against 1.000 at t=0.0** — a 5% difference where distinct
-  strings claimed 3.6×, and the t=0 arm had *8 proposals per run against 2.75*, three times the
-  chances to differ. What the string measure counted was trailing clauses.
-- **The real problem is bigger than sampling.** §15.1 shows a Cell its own recent proposals; across
-  **128 wakes, two models, two temperatures, it proposed the same thing anyway** (~1 idea per run of
-  8). Temperature changes surface wording, not the idea. **Self-repetition is a §14/§15 design
-  problem**, and it was hidden the whole time behind a metric that scored rewordings as novelty.
-- **§14.1 forbids the one-line fix.** "temperature/sampling mutation" is listed as a prompt-mutation
-  operator — sampling sits in the *mutable Cell* column, so pinning it in the kernel would delete a
-  mutation dimension the spec enumerates. The socket is already reserved and already empty:
-  `model_policy` is a §16.2 genome field, hashed to `cells.model_policy_hash`, **written at birth and
-  read by nothing** — the fourteenth such socket.
+**Wake 0 of every run has an empty section by construction.** Vendi over the four unanchored
+first-proposals from four independent colonies is **1.970** (`llama3.2`) and **1.917** (`qwen2.5`),
+against 1.048 and 1.216 inside an anchored colony. That comparison varies two things at once — which
+is why the direct experiment was run — but it lands on the number the clean manipulation produced.
+
+### The obvious remedy is refused
+
+Deleting the section is the change this result invites and it is wrong. **ADR-046 is built on it:**
+a `STRATEGY` proposal has no consumer and no regeneration — approving it *is* the act, and the
+decision annotation in this very section is the whole mechanism by which the act reaches the Cell.
+Remove it and that subsystem stops working with **no test failing**, because what it delivers is
+prose in a prompt. §15.2 also requires episodic memory, and a Cell that cannot see what it proposed
+cannot notice it is repeating; the gain would be amnesia, not judgement.
+
+So the remedy is what the section *says*, not whether it appears — a prompt change, which §14.2 says
+must face counterfactual twins rather than ship on one measurement. The cheapest candidate: the
+section is titled "reference material, not instructions" and never states that a *new* proposal is
+wanted. **Naming the absent expectation is the move ADR-049 already made** when it found the prompt
+named no field the parser rejects.
 
 ### Verification
 
-- **The control validates the scenario:** re-measured at 7/16 against ADR-049's recorded 20/56,
-  Fisher one-sided p = 0.38 — not significantly different, so the arms read against that baseline.
-- **The temperature override was teeth-checked** rather than trusted: asserted `temperature: 0.0`
-  reaching the request payload, not just inferred from the changed result.
-- **Sampling defaults ruled out as a confound** — `ollama show --parameters` sets no temperature on
-  either model, so both t=0.8 arms sampled identically and the qwen2.5 gap is the model.
-- **`qwen2.5`'s only two failures are a known schema objection**, reached independently by a stronger
-  model: both `abstain` replies carrying `kind` + `rationale` alone. FUTURE_BUILD_HOOKS already logs
-  `risk_tier`-on-abstain from `llama3.2` doing the same. Two models now decline to state a risk tier
-  for declining to act — evidence the schema is wrong, not the models.
-- **Zero USD_REAL moved in any arm.** `qwen2.5` was newly exercised through the priced path and its
-  bare tag settled at zero; conservation OK per book, hash chains valid, breaker 0/100, A6 linkage
-  complete. **1004 tests and the golden run still green** — nothing changed to break them.
-- **Four published claims withdrawn across three corrections, and sample size caught none of them.**
-  "14× slower" was a thrashing box; "fewer distinct proposals" was a metric charging a model for
-  replies that never parsed; "byte-identical on all four t=0 runs" was a check that had only ever run
-  against one of the two models, the other's data having been wiped; and the **headline itself** was a
-  metric counting paraphrases as ideas. Re-running at n=32 confirmed the headline and changed nothing
-  about it — **every real error was an instrument error, and none needed more samples.** The
-  measurement that finally moved the conclusion made no new model calls at all.
-- **The decision survives all four**, because it never rested on any of them: t=0 does not reliably buy
-  compliance (32/32 vs 0/32), §14.1 makes sampling a mutation operator, and a t=0 Cell whose replies
-  fail to parse enters a dead loop it cannot think its way out of.
-- Next: **why a Cell proposes one idea per run** — now the largest open question, and ahead of the
-  sampling work that prompted it. `temperature` as a genome field (§14.1, with §14.2's
-  counterfactual-twin obligation) is still worth doing but is no longer the diversity lever it looked
-  like. The `risk_tier`-on-abstain question is well-evidenced and cheap — it is what `qwen2.5`
-  deterministically converges to, **32/32** of its greedy output.
+- **The instrument was checked, not trusted.** The script asserts the section is absent from every
+  assembled `context_json` in the suppressed arm and present in the control. Both passed — a
+  manipulation that silently fails to reach the prompt gives a null result indistinguishable from a
+  real one.
+- **Matched at 3 proposals per run**, because Vendi scales with item count and the treatment arm
+  produced more proposals (4.25 vs 2.75). Unmatched the gap reads 2.334 vs 1.040; the honest figure
+  is 1.957 vs 1.053.
+- **The control replicated the committed n=32 arm exactly** — 11/32 parsed, Vendi 1.040 against
+  1.048 — so the harness change between them was not a factor.
+- **The parse-rate difference is not claimed.** 17/32 vs 11/32 is p = 0.10. A shorter prompt
+  plausibly parses better; this measurement does not show it.
+- **Invisible to every test.** Suite and golden run are green in both arms: `MockProvider`'s reply is
+  an input, not a response to the prompt's wording — ADR-049's blind spot, hit a third time.
+- **1004 tests and the golden run green.** Zero USD_REAL in either arm.
+- Next: the prompt change above, under §14.2 counterfactual twins. The other two candidate causes
+  (genome pinning, identical wake reason) can only account for the residue — anchoring does not
+  explain why the suppressed arm scores 1.96 rather than 3 on three proposals.

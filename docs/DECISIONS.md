@@ -2602,3 +2602,72 @@ byte-identity claim (a check that only ever ran on half its subject) and now its
 that counted paraphrases). **Every one was an instrument error; none was a sample-size error**, and
 n=16 → n=32 caught none of them. The measurement that finally moved the conclusion cost one embedding
 model and no new model calls at all.
+
+## ADR-051: The Cell repeats itself because §15.1 shows it what it just said — measured, and the obvious remedy refused
+
+- **Status:** Accepted (measurement); remedy deliberately unbuilt
+- **Spec ref:** §14, §14.1, §15.1, §15.2, §23.4, §23.5; ADR-046, ADR-050
+- **Context:** ADR-050's third correction found that a Cell proposes **~1 effective idea per run of 8
+  wakes**, at any temperature, on either model, and named this a bigger problem than the sampling
+  question that surfaced it. FUTURE_BUILD_HOOKS parked three candidate causes. This tests the first:
+  §15.1's recent-proposals section shows a Cell what it recently proposed and **never says it should
+  propose something else** — so it may be anchoring *to* the list rather than avoiding it.
+- **The experiment.** `context.RECENT_PROPOSALS = 0`, which makes `_recent_proposals_section` return
+  `None` so the section never renders. Single variable: context was 833 tokens against a 1200 budget
+  with `dropped: []`, so removing a section cannot let a previously-dropped one in. Both arms
+  `llama3.2` at t=0.8, 4 runs × 8 wakes, **run by the same script** — the control was re-run rather
+  than reused, because this thread has already been bitten twice by instrument differences.
+  Diversity is Vendi score (ADR-050's third correction), **matched at 3 proposals per run**, because
+  Vendi scales with item count and the treatment arm produced more proposals.
+
+  | arm | parsed | proposals/run | **ideas/run (Vendi, first 3)** |
+  |---|---|---|---|
+  | recent-proposals section shown (control) | 11/32 | 2.75 | **1.053** |
+  | section suppressed | 17/32 | 4.25 | **1.957** |
+
+  **An 86% increase in effective distinct ideas.** In the suppressed arm *every parsed proposal was
+  distinct* (4/4, 3/3, 5/5, 5/5); in the control, 11 proposals contained 1.25 distinct strings per run.
+- **Two independent routes to the same number.** Before running anything, the already-recorded n=32
+  data answers a weaker version: **wake 0 of each run has an empty section by construction.** Vendi
+  over the four unanchored first-proposals from four independent colonies is **1.970** (`llama3.2`)
+  and **1.917** (`qwen2.5`), against 1.048 and 1.216 within an anchored colony. That comparison
+  confounds anchored-vs-not with same-Cell-vs-different-Cell, which is why the direct experiment was
+  run — but it lands on the same figure the clean manipulation produced.
+- **The instrument was checked, not trusted.** The script asserts the section is absent from every
+  assembled `context_json` in the suppressed arm and present in the control. Both passed. A
+  manipulation that silently fails to reach the prompt would produce a null result indistinguishable
+  from a real one.
+- **Decision: record the cause, refuse the obvious remedy.** Deleting or shortening the section is
+  the change this result invites and it is wrong.
+  - **ADR-046 is built on this section.** For a `STRATEGY` proposal there is no consumer and no
+    regeneration — *approving it is the act*, and the decision annotation in this very section is the
+    entire mechanism by which the act reaches the Cell. Remove the section and ADR-046's subsystem
+    silently stops working, with no test failing, because what it delivers is prose in a prompt.
+  - **§15.2 requires episodic memory**, and the section is it. A Cell that cannot see what it has
+    already proposed cannot notice it is repeating — the diversity gain would come from amnesia, not
+    from judgement, and amnesia has its own §23.4 cost: `repeat_after_rejection` is only meaningful
+    if the Cell was told it was rejected.
+  - **So the remedy is about what the section *says*, not whether it appears** — and that is a
+    prompt change, which §14.2 says must be evaluated against counterfactual twins rather than
+    shipped on a single measurement. The candidate worth testing first is the cheapest: the section
+    is titled "reference material, not instructions" and never states that a *new* proposal is
+    wanted. **Naming the absent expectation is the same move ADR-049 made** when it found the prompt
+    named no field the parser rejects.
+- **What it displaced.**
+  - **Deleting the section**, per above — the change with the largest measured effect and the largest
+    unmeasured cost.
+  - **Concluding from the wake-0 comparison alone.** It was free, already recorded, and pointed at
+    the right answer, but it varies two things at once. It is reported as corroboration, not
+    evidence.
+  - **Attributing the parse-rate difference.** The suppressed arm parsed 17/32 against 11/32, which
+    is **not significant** (p = 0.10). A shorter prompt plausibly parses better, but this measurement
+    does not show it and the claim is not made.
+- **Consequences:**
+  - **The remaining two candidate causes are now lower priority but not eliminated.** Anchoring
+    explains an 86% swing; it does not explain why the suppressed arm still scores 1.96 rather than 3
+    on three proposals. The genome pinning market/problem/product, and the wake reason being
+    identical on every wake, remain untested and can only account for the residue.
+  - **This is the first measured link from a prompt section to a behavioural outcome in this repo**,
+    and it was invisible to every test: the suite and the golden run are green in both arms, because
+    `MockProvider`'s reply is an input rather than a response to the prompt's wording — ADR-049's
+    blind spot, hit a third time in a third place.

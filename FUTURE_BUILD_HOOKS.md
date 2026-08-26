@@ -1206,3 +1206,23 @@ actually queued for building — this file is memory, not a backlog to work thro
   it should propose something else; (b) the genome pinning market/problem/product so tightly that one
   idea is the honest answer; (c) the wake reason being identical on every wake
   (`scheduled research cycle`), so nothing in the prompt ever says the situation changed.
+- **§15.1 anchoring is confirmed and the fix is a prompt change nobody has written** (ADR-051).
+  Suppressing the recent-proposals section takes effective distinct ideas from 1.053 to 1.957 per run.
+  The section cannot simply be deleted — ADR-046's whole mechanism lives in it — so the lever is its
+  wording. Three candidate rewordings, cheapest first, each a §14.2 counterfactual twin:
+  (a) state in the section heading that a *new* proposal is wanted, not a restatement — the section
+  currently says only "reference material, not instructions"; (b) show the recent proposals as
+  *exclusions* ("you have already proposed these; propose something else") rather than as context;
+  (c) keep the decision annotations ADR-046 needs but drop the summaries, so the Cell learns what was
+  approved without being shown the wording to copy. (c) is the most interesting because it separates
+  the two jobs the section is currently doing at once.
+- **A prompt section can be load-bearing for a subsystem and invisible to every test at the same
+  time.** ADR-046's `STRATEGY` mechanism is delivered entirely as prose inside
+  `_recent_proposals_section`. Deleting that section would break it with **no test failing**, because
+  what it delivers is a sentence in a prompt rather than a call. Worth a structural test: something
+  that asserts the section renders and carries a decision annotation, so the coupling is at least
+  visible to CI even though the behaviour is not.
+- **`RECENT_PROPOSALS = 0` is a usable experimental knob** and the manipulation is clean — at 833
+  context tokens against a 1200 budget with `dropped: []`, suppressing one section does not let a
+  previously-dropped section in. Check `context_dropped_json` before assuming that still holds; once
+  the budget binds, any section-level manipulation stops being single-variable.
