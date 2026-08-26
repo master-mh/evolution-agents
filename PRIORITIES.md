@@ -211,7 +211,24 @@
   by wake 0, which has an empty section by construction: 1.970 across four independent colonies.
   Instrument checked (section verifiably absent/present in `context_json`); control re-run through
   the same script and replicated the committed arm exactly.
-- [ ] **The remedy is what §15.1's section SAYS, not whether it appears — and it is unbuilt.**
+- [x] **§14.2 counterfactual twins on the reworded section — DONE** (2026-08-26), ADR-052. Four
+  variants, one edit each; `control` and `nosummary` deepened to 12 runs. **ADR-051's predicted winner
+  measured at zero**: naming the expectation in the heading gives 1.054 vs control's 1.089. Marking
+  each entry "do not propose again" gives 1.202. **Dropping the summary gives 1.852** — ahead of
+  control in 89 of 90 pairwise comparisons, 95% of the suppression ceiling. **The Cell is completing a
+  visible pattern, not disobeying an instruction**, so instructions aimed at copying do not reach it.
+- [ ] **Implement the pending-only variant: hide the summary for `pending`/`not reviewed`, keep it for
+  `approved`/`rejected`.** Narrower than the arm measured and strictly safer — **all 52 control
+  proposals were `pending`**, so ADR-046's channel carried nothing in the experiment and the anchoring
+  came entirely from entries conveying no decision. Identical to `nosummary` in the measured regime,
+  so it inherits the full gain. Touches the assembled prompt, so it **moves the golden run**:
+  Amendment A12 reviewed act, expectation bump with a written migration note.
+  *Disproved by:* any status-conditional branch in `_recent_proposals_section`.
+- [ ] **Test whether a Cell anchors to an *approved* summary too** — the one result that would put
+  ADR-046 and diversity back in genuine conflict. Needs an arm that approves proposals mid-run;
+  nothing measured so far exercises the decided branch at all.
+- [ ] **(superseded framing, kept for the reasoning) The remedy is what §15.1's section SAYS, not
+  whether it appears.**
   Deleting the section is refused: **ADR-046 is built on it** (a `STRATEGY` has no consumer —
   approving it *is* the act, and the decision annotation in that section is how the act reaches the
   Cell; removing it breaks that subsystem with no test failing), and §15.2 requires episodic memory.

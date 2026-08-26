@@ -1226,3 +1226,21 @@ actually queued for building — this file is memory, not a backlog to work thro
   context tokens against a 1200 budget with `dropped: []`, suppressing one section does not let a
   previously-dropped section in. Check `context_dropped_json` before assuming that still holds; once
   the budget binds, any section-level manipulation stops being single-variable.
+- **An instruction cannot fix a copying behaviour** (ADR-052). Two explicit instructions to vary —
+  one in the section heading, one marking every entry "do not propose again" — moved effective
+  diversity by 0% and 15%. Removing the text the model could copy moved it 95% of the way to the
+  ceiling. Before adding a sentence to a prompt to stop a behaviour, ask whether the behaviour is
+  *disobedience* or *pattern completion*; only the first kind listens.
+- **An unattended colony never exercises ADR-046.** Every proposal in 12 control runs was `pending`:
+  the queue fills and nobody reviews, so the approve/reject annotation §15.1 carries is empty in any
+  experiment without an operator in the loop. Any measurement of the decided branch has to approve
+  proposals mid-run deliberately — and until one does, claims about what a Cell does with an
+  *approved* summary are untested.
+- **`Section.to_record()` stores names, tokens and `required` — never bodies.** A verification that
+  greps `context_json` for prompt *text* cannot pass, and will report BROKEN against a manipulation
+  that worked. Token count is the usable proxy from stored data; rendering the section directly is
+  the definitive check.
+- **Give an experiment script a `__main__` guard before importing it.** Importing one to inspect its
+  variants re-ran the whole batch and overwrote four arms mid-flight. It was caught only because a
+  database had an mtime *later* than the arm that ran after it — worth checking mtimes against run
+  order whenever results look surprising.

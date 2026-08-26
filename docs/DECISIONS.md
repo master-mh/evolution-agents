@@ -2671,3 +2671,71 @@ model and no new model calls at all.
     and it was invisible to every test: the suite and the golden run are green in both arms, because
     `MockProvider`'s reply is an input rather than a response to the prompt's wording — ADR-049's
     blind spot, hit a third time in a third place.
+
+## ADR-052: The Cell copies what it can see, and cannot be instructed out of it — §14.2 twins on §15.1's section
+
+- **Status:** Accepted (measurement + recommendation); the code change is **not** made here
+- **Spec ref:** §14.1, §14.2, §15.1, §15.2, §23.4; ADR-046, ADR-049, ADR-050, ADR-051
+- **Context:** ADR-051 measured that suppressing §15.1's recent-proposals section takes effective
+  distinct ideas from 1.05 to 1.96 per run, refused to delete the section (ADR-046's `STRATEGY`
+  mechanism lives inside it), and parked three candidate rewordings. §14.2 requires prompt mutations
+  to be evaluated against counterfactual twins — "same task, environment, seed where possible, and
+  budget, differing by one prompt-level change" — and never promoted on preference alone. This is
+  that evaluation.
+- **The arms.** All `llama3.2` t=0.8, same genome, same script, one batch. Each variant is **one edit**
+  relative to control. Diversity is Vendi score (ADR-050), **matched at 3 proposals per run** because
+  Vendi scales with item count. `control` and `nosummary` were deepened to 12 runs once the first
+  pass identified them as the pair that mattered.
+
+  | arm | one-line edit | runs | parsed | **ideas@3** |
+  |---|---|---|---|---|
+  | `control` | as shipped | 12 | 52/96 | **1.089 ± 0.147** |
+  | `heading` | heading names the expectation | 4 | 15/32 | **1.054 ± 0.078** |
+  | `exclusion` | body marks each entry "do not propose again" | 4 | 12/32 | **1.202 ± 0.176** |
+  | `nosummary` | body drops the summary, keeps kind + decision | 12 | 40/96 | **1.852 ± 0.248** |
+  | `suppressed` | section absent (ADR-051's ceiling, not a candidate) | 4 | 20/32 | 1.939 ± 0.138 |
+
+  `nosummary` exceeds `control` in **89 of 90 pairwise run comparisons** and recovers **95% of the
+  suppression ceiling** while the section still renders.
+- **Finding: the mechanism is not instruction-following, and ADR-051 predicted the wrong winner.**
+  ADR-051 nominated the heading edit as the cheapest candidate, reasoning by analogy with ADR-049's
+  "the prompt names no field the parser rejects" — name the absent expectation and the model will
+  meet it. **It does nothing** (1.054 vs 1.089). An explicit per-entry "do not propose again" buys
+  15%. Removing the copyable text buys everything. **The Cell is not disobeying an instruction to
+  vary; it is completing a pattern it can see.** Instructions aimed at a copying behaviour do not
+  reach it — a result that should be assumed to generalise to any future attempt to fix a
+  prompt-driven behaviour by adding a sentence about it.
+- **Decision: recommend hiding the summary only for proposals nobody has decided yet — narrower than
+  the arm that was measured, and strictly safer.**
+  - **Every one of the 52 proposals across the control arms is `pending`.** Zero approved, zero
+    rejected: an unattended colony queues and nothing is reviewed. So **ADR-046's approve/reject
+    channel carried no information in any arm of this experiment**, and `nosummary`'s measured gain
+    cost ADR-046 nothing *only because ADR-046 was never exercised*.
+  - That is also why `nosummary` lands so close to `suppressed`: with everything pending, its body
+    reduces to `- [experiment] -> waiting on a person` three times, which is near-suppression.
+  - **The two goals are therefore separable rather than in tension.** The summaries doing the
+    anchoring are attached to entries that convey *no decision*. Hiding the summary for `pending`
+    and `not reviewed` entries while keeping it for `approved`/`rejected` is identical to
+    `nosummary` in the regime measured — so it inherits the full measured gain — and preserves
+    ADR-046 exactly when ADR-046 has something to say.
+- **What it displaced.**
+  - **Adopting `nosummary` as measured.** It hides the summary unconditionally, including on the
+    decided proposals ADR-046 exists to deliver. Its number is real; its scope is wrong.
+  - **The heading edit**, which this ADR's predecessor recommended and which is now measured at zero.
+  - **Making the code change here.** The recommendation touches the assembled prompt, so it moves the
+    golden run — Amendment A12 makes that a deliberate reviewed act with a written migration note,
+    not a rider on a measurement. It is queued in PRIORITIES instead.
+- **Consequences:**
+  - **The decided branch is untested and this experiment cannot test it.** No proposal was ever
+    approved or rejected, so nothing here shows what a Cell does when shown an *approved* summary —
+    including whether it anchors to that too, which would put ADR-046 and diversity back in genuine
+    conflict. A follow-up needs an arm that actually approves proposals mid-run.
+  - **The parse-rate difference is not claimed.** 40/96 vs 52/96 is p = 0.11.
+  - **Two instrument failures, both mine, both caught.** The in-script check grepped `context_json`
+    for body text, but `Section.to_record()` deliberately stores only name, tokens and `required` —
+    so the check could never pass and reported BROKEN against manipulations that were in fact
+    correct. Replaced with a token-count check that can fail for the right reason (control's section
+    median 81 tokens, `nosummary`'s 21). Separately, the experiment script had no `__main__` guard,
+    so importing it to inspect the variants re-ran the batch and overwrote four control databases
+    mid-flight; caught from an mtime later than the arm that ran after it, and the control arm was
+    re-run from scratch.

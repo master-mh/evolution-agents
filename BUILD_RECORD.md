@@ -9,69 +9,65 @@ read-back, §9.2's birth cap, Auditor Cells, genome content, the tool surface, t
 store, the external-action registry, the §27.1 autonomy decisions, grant regeneration, the
 expiry sweep, establishable rights, scheduler liveness, the experiment, experiment attribution,
 proposed experiments, the strategy kind decided, the experiment_id foreign keys, §13.1's
-normalised cost, the reply format a model can follow, and the temperature/diversity
-measurement, 2026-07-21 through 2026-08-26):
+normalised cost, the reply format a model can follow, the temperature/diversity
+measurement, and §15.1 anchoring, 2026-07-21 through 2026-08-26):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-26 — The Cell repeats itself because §15.1 shows it what it just said
+## 2026-08-26 — The Cell copies what it can see, and cannot be instructed out of it
 
-A measurement and a refusal (ADR-051). **No code changed, no migration, no test added.**
+§14.2 counterfactual twins on §15.1's recent-proposals section (ADR-052). **No code changed** — the
+recommendation moves the golden run, which Amendment A12 makes a separate reviewed act.
 
-ADR-050's third correction left one question at the front: a Cell proposes ~1 effective idea per run
-of 8 wakes, at any temperature, on either model — why? FUTURE_BUILD_HOOKS parked three candidate
-causes. This tests the first.
+ADR-051 confirmed the section anchors the Cell and parked three candidate rewordings. Each is one
+edit relative to control; all `llama3.2` t=0.8, same genome, one batch, Vendi matched at 3 proposals
+per run. `control` and `nosummary` deepened to 12 runs once the first pass named them the pair that
+mattered.
 
-`context.RECENT_PROPOSALS = 0` suppresses §15.1's recent-proposals section entirely. Single variable:
-context was 833 tokens against a 1200 budget with `dropped: []`, so nothing else moves. Both arms
-`llama3.2` t=0.8, 4 runs × 8 wakes, **same script** — the control was re-run rather than reused,
-because this thread has twice been bitten by instrument differences.
+| arm | one-line edit | runs | parsed | **ideas@3** |
+|---|---|---|---|---|
+| `control` | as shipped | 12 | 52/96 | **1.089 ± 0.147** |
+| `heading` | heading names the expectation | 4 | 15/32 | **1.054 ± 0.078** |
+| `exclusion` | each entry marked "do not propose again" | 4 | 12/32 | **1.202 ± 0.176** |
+| `nosummary` | body drops the summary, keeps kind + decision | 12 | 40/96 | **1.852 ± 0.248** |
+| `suppressed` | section absent (ADR-051's ceiling) | 4 | 20/32 | 1.939 ± 0.138 |
 
-| arm | parsed | proposals/run | **ideas/run (Vendi, matched at 3)** |
-|---|---|---|---|
-| section shown (control) | 11/32 | 2.75 | **1.053** |
-| section suppressed | 17/32 | 4.25 | **1.957** |
+`nosummary` beats `control` in **89 of 90 pairwise run comparisons** and recovers **95% of the
+suppression ceiling** with the section still rendering.
 
-**An 86% increase in effective distinct ideas**, and in the suppressed arm *every parsed proposal was
-distinct* (4/4, 3/3, 5/5, 5/5).
+### ADR-051 predicted the wrong winner, and the reason generalises
 
-### Corroborated for free, before anything was run
+ADR-051 nominated the heading edit, reasoning from ADR-049 that naming an absent expectation makes a
+model meet it. **It measured at zero** (1.054 vs 1.089). An explicit per-entry "do not propose again"
+bought 15%. Removing the copyable text bought everything. **The Cell is not disobeying an instruction
+to vary — it is completing a pattern it can see**, and an instruction aimed at a copying behaviour
+does not reach it. Assume that for the next prompt-driven behaviour someone tries to fix with a
+sentence.
 
-**Wake 0 of every run has an empty section by construction.** Vendi over the four unanchored
-first-proposals from four independent colonies is **1.970** (`llama3.2`) and **1.917** (`qwen2.5`),
-against 1.048 and 1.216 inside an anchored colony. That comparison varies two things at once — which
-is why the direct experiment was run — but it lands on the number the clean manipulation produced.
+### The recommendation is narrower than the arm that won
 
-### The obvious remedy is refused
+**All 52 control proposals are `pending`** — zero approved, zero rejected, because an unattended
+colony queues and nobody reviews. So ADR-046's channel carried nothing in any arm, and `nosummary`
+cost it nothing *only because it was never exercised*. That is also why `nosummary` sits so close to
+`suppressed`: with everything pending its body reduces to `- [experiment] -> waiting on a person`.
 
-Deleting the section is the change this result invites and it is wrong. **ADR-046 is built on it:**
-a `STRATEGY` proposal has no consumer and no regeneration — approving it *is* the act, and the
-decision annotation in this very section is the whole mechanism by which the act reaches the Cell.
-Remove it and that subsystem stops working with **no test failing**, because what it delivers is
-prose in a prompt. §15.2 also requires episodic memory, and a Cell that cannot see what it proposed
-cannot notice it is repeating; the gain would be amnesia, not judgement.
-
-So the remedy is what the section *says*, not whether it appears — a prompt change, which §14.2 says
-must face counterfactual twins rather than ship on one measurement. The cheapest candidate: the
-section is titled "reference material, not instructions" and never states that a *new* proposal is
-wanted. **Naming the absent expectation is the move ADR-049 already made** when it found the prompt
-named no field the parser rejects.
+So the two goals are **separable, not in tension**: the summaries doing the anchoring are on entries
+that convey no decision. Hide the summary for `pending`/`not reviewed` and keep it for
+`approved`/`rejected` — identical to `nosummary` in the measured regime, so it inherits the full
+gain, while ADR-046 keeps exactly what it needs.
 
 ### Verification
 
-- **The instrument was checked, not trusted.** The script asserts the section is absent from every
-  assembled `context_json` in the suppressed arm and present in the control. Both passed — a
-  manipulation that silently fails to reach the prompt gives a null result indistinguishable from a
-  real one.
-- **Matched at 3 proposals per run**, because Vendi scales with item count and the treatment arm
-  produced more proposals (4.25 vs 2.75). Unmatched the gap reads 2.334 vs 1.040; the honest figure
-  is 1.957 vs 1.053.
-- **The control replicated the committed n=32 arm exactly** — 11/32 parsed, Vendi 1.040 against
-  1.048 — so the harness change between them was not a factor.
-- **The parse-rate difference is not claimed.** 17/32 vs 11/32 is p = 0.10. A shorter prompt
-  plausibly parses better; this measurement does not show it.
-- **Invisible to every test.** Suite and golden run are green in both arms: `MockProvider`'s reply is
-  an input, not a response to the prompt's wording — ADR-049's blind spot, hit a third time.
-- **1004 tests and the golden run green.** Zero USD_REAL in either arm.
-- Next: the prompt change above, under §14.2 counterfactual twins. The other two candidate causes
-  (genome pinning, identical wake reason) can only account for the residue — anchoring does not
-  explain why the suppressed arm scores 1.96 rather than 3 on three proposals.
+- **Instrument checked with something that can fail.** The first check grepped `context_json` for
+  body text, but `Section.to_record()` stores only name, tokens and `required` — it could never pass,
+  and reported BROKEN against manipulations that were correct. Replaced with token counts: control's
+  section median **81 tokens**, `nosummary`'s **21**, both present. Variants also verified by
+  rendering them directly.
+- **A missing `__main__` guard cost the control arm.** Importing the experiment script to inspect its
+  variants re-ran the batch and overwrote four databases mid-flight — caught from an mtime later than
+  the arm that ran after it. Guard added, control re-run from scratch, and the other four arms
+  verified intact at 32/32 before use.
+- **The parse-rate difference is not claimed**: 40/96 vs 52/96 is p = 0.11.
+- **1004 tests and the golden run green.** Zero USD_REAL in any arm.
+- Next: implement the pending-only variant (a golden-run expectation bump under A12), and an arm that
+  **actually approves proposals mid-run** — nothing here shows whether a Cell anchors to an *approved*
+  summary too, which is the one result that would put ADR-046 and diversity back in real conflict.
