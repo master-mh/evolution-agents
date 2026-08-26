@@ -1189,7 +1189,9 @@ actually queued for building — this file is memory, not a backlog to work thro
   definition, one a verification that had only ever run against half its subject. Re-running at n=32
   confirmed the headline and changed nothing about it. **Ask what would falsify a number before
   asking for more of it.**
-- **The semantic diversity measure exists and lives nowhere durable.** Vendi score
+- **The semantic diversity measure now lives in `scripts/diversity.py`** (2026-08-26), with the
+  harness that feeds it in `scripts/measure_parse_compliance.py` and usage in `scripts/README.md`.
+  Vendi score
   (`exp(H(eigenvalues of K/n))` over cosine similarity of `nomic-embed-text` embeddings) is the
   effective number of distinct ideas, needs no threshold, and calibrated cleanly: 8 identical strings
   → 1.000, three rewordings of one idea → 1.170, three unrelated ideas → 2.493. Pure-Python Jacobi

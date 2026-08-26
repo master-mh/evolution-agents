@@ -196,7 +196,9 @@
   parses everything, which is the whole point of that arm. On it, `llama3.2` t=0.8 vs t=0.0 is 0.156
   vs 0.125 and the temperature effect nearly disappears; on `distinct/parsed` it is 0.455 vs 0.125,
   a 3.6× gap. **Both columns are now reported.** `qwen2.5`'s diversity advantage is confirmed on both.
-- [x] **Semantic diversity measure — BUILT AND APPLIED** (2026-08-26). Vendi score over
+- [x] **Semantic diversity measure — BUILT, APPLIED, AND IN THE REPO** (2026-08-26) as
+  `scripts/diversity.py`, with `scripts/measure_parse_compliance.py` feeding it and a
+  `scripts/README.md` saying to run both. Neither is packaged or collected by pytest. Vendi score over
   `nomic-embed-text` embeddings of recorded summaries: the *effective number of distinct ideas*, no
   threshold. Calibrated before use (8 identical → 1.000; **three rewordings of one idea → 1.170 where
   strings say 3**; three unrelated → 2.493), and applied to the proposals the n=32 arms already
