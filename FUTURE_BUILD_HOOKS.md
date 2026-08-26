@@ -1140,10 +1140,12 @@ actually queued for building — this file is memory, not a backlog to work thro
   the scaffolding from scratch, and the ADR-049 harness could not be reproduced exactly, so ADR-050
   re-ran its own control arm rather than trusting the recorded 20/56. A marked test that runs only
   when Ollama is up, or a `mitosis` verb, would have saved both.
-- **`qwen2.5` on an 8 GB box is not a usable path**, whatever its compliance: 0.53 tok/s generation at
-  7% free memory, ~160 s median per wake against `llama3.2`'s 11 s, and a 16-wake arm took over four
-  hours of wall clock. This is a hardware ceiling, not a model verdict — the same model on a larger
-  box would be worth re-measuring, and its **flattening rate of 0/16 is the number to remember**.
+- **`qwen2.5` on an 8 GB box is workable, and the first measurement saying otherwise was wrong.**
+  Originally recorded here as "not a usable path" at 0.53 tok/s and ~160 s median per wake; re-measured
+  with the other model unloaded and one sqlite connection per run rather than per wake, it is **38 s
+  median against `llama3.2`'s 12 s** — about 3×. The original arm was thrashing, and `latency_ms`
+  times the HTTP call with memory pressure inside that window. **Do not quote a local-model latency
+  taken while another model is resident.** Its flattening rate of 0/16 remains the number to remember.
 - **The pricing table's bare-tag requirement is a live trap for the next model pull.** `pricing.py`
   keys Ollama models on the bare name, and `gateway._settle` falls back to `request.model` when the
   resolved tag is unpriced — so `ollama pull qwen2.5` + `--model qwen2.5` settles at zero, while
@@ -1154,3 +1156,15 @@ actually queued for building — this file is memory, not a backlog to work thro
   "unparseable" deliberation — a timeout that looks exactly like a compliance failure. This cost the
   first qwen2.5 measurement, and it is the one way a wake can be *recorded* as the model's fault when
   it is the harness's.
+- **A measurement that will be written down gets replicated first.** ADR-050 published three
+  conclusions from single arms; **two of the three were wrong**, and both errors pointed the same way
+  — a number taken under one set of conditions reported as a property of the model. Re-running the
+  same arm caught both in minutes. The `distinct/wake` figure in particular moved **4.7× on the same
+  model at the same temperature** (0.12 → 0.56) while parse rate held to within one, so it cannot rank
+  two models at n=16 — it is only trustworthy at t=0, where the variance is provably zero because the
+  replies are byte-identical.
+- **`risk_tier` on `abstain` is what a 7B model deterministically converges to.** `qwen2.5` at t=0
+  produced the same `abstain` reply 16/16 times, carrying `kind` and `rationale` and omitting
+  `summary`, `risk_tier` and `estimated_cost_minor_units`. Three independent observations now
+  (`llama3.2`'s `"risk_tier": null`, `qwen2.5`'s stochastic failures, and this). If the schema keeps
+  requiring a risk tier for declining to act, that is the single most-hit parse failure left.

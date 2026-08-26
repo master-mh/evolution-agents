@@ -2396,28 +2396,38 @@ from amendment ID to spec location is complete in one place:
   `model_calls.response_text`, which keeps the raw reply even where the `deliberations` row keeps only
   the validation error.
 
-  | arm | parsed | distinct summaries | kinds | **distinct/wake** | median latency |
-  |---|---|---|---|---|---|
-  | `llama3.2` t=0.8 (control) | 7/16 | 4 | 2 | **0.25** | 11.3 s |
-  | `qwen2.5` 7B t=0.8 | 14/16 | 2 | 1 | **0.12** | 162.5 s |
-  | `llama3.2` t=0.0 | **16/16** | **1** | 1 | **0.06** | 6.3 s |
+  | arm | parsed | **distinct/wake** | median latency |
+  |---|---|---|---|
+  | `llama3.2` t=0.8 (control) | 7/16, replicated 7/16 | 0.25, replicated 0.19 | 11.3 / 12.4 s |
+  | `qwen2.5` 7B t=0.8 | 14/16, replicated 13/16 | 0.12, replicated **0.56** | 162.5 / **38.1** s |
+  | `llama3.2` t=0.0 | **16/16** | **0.06** (1 reply × 16) | 6.3 s |
+  | `qwen2.5` 7B t=0.0 | **0/16** | **0.00** (1 reply × 16) | 14.6 s |
+
+  Every arm n=16 (2 runs × 8). Each t=0.8 arm was measured twice — see the correction below, which
+  is why two figures are given. **Parse rates replicate; the diversity figures do not.**
 
   The control re-measures at 7/16 against ADR-049's recorded 20/56 (Fisher one-sided p = 0.38, not
   significant) — the scenario is comparable, so the arms can be read against that baseline.
 - **Decision: change neither the model nor the temperature. The hypothesis PRIORITIES scheduled is
   refuted, and so is its obvious replacement.**
-  1. **`qwen2.5` beats `llama3.2` on parse rate and it is not the answer.** 14/16 vs 7/16 is real
-     (p = 0.012), and the win is exactly ADR-049's failure class disappearing: **flattened 0/16 vs
-     3/16**, with `hypothesis: Extra inputs are not permitted` and "an experiment proposal must carry
-     an experiment" — 6 of the control's 9 failures — absent entirely. But it costs **14× the latency**
-     on this 8 GB box (0.53 tok/s generation at 7% free memory: the machine pages per token), and it
-     produced **fewer distinct proposals than the model it replaced**.
+  1. **`qwen2.5` beats `llama3.2` on parse rate, and that part replicates.** 14/16 then 13/16 against
+     7/16 twice (p = 0.012 on the first pair), and the win is exactly ADR-049's failure class
+     disappearing: **flattened 0/16 vs 3/16**, with `hypothesis: Extra inputs are not permitted` and
+     "an experiment proposal must carry an experiment" — 6 of the control's 9 failures — absent
+     entirely. **The case against it, as first written here, did not survive re-measurement**; see
+     the correction below. It is ~3× slower per call, and whether it is more or less diverse than the
+     3B model is unresolved at this sample size.
   2. **Temperature was never set, and setting it is worse.** Neither provider sends one
      (`providers.py` sends `num_predict` and nothing else), and neither model pins one in its
      Modelfile, so every deliberation this project has ever run — including ADR-049's — sampled at
-     Ollama's default **0.8**. Forcing `temperature: 0` took `llama3.2` to **16/16, a perfect parse
-     rate**, and collapsed it to **one distinct proposal repeated eight times per run**. The Cell
-     proposes the identical experiment every wake, forever.
+     Ollama's default **0.8**. Forcing `temperature: 0` collapses **both** models to a single
+     byte-identical reply per run (1 distinct `response_hash` across 8 calls, verified on all four
+     t=0 runs) — so this is greedy decoding, not a small-model artifact. **Which reply they collapse
+     onto is arbitrary, and it decides the entire score:** `llama3.2` lands on a well-formed
+     experiment proposal and scores **16/16**; `qwen2.5` lands on an `abstain` the schema rejects and
+     scores **0/16**. Same setting, opposite extremes. **At t=0 a parse rate is one sample reported
+     sixteen times**, and `llama3.2`'s perfect score — the result that nearly became a one-line commit
+     to `providers.py` — was luck.
   3. **Therefore parse rate is the wrong objective, and this ADR's real content is the metric.**
      It is maximised at exactly the setting that deletes the system's purpose. §15.1 shows a Cell its
      own recent proposals *so it does not repeat itself*, and at t=0 that context grew (1522 → 1628
@@ -2425,8 +2435,12 @@ from amendment ID to spec location is complete in one place:
      than 44% parse at 0.25.** Anything that tunes compliance from here must report distinct
      parseable proposals per wake alongside it, or it will optimise toward a mute colony.
 - **What it displaced.**
-  - **`qwen2.5` as the deliberation default.** Better compliance, worse diversity, 14× slower, and on
-    this hardware a 16-wake arm took over four hours. Rejected on the composite, not on speed alone.
+  - **`qwen2.5` as the deliberation default — deferred, not rejected.** The first draft rejected it on
+    a composite of worse diversity and 14× latency, and **re-measurement withdrew both legs** (see the
+    correction). What stands is better compliance at ~3× the latency, which is a live option rather
+    than a closed one. It is not adopted here only because the temperature question below has to be
+    settled first: choosing a model against a metric that turns out to be sampling-dependent is the
+    same mistake one level up.
   - **`temperature: 0` (or any fixed temperature) as a provider constant** — the one-line change this
     measurement most obviously invites. Rejected twice over: it trades the colony's variation for a
     metric, and **§14.1 names "temperature/sampling mutation" as a prompt-mutation operator**, which
@@ -2450,3 +2464,37 @@ from amendment ID to spec location is complete in one place:
     bare tag settled at zero as intended; per-book conservation OK, hash chains valid, real-spend
     breaker 0/100, A6 linkage complete.
   - **No code changed.** This ADR records a measurement and two refusals.
+
+### Correction (2026-08-26, same day, before any of it was acted on)
+
+The first version of this ADR was pushed with two figures that **do not reproduce**, and the error was
+the same in both cases: a measurement taken while the box was thrashing, reported as a property of
+the model. Recorded here rather than silently rewritten, because the wrong numbers reached `main`.
+
+- **"14× slower / 0.53 tok/s / not a usable path on this hardware" — WRONG.** Re-measured under clean
+  conditions (`llama3.2` not resident, one sqlite connection reused across a run instead of
+  `connect_and_migrate` per wake), `qwen2.5`'s median call latency is **38.1 s, not 162.5 s** — about
+  **3× `llama3.2`'s 12.4 s, not 14×**. The original arm was measured with a 2 GB model resident
+  alongside a 4.7 GB one on an 8 GB box; `latency_ms` times only the HTTP call, but memory pressure
+  is inside that window. Output tokens fell only 1.7× between the arms, nowhere near enough to
+  explain 4×. **The first number measured the measurement environment.**
+- **"Produced fewer distinct proposals than the model it replaced" — WITHDRAWN.** Re-measured,
+  `qwen2.5` at t=0.8 gives **0.56 distinct/wake against the first arm's 0.12** — and on the second
+  reading it is the *more* diverse of the two, not the less. The control is stable across the same
+  pair of runs (7/16 both times, 0.25 → 0.19), so this is not a harness change; the two runs inside
+  the clean arm alone gave 3 and 6 distinct summaries.
+- **Therefore: parse rate replicates and the diversity metric does not, at n=16.** Both models'
+  parse rates landed within one of themselves on re-measurement; the diversity figure moved by 4.7×
+  on the same model at the same temperature. **The `distinct/wake` column cannot support a ranking
+  between two models at this sample size** — it can only support the t=0 finding, where the variance
+  is provably zero because the replies are byte-identical.
+- **What is unaffected.** The load-bearing conclusion does not depend on either withdrawn figure:
+  parse rate is a bad sole objective, t=0 makes it meaningless (one sample × 16, landing at 16/16 or
+  0/16 by luck of which reply the model converges on), and §14.1 puts sampling in the genome rather
+  than the kernel. The t=0 rows are hash-verified. If anything the 2×2 strengthens it — the first
+  draft argued t=0 trades compliance for diversity, and the truth is that it does not reliably buy
+  compliance either.
+- **The lesson, which is the repo's own and was ignored anyway.** CLAUDE.md's testing section says to
+  teeth-check a guard by reintroducing the bug; the analogue for a measurement is to re-run the arm
+  you are about to draw a conclusion from. Two of three conclusions here came from single arms, and
+  both of those were wrong. **A measurement that is going to be written down gets replicated first.**

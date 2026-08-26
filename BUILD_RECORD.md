@@ -20,26 +20,36 @@ ADR-049 left one item: at ~36% compliance the remaining gap was "a **model** dec
 edit," and PRIORITIES carried it as *pull a bigger local model and re-measure*. Pulled `qwen2.5` (7B)
 and measured three arms, n=16 each, fresh colony per run.
 
-| arm | parsed | distinct summaries | **distinct/wake** | median latency |
-|---|---|---|---|---|
-| `llama3.2` t=0.8 (control) | 7/16 | 4 | **0.25** | 11.3 s |
-| `qwen2.5` t=0.8 | 14/16 | 2 | **0.12** | 162.5 s |
-| `llama3.2` t=0.0 | **16/16** | **1** | **0.06** | 6.3 s |
+| arm | parsed | **distinct/wake** | median latency |
+|---|---|---|---|
+| `llama3.2` t=0.8 (control) | 7/16, replicated 7/16 | 0.25, replicated 0.19 | 11.3 / 12.4 s |
+| `qwen2.5` t=0.8 | 14/16, replicated 13/16 | 0.12, replicated **0.56** | 162.5 / **38.1** s |
+| `llama3.2` t=0.0 | **16/16** | **0.06** (1 reply × 16) | 6.3 s |
+| `qwen2.5` t=0.0 | **0/16** | **0.00** (1 reply × 16) | 14.6 s |
+
+Each t=0.8 arm measured twice. **Parse rates replicate; diversity figures do not** — see the
+correction in ADR-050.
 
 ### The hypothesis was refuted, and so was its obvious replacement
 
-- **`qwen2.5` wins on parse rate and loses the thing that matters.** 14/16 vs 7/16 is real
-  (Fisher p = 0.012) and it is precisely ADR-049's failure class vanishing — flattened **0/16 vs
-  3/16**. But it is **14× slower** here (0.53 tok/s at 7% free memory; an 8 GB box pages per token)
-  and produced **fewer distinct proposals than the 3B model it would replace**.
+- **`qwen2.5` wins on parse rate, and that replicates** — 14/16 then 13/16 against 7/16 twice,
+  precisely ADR-049's failure class vanishing (flattened **0/16 vs 3/16**). **The case against it in
+  the first draft of this entry did not survive re-measurement**: "14× slower" was 3× once the box
+  was not thrashing, and "fewer distinct proposals" reversed outright. Both withdrawn; see ADR-050's
+  correction. It is a live option, deferred behind the temperature question, not a rejected one.
 - **Nobody had ever set the sampling temperature.** `providers.py` sends `num_predict` and nothing
   else, and neither model pins one, so every deliberation in this project's history — ADR-049's
-  measurements included — ran at Ollama's default 0.8. Forcing `temperature: 0` gave a **perfect
-  16/16** and collapsed the Cell to **one proposal repeated eight times per run**, while §15.1's
-  context of its own recent proposals grew (1522 → 1628 tokens) and changed nothing.
-- **So the finding is the metric, not the model.** Parse rate is maximised by the setting that
-  deletes the colony's variation. **100% parse at 0.06 distinct/wake is worse than 44% at 0.25.**
-  Anything tuning compliance from here must report both numbers.
+  measurements included — ran at Ollama's default 0.8. At `temperature: 0` **both** models collapse to
+  a single byte-identical reply per run (1 distinct `response_hash` per 8 calls), while §15.1's
+  context of its own recent proposals grows (1522 → 1628 tokens) and changes nothing. **Which reply
+  they collapse onto is arbitrary and decides the whole score:** `llama3.2` lands on a valid
+  experiment (**16/16**), `qwen2.5` on an `abstain` the schema rejects (**0/16**). At t=0 a parse rate
+  is one sample reported sixteen times.
+- **So the finding is the metric, not the model.** Parse rate is maximised by a setting that deletes
+  the colony's variation *and* does not reliably buy compliance — the same setting scores 16/16 on one
+  model and 0/16 on another. Anything tuning compliance from here must report distinct proposals per
+  wake beside the rate, and **must replicate the arm before concluding from it**: two of this slice's
+  three conclusions came from single arms and both were wrong.
 - **§14.1 forbids the one-line fix.** "temperature/sampling mutation" is listed as a prompt-mutation
   operator — sampling sits in the *mutable Cell* column, so pinning it in the kernel would delete a
   mutation dimension the spec enumerates. The socket is already reserved and already empty:
@@ -61,9 +71,11 @@ and measured three arms, n=16 each, fresh colony per run.
 - **Zero USD_REAL moved in any arm.** `qwen2.5` was newly exercised through the priced path and its
   bare tag settled at zero; conservation OK per book, hash chains valid, breaker 0/100, A6 linkage
   complete. **1004 tests and the golden run still green** — nothing changed to break them.
-- **The harness was lost to a wiped scratchpad for the second time.** FUTURE_BUILD_HOOKS has logged
-  "nothing measures parse compliance in CI" since ADR-049; that gap has now cost the harness twice.
+- **The harness was lost to a wiped scratchpad for the second time**, and rebuilding it is what
+  surfaced both errors — the rebuild ran fast enough to expose that the original latency was
+  environmental. FUTURE_BUILD_HOOKS has logged "nothing measures parse compliance in CI" since
+  ADR-049; that gap has now cost the harness twice and a published figure once.
 - Next: **`temperature` as a genome field** (§14.1), carrying §14.2's counterfactual-twin obligation
   — the first real decision is whether sampling is inherited, mutated, or both. The `risk_tier`-on-
-  abstain schema question is now well-evidenced and cheap. `qwen2.5` at t=0 is the one unmeasured
-  cell of the 2×2.
+  abstain schema question is now well-evidenced and cheap — it is what `qwen2.5` deterministically
+  converges to, 16/16 of its greedy output. The 2×2 is complete.

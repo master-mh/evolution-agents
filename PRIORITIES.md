@@ -175,17 +175,27 @@
   project's history ran at Ollama's default 0.8. But the fix is not to set it, because
   **parse rate is maximised by the setting that destroys the colony**:
 
-  | arm | parsed | distinct summaries | **distinct/wake** | median latency |
-  |---|---|---|---|---|
-  | `llama3.2` t=0.8 (control) | 7/16 | 4 | **0.25** | 11.3 s |
-  | `qwen2.5` t=0.8 | 14/16 | 2 | **0.12** | 162.5 s |
-  | `llama3.2` t=0.0 | **16/16** | **1** | **0.06** | 6.3 s |
+  | arm | parsed | **distinct/wake** | median latency |
+  |---|---|---|---|
+  | `llama3.2` t=0.8 (control) | 7/16, replicated 7/16 | 0.25, replicated 0.19 | 11.3 / 12.4 s |
+  | `qwen2.5` t=0.8 | 14/16, replicated 13/16 | 0.12, replicated **0.56** | 162.5 / **38.1** s |
+  | `llama3.2` t=0.0 | **16/16** | **0.06** (1 reply × 16) | 6.3 s |
+  | `qwen2.5` t=0.0 | **0/16** | **0.00** (1 reply × 16) | 14.6 s |
 
-  `qwen2.5` wins on compliance (p = 0.012, ADR-049's flattening gone: 0/16 vs 3/16) and loses on
-  everything else — 14× slower here, and **fewer distinct proposals than the 3B model**. `temperature:
-  0` gives a perfect 16/16 and one proposal repeated eight times per run. **100% parse at 0.06
-  distinct/wake is worse than 44% at 0.25.** Control re-measured at 7/16 vs ADR-049's 20/56
+  `qwen2.5` wins on compliance and it replicates (14/16 then 13/16 vs 7/16 twice; ADR-049's
+  flattening gone, 0/16 vs 3/16). **The first draft's case against it was wrong on both legs and is
+  corrected in ADR-050**: "14× slower" was 3× once the box was not thrashing, and "fewer distinct
+  proposals" reversed on re-measurement. At `temperature: 0` **both** models collapse to one
+  byte-identical reply per run, landing at **16/16** (`llama3.2`, a valid experiment) or **0/16**
+  (`qwen2.5`, an `abstain` the schema rejects) by luck of which reply they converge on — so a t=0
+  parse rate is one sample reported sixteen times. Control re-measured at 7/16 vs ADR-049's 20/56
   (p = 0.38, NS), so the scenario is comparable. Zero USD_REAL in any arm.
+- [ ] **The `distinct/wake` metric needs a bigger n before it can rank anything.** It moved 4.7× on
+  the same model at the same temperature (`qwen2.5` t=0.8: 0.12 then 0.56), while parse rate held to
+  within one. It is only trustworthy at t=0, where the variance is provably zero because the replies
+  are byte-identical. Anything that tunes against it needs more runs per arm, or a better diversity
+  measure than distinct summary strings.
+  *Disproved by:* a diversity figure that replicates across two arms of the same model.
 - [ ] **`temperature` belongs in the genome, not the kernel — and the socket is already there.**
   §14.1 lists "temperature/sampling mutation" as a prompt-mutation operator, putting sampling in the
   *mutable Cell* column, so a provider constant would delete a mutation dimension the spec
@@ -203,9 +213,10 @@
   models — a Cell declining to act is arguably not stating a risk tier. Making it optional for
   ABSTAIN is a schema change with §23.1 implications; the alternative is leaving a parse failure in
   place for a defensible answer. Cheap, and now well-evidenced.
-- [ ] **`qwen2.5` at t=0 is the unmeasured cell of the 2×2.** Not needed for ADR-050's conclusion —
-  the diversity collapse is established on the arm that has data — but it would confirm whether the
-  collapse is universal or `llama3.2`-specific. ~30 min of a memory-bound box.
+- [x] **`qwen2.5` at t=0 — MEASURED** (2026-08-26). **0/16**, all eight replies per run
+  byte-identical, converging on the `abstain` shape the schema rejects. The collapse is universal
+  (greedy decoding, not a small-model artifact) and the *direction* of its effect on parse rate is
+  arbitrary. Completed the 2×2 and triggered ADR-050's correction.
 - [ ] **A parse-repair retry is the standard remedy and is deliberately unbuilt.** Re-prompting with
   the validation error would probably lift the rate a lot. It is a second model call per failure, it
   is §24.3's "controlled retries" (still unbuilt), and it pays twice for a prompt bug. Worth arguing
