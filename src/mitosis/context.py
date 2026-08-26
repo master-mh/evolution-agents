@@ -321,7 +321,12 @@ def _recent_proposals_section(conn: sqlite3.Connection, cell: Cell) -> Section |
     if not rows:
         return None
     body = "\n".join(
-        f"- [{r['kind']}] {r['summary']}\n    {_decision_note(r)}" for r in reversed(rows)
+        (
+            f"- [{r['kind']}] {r['summary']}\n    {_decision_note(r)}"
+            if _was_decided(r)
+            else f"- [{r['kind']}]\n    {_decision_note(r)}"
+        )
+        for r in reversed(rows)
     )
     return Section(
         name=(
@@ -331,6 +336,45 @@ def _recent_proposals_section(conn: sqlite3.Connection, cell: Cell) -> Section |
         ),
         body=body,
     )
+
+
+def _was_decided(row: sqlite3.Row) -> bool:
+    """Did a person actually judge this proposal? (ADR-052.)
+
+    **This gates whether the summary is shown at all**, and the line is drawn
+    exactly where `_decision_note` already draws it: `expired` is *not* decided,
+    because the window closing is not a judgement — collapsing that distinction
+    is the thing that docstring refuses to do.
+
+    Why the summary is withheld from an undecided proposal. §15.1's section was
+    measured as the cause of the colony's self-repetition: a Cell shown its own
+    recent wording proposes it again, scoring ~1.05 effective distinct ideas per
+    run of 8 wakes against ~1.94 with the section removed (ADR-051). Under §14.2
+    counterfactual twins, **the only edit that recovered that gain was removing
+    the summary** — naming the expectation in the heading measured at zero, and
+    an explicit "do not propose again" bought 15% (ADR-052). The Cell is
+    completing a pattern it can see, not disobeying an instruction, so the fix
+    has to remove the text rather than argue with it.
+
+    Why a *decided* proposal keeps its summary. ADR-046: a `STRATEGY` has no
+    consumer and no regeneration — approving it **is** the act, and this section
+    is the entire channel by which that act reaches the Cell. "Approved" is
+    meaningless if the Cell cannot tell *what* was approved, so hiding the
+    summary unconditionally would delete ADR-046's subsystem while every test
+    still passed, because what it delivers is prose in a prompt.
+
+    The two goals separate cleanly because the entries doing the anchoring are
+    the ones carrying no decision: across the 12 control runs that measured
+    this, **all 52 proposals were `pending`** — an unattended colony queues and
+    nobody reviews — so this branch costs ADR-046 nothing in the regime that was
+    measured, and preserves it exactly where it has something to say.
+
+    **Untested, and the reason to watch this:** no arm in ADR-052 ever exercised
+    the decided branch, so nothing shows whether a Cell anchors to an *approved*
+    summary too. If it does, ADR-046 and diversity are in genuine conflict and
+    this line moves.
+    """
+    return row["status"] in ("approved", "rejected")
 
 
 def _decision_note(row: sqlite3.Row) -> str:

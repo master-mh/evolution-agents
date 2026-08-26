@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from mitosis import (
+    approval,
     context,
     death,
     deliberation,
@@ -512,9 +513,20 @@ def test_context_never_loads_the_entire_history(conn):
     """§15.1, literally: do not load the entire Cell history."""
     cell = _make_cell(conn)
     for index in range(8):
-        _deliberate(
+        result = _deliberate(
             conn, cell, _valid_reply(summary=f"probe number {index}", predictions=[]),
-            wake_key=f"w{index}",
+            wake_key=f"w{index}", proposal_sink=approval.QueueSink(),
+        )
+        # Approved so the summaries actually render: since ADR-052 an *undecided*
+        # proposal shows no wording, which would make this probe invisible and the
+        # test vacuously green. Deciding them tests the leaky case on purpose —
+        # the slice must stay bounded even when every entry is fully shown.
+        approval.approve(
+            conn, request_id=conn.execute(
+                "SELECT request_id FROM approval_requests WHERE proposal_id = ?",
+                (result.proposal_id,),
+            ).fetchone()["request_id"],
+            decided_by="operator", reason="probe",
         )
 
     assembled = context.assemble(

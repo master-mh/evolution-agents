@@ -217,7 +217,12 @@
   each entry "do not propose again" gives 1.202. **Dropping the summary gives 1.852** — ahead of
   control in 89 of 90 pairwise comparisons, 95% of the suppression ceiling. **The Cell is completing a
   visible pattern, not disobeying an instruction**, so instructions aimed at copying do not reach it.
-- [ ] **Implement the pending-only variant: hide the summary for `pending`/`not reviewed`, keep it for
+- [x] **Pending-only variant — IMPLEMENTED** (2026-08-26), `context._was_decided`, golden expectation
+  25 -> 26. Confirmed live at **1.833 ideas/run** against control's 1.089. `expired` counts as
+  undecided — the judgement ADR-052 left open, drawn where `_decision_note` already drew it.
+  Teeth-checked three ways; two existing tests repaired, one of which had gone *silently vacuous*
+  rather than red. Balances identical in every book.
+- [x] **(done) Implement the pending-only variant: hide the summary for `pending`/`not reviewed`, keep it for
   `approved`/`rejected`.** Narrower than the arm measured and strictly safer — **all 52 control
   proposals were `pending`**, so ADR-046's channel carried nothing in the experiment and the anchoring
   came entirely from entries conveying no decision. Identical to `nosummary` in the measured regime,

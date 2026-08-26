@@ -817,7 +817,39 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #               The RESOURCE minor units round to the same figures.
 #           **`balances` is identical in every account in every book**, and
 #           USD_REAL is untouched — prompt text costs nothing to change.
-EXPECTATION_VERSION = 25
+#   25 -> 26 (a recent proposal shows its wording only once a person judged it;
+#           §14.2, §15.1; ADR-051, ADR-052).
+#           **Three sections differ — `deliberations`, `model_calls` and
+#           `resource_usage` — and all three only in token counts.** §15.1's
+#           recent-proposals section now omits the summary of an undecided
+#           proposal, so the assembled prompt is shorter; nothing about what the
+#           kernel does with a reply changed.
+#           (a) `deliberations` moves in **exactly two of eleven rows**, and only
+#               `context_tokens` (562 -> 552, 600 -> 590). Those two are the only
+#               wakes in the scenario that assemble a non-empty proposal log; the
+#               other nine have nothing to shorten. If a third row ever moves
+#               here, the scenario has started queueing earlier and that is a
+#               scenario change, not this one.
+#           (b) `model_calls` moves in the two matching rows, `input_tokens` only
+#               (2897 -> 2876, 2973 -> 2952). The delta is -21 against
+#               `context_tokens`' -10 because the two are measured by different
+#               estimators: `providers._estimate_tokens` is the deliberate 2
+#               chars/token over-estimate (ADR-021), while `context` counts with
+#               its own. Both shrinking, by different amounts, is the expected
+#               shape — equal deltas would mean one of them stopped measuring.
+#           (c) `resource_usage` follows `model_calls` exactly: input tokens are
+#               the shadow-priced quantity, so `quantity` tracks 2897 -> 2876 and
+#               2973 -> 2952. **`minor_units` is unchanged at 1 in both rows** —
+#               the shadow price rounds to the same figure — which is why the
+#               books do not move at all.
+#           **`proposals` is byte-identical**, the same assertion ADR-049 named:
+#           `MockProvider`'s reply is an input rather than a response to the
+#           prompt, so a scenario that parsed before parses identically now. It
+#           is also the reason this change needed a live measurement to justify
+#           at all (ADR-052) — no replay can see a prompt edit's real effect.
+#           **`balances` is identical in every account in every book**, and
+#           USD_REAL is untouched.
+EXPECTATION_VERSION = 26
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

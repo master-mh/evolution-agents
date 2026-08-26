@@ -1,5 +1,5 @@
 {
-  "expectation_version": 25,
+  "expectation_version": 26,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "0ea2adf28dc2f4d0880393e921670ab95cdc521cc577fd0936f44084923e7b37",
+  "semantic_hash": "560a4d4ab0d1a3c7e0e9f17da68c5e3bd186387c4f32c1bfbb054e0738d98d59",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -398,7 +398,7 @@
       {
         "cell": "cell#1",
         "context_dropped": [],
-        "context_tokens": 562,
+        "context_tokens": 552,
         "failure_reason": null,
         "made_model_call": true,
         "status": "proposed",
@@ -425,7 +425,7 @@
       {
         "cell": "cell#1",
         "context_dropped": [],
-        "context_tokens": 600,
+        "context_tokens": 590,
         "failure_reason": null,
         "made_model_call": true,
         "status": "proposed",
@@ -772,7 +772,7 @@
       {
         "cell": "cell#1",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 2897,
+        "input_tokens": 2876,
         "mirror_minor_units": 0,
         "output_tokens": 228,
         "pricing_table_version": "2026-07-27",
@@ -820,7 +820,7 @@
       {
         "cell": "cell#1",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 2973,
+        "input_tokens": 2952,
         "mirror_minor_units": 0,
         "output_tokens": 224,
         "pricing_table_version": "2026-07-27",
@@ -1468,7 +1468,7 @@
       {
         "cell": "cell#1",
         "minor_units": 1,
-        "quantity": 2897,
+        "quantity": 2876,
         "resource_type": "input_tokens"
       },
       {
@@ -1522,7 +1522,7 @@
       {
         "cell": "cell#1",
         "minor_units": 1,
-        "quantity": 2973,
+        "quantity": 2952,
         "resource_type": "input_tokens"
       },
       {

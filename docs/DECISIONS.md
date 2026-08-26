@@ -2739,3 +2739,20 @@ model and no new model calls at all.
     so importing it to inspect the variants re-ran the batch and overwrote four control databases
     mid-flight; caught from an mtime later than the arm that ran after it, and the control arm was
     re-run from scratch.
+
+### Implemented (2026-08-26)
+
+`context._was_decided` gates the summary; `_recent_proposals_section` renders
+`- [kind]\n    -> note` for an undecided proposal and keeps the summary once a person judged it.
+Golden expectation **25 -> 26**, three sections, token counts only; `balances` identical in every
+account in every book and `proposals` byte-identical.
+
+**One judgement this ADR did not settle: `expired` is not decided.** The measurement had no expired
+proposals, so the arm never covered it. The line is drawn where `_decision_note`'s own docstring
+already draws it — "collapsing them would tell a Cell it was judged when nobody judged it" — so a
+closed review window withholds the summary like any other undecided state. It is the one status that
+looks decided and is not, which is why it has its own test.
+
+**Confirmed live, because no replay can see a prompt edit** (the reason ADR-052 needed measuring at
+all): the shipped kernel scores **1.833 effective ideas per run** against the experiment's 1.852 and
+control's 1.089, with every parsed proposal distinct in all four runs.

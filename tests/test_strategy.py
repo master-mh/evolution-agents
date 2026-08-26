@@ -346,7 +346,12 @@ def test_the_cell_learns_what_a_person_decided(conn):
     log = _proposal_log(conn, cell)
     assert "approved plan\n    -> APPROVED, saying: go ahead" in log
     assert "rejected plan\n    -> REJECTED, saying: too expensive" in log
-    assert "pending plan\n    -> waiting on a person" in log
+    # The pending one keeps its note and loses its wording (ADR-052): the
+    # summary is what a Cell copies, and an undecided proposal has no decision
+    # to attach it to. The signal this test defends is the *decision*, which is
+    # still there.
+    assert "waiting on a person" in log
+    assert "pending plan" not in log
 
 
 def test_an_unreviewed_proposal_is_distinguishable_from_an_expired_one(conn):
@@ -364,5 +369,12 @@ def test_an_unreviewed_proposal_is_distinguishable_from_an_expired_one(conn):
     approval.expire_due(conn, now=datetime.now(timezone.utc) + timedelta(days=365))
 
     log = _proposal_log(conn, cell)
-    assert "never queued\n    -> not reviewed (nothing was asked of anyone)" in log
-    assert "queued then lapsed\n    -> the review window closed before anyone looked" in log
+    # Neither is decided, so neither shows its wording (ADR-052) — the two facts
+    # are carried entirely by the notes. Order is asserted rather than the
+    # summary prefix, because that is what still ties each note to the proposal
+    # it belongs to once the wording is gone.
+    unreviewed = "-> not reviewed (nothing was asked of anyone)"
+    lapsed = "-> the review window closed before anyone looked"
+    assert unreviewed in log and lapsed in log
+    assert log.index(unreviewed) < log.index(lapsed), "oldest first, so the note mapping holds"
+    assert "never queued" not in log and "queued then lapsed" not in log
