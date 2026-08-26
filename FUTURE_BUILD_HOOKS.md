@@ -1189,3 +1189,18 @@ actually queued for building — this file is memory, not a backlog to work thro
   definition, one a verification that had only ever run against half its subject. Re-running at n=32
   confirmed the headline and changed nothing about it. **Ask what would falsify a number before
   asking for more of it.**
+- **The semantic diversity measure exists and lives nowhere durable.** Vendi score
+  (`exp(H(eigenvalues of K/n))` over cosine similarity of `nomic-embed-text` embeddings) is the
+  effective number of distinct ideas, needs no threshold, and calibrated cleanly: 8 identical strings
+  → 1.000, three rewordings of one idea → 1.170, three unrelated ideas → 2.493. Pure-Python Jacobi
+  eigenvalues, so no new dependency; embeddings come from a local call made **outside** the kernel.
+  That last point is deliberate and should survive any move into the repo: scoring a Cell's diversity
+  from inside the loop is a model call per proposal **and** a §23.5 surface — a Cell that learns it is
+  scored on novelty learns to perform novelty. It belongs in analysis tooling, never in `deliberation`.
+- **Self-repetition is the finding the diversity metric was hiding.** ~1 effective idea per run of 8
+  wakes, across 128 wakes, two models, two temperatures. Three candidate causes, each cheap to test and
+  distinguishable by varying one and holding the others: (a) §15.1's context section — a Cell shown its
+  recent proposals may be anchoring *to* them, since the prompt states what it proposed and never that
+  it should propose something else; (b) the genome pinning market/problem/product so tightly that one
+  idea is the honest answer; (c) the wake reason being identical on every wake
+  (`scheduled research cycle`), so nothing in the prompt ever says the situation changed.

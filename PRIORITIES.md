@@ -196,12 +196,21 @@
   parses everything, which is the whole point of that arm. On it, `llama3.2` t=0.8 vs t=0.0 is 0.156
   vs 0.125 and the temperature effect nearly disappears; on `distinct/parsed` it is 0.455 vs 0.125,
   a 3.6× gap. **Both columns are now reported.** `qwen2.5`'s diversity advantage is confirmed on both.
-- [ ] **`distinct summary strings` is still a weak diversity measure even when correctly normalised.**
-  Two rewordings of one idea count as two proposals, which flatters exactly the runs where a model is
-  circling a single theme — visible in `qwen2.5` t=0.8's run 0, where six parses gave three
-  "Fetch the latest bank feed…" variants. If diversity is ever going to carry weight in the
-  genome-temperature slice (§14.2's counterfactual twins), it needs a semantic measure, not string
-  equality. Cheap version: cluster on `kind` plus a normalised token set.
+- [x] **Semantic diversity measure — BUILT AND APPLIED** (2026-08-26). Vendi score over
+  `nomic-embed-text` embeddings of recorded summaries: the *effective number of distinct ideas*, no
+  threshold. Calibrated before use (8 identical → 1.000; **three rewordings of one idea → 1.170 where
+  strings say 3**; three unrelated → 2.493), and applied to the proposals the n=32 arms already
+  recorded so a measure change could not be confused with new sampling noise. **It removed ADR-050's
+  headline rather than refining it** — see the third correction.
+- [ ] **A Cell proposes ~1 idea per run of 8 wakes, at any temperature, on either model — now the
+  largest open question.** Vendi per run: `llama3.2` **1.048** at t=0.8 vs **1.000** at t=0.0 (strings
+  claimed a 3.6× gap; the truth is 5%, and the t=0 arm had 8 proposals per run against 2.75 — three
+  times the chances to differ). `qwen2.5` 1.216. §15.1 shows a Cell its own recent proposals and it
+  proposes the same thing anyway, across **128 wakes**. A §14/§15 design problem, not a sampling one,
+  and it outranks the genome-temperature slice that surfaced it: **there is no point making sampling
+  heritable if sampling is not what varies behaviour.** Three distinguishable candidate causes are
+  parked in FUTURE_BUILD_HOOKS; vary one, hold the others.
+  *Disproved by:* any configuration scoring materially above ~1.2 ideas per run of 8.
 - [ ] **`temperature` belongs in the genome, not the kernel — and the socket is already there.**
   §14.1 lists "temperature/sampling mutation" as a prompt-mutation operator, putting sampling in the
   *mutable Cell* column, so a provider constant would delete a mutation dimension the spec

@@ -2553,3 +2553,52 @@ not this measurement's weak point, and increasing it would not have caught eithe
 32/32 on one model, 0/32 on another), and `qwen2.5` stays a live option deferred behind the
 temperature question rather than a rejected one. **`qwen2.5` is now the better model on every axis
 measured except latency**, where it is ~3.7× slower.
+
+### Third correction (2026-08-26): the diversity the temperature was supposedly destroying was never there
+
+PRIORITIES logged that "distinct summary strings" is a weak measure because two rewordings of one
+idea count as two. Replacing it with a semantic measure does not refine this ADR's headline — **it
+removes it.**
+
+**The measure.** Each recorded proposal's summary is embedded with a local `nomic-embed-text` call and
+scored by **Vendi score** — `exp(H(eigenvalues of K/n))` over the cosine-similarity matrix — the
+*effective number of distinct items*: 1.0 when every proposal paraphrases one idea, n when all n are
+unrelated. No threshold to tune. It is applied to the proposals the n=32 arms already recorded, not a
+fresh run, so a change in the measure cannot be confused with new sampling noise. Calibrated before
+use: 8 identical strings → 1.000; **three rewordings of one idea → 1.170 where the string measure says
+3**; three unrelated ideas → 2.493.
+
+| arm | proposals/run | **ideas/run (Vendi)** | distinct strings/run |
+|---|---|---|---|
+| `llama3.2` t=0.8 | 2.75 | **1.048** | 1.25 |
+| `llama3.2` t=0.0 | 8.00 | **1.000** | 1.00 |
+| `qwen2.5` t=0.8 | 5.50 | **1.216** | 2.75 |
+| `qwen2.5` t=0.0 | 0.00 | — | 0.00 |
+
+- **The temperature effect on diversity is ~5%, not 3.6×.** On strings, `llama3.2` t=0.8 vs t=0.0 was
+  0.455 vs 0.125 per parsed proposal. Semantically it is **1.048 vs 1.000 ideas per run**. The t=0 arm
+  is the stronger control here, not the weaker one: it recorded **8 proposals per run against 2.75**,
+  nearly three times as many chances to differ, and still scored exactly 1.000.
+- **What the string measure was counting.** `llama3.2` t=0.8 run 2's four proposals are three copies of
+  one experiment plus a `strategy` restating it in other words. `qwen2.5` t=0.8 run 2's six are all
+  "Fetch the latest POS export data…", its three "distinct" strings differing by a trailing clause.
+- **So the headline sentence of this ADR is withdrawn.** "Parse rate is maximised by the setting that
+  destroys the colony's variation" is wrong: **there was almost no variation to destroy at any
+  temperature.** A Cell proposes ~1 idea per run of 8 wakes whether sampled at 0.8 or 0.
+- **The decision does not change, and it never rested on this.** Two independent reasons stand
+  untouched: t=0 **does not reliably buy compliance** (32/32 on one model, 0/32 on the other), and
+  **§14.1 makes sampling a mutation operator**, so a kernel constant would delete a dimension the spec
+  enumerates. A third is now sharper: when a t=0 Cell's replies do not parse it enters a
+  **deterministic dead loop** it cannot think its way out of.
+- **And a larger problem is exposed, which was hiding behind the metric.** §15.1 shows a Cell its own
+  recent proposals; across 128 wakes, on two models, at two temperatures, **it proposed the same thing
+  anyway**. Temperature was never the variable that mattered for diversity — it changes surface
+  wording, not the idea. **The colony's self-repetition is a §14/§15 design problem, and it is a much
+  bigger one than the sampling question this ADR set out to answer.**
+
+**Fourth claim withdrawn, and the tally is the lesson.** Across three corrections this ADR has lost a
+latency figure (a thrashing box), a diversity comparison (0.12 vs 0.56 on a noisy metric), a
+byte-identity claim (a check that only ever ran on half its subject) and now its headline (a metric
+that counted paraphrases). **Every one was an instrument error; none was a sample-size error**, and
+n=16 → n=32 caught none of them. The measurement that finally moved the conclusion cost one embedding
+model and no new model calls at all.

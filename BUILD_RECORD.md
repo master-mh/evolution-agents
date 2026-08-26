@@ -12,7 +12,7 @@ proposed experiments, the strategy kind decided, the experiment_id foreign keys,
 normalised cost, and the reply format a model can follow, 2026-07-21 through 2026-08-25):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-26 — Parse rate is maximised by the setting that destroys the colony
+## 2026-08-26 — The Cell proposes one idea per run at any temperature
 
 A measurement, and two refusals (ADR-050). **No code changed, no migration, no test added.**
 
@@ -55,11 +55,17 @@ on it (0.156 vs 0.125). `distinct/parsed` conditions on producing a proposal: **
   reply per run**, and that is *caused by* its 0% parse rate: nothing parses → no proposal recorded →
   §15.1's recent-proposals section stays empty → prompt frozen at 1537 tokens → same reply forever.
   **A deterministic dead loop**, which the colony cannot think its way out of.
-- **So the finding is the metric, not the model.** Parse rate is maximised by a setting that deletes
-  the colony's variation *and* does not reliably buy compliance — the same setting scores 16/16 on one
-  model and 0/16 on another. Anything tuning compliance from here must report distinct proposals per
-  wake beside the rate, and **must replicate the arm before concluding from it**: two of this slice's
-  three conclusions came from single arms and both were wrong.
+- **So the finding is the metric, not the model — and the metric was wrong three times before it was
+  right.** A semantic measure (Vendi score over embedded summaries: the *effective number of distinct
+  ideas*, 1.0 when everything paraphrases one idea) removes this entry's original headline rather than
+  refining it. **The diversity temperature was supposedly destroying was never there:** `llama3.2`
+  scores **1.048 ideas per run at t=0.8 against 1.000 at t=0.0** — a 5% difference where distinct
+  strings claimed 3.6×, and the t=0 arm had *8 proposals per run against 2.75*, three times the
+  chances to differ. What the string measure counted was trailing clauses.
+- **The real problem is bigger than sampling.** §15.1 shows a Cell its own recent proposals; across
+  **128 wakes, two models, two temperatures, it proposed the same thing anyway** (~1 idea per run of
+  8). Temperature changes surface wording, not the idea. **Self-repetition is a §14/§15 design
+  problem**, and it was hidden the whole time behind a metric that scored rewordings as novelty.
 - **§14.1 forbids the one-line fix.** "temperature/sampling mutation" is listed as a prompt-mutation
   operator — sampling sits in the *mutable Cell* column, so pinning it in the kernel would delete a
   mutation dimension the spec enumerates. The socket is already reserved and already empty:
@@ -81,14 +87,18 @@ on it (0.156 vs 0.125). `distinct/parsed` conditions on producing a proposal: **
 - **Zero USD_REAL moved in any arm.** `qwen2.5` was newly exercised through the priced path and its
   bare tag settled at zero; conservation OK per book, hash chains valid, breaker 0/100, A6 linkage
   complete. **1004 tests and the golden run still green** — nothing changed to break them.
-- **Three published claims withdrawn across two corrections, and sample size caught none of them.**
-  "14× slower" was a thrashing box; "fewer distinct proposals" was a metric that charges a model for
+- **Four published claims withdrawn across three corrections, and sample size caught none of them.**
+  "14× slower" was a thrashing box; "fewer distinct proposals" was a metric charging a model for
   replies that never parsed; "byte-identical on all four t=0 runs" was a check that had only ever run
-  against one of the two models, the other's data having been wiped. Re-running at n=32 confirmed the
-  headline and changed nothing about it — **every real error needed a second angle, not more
-  samples.** FUTURE_BUILD_HOOKS has logged "nothing measures parse compliance in CI" since ADR-049;
-  that gap has now cost the harness twice and three published figures once each.
-- Next: **`temperature` as a genome field** (§14.1), carrying §14.2's counterfactual-twin obligation
-  — the first real decision is whether sampling is inherited, mutated, or both. The `risk_tier`-on-
-  abstain schema question is now well-evidenced and cheap — it is what `qwen2.5` deterministically
-  converges to, 16/16 of its greedy output. The 2×2 is complete.
+  against one of the two models, the other's data having been wiped; and the **headline itself** was a
+  metric counting paraphrases as ideas. Re-running at n=32 confirmed the headline and changed nothing
+  about it — **every real error was an instrument error, and none needed more samples.** The
+  measurement that finally moved the conclusion made no new model calls at all.
+- **The decision survives all four**, because it never rested on any of them: t=0 does not reliably buy
+  compliance (32/32 vs 0/32), §14.1 makes sampling a mutation operator, and a t=0 Cell whose replies
+  fail to parse enters a dead loop it cannot think its way out of.
+- Next: **why a Cell proposes one idea per run** — now the largest open question, and ahead of the
+  sampling work that prompted it. `temperature` as a genome field (§14.1, with §14.2's
+  counterfactual-twin obligation) is still worth doing but is no longer the diversity lever it looked
+  like. The `risk_tier`-on-abstain question is well-evidenced and cheap — it is what `qwen2.5`
+  deterministically converges to, **32/32** of its greedy output.
