@@ -1113,3 +1113,44 @@ actually queued for building — this file is memory, not a backlog to work thro
   ever argued, note the shape it must not take: a retry that re-prompts with the raw validation error
   hands a Cell the parser's internals, which is a §23.5 surface — a Cell that learns exactly which
   fields are checked learns exactly which to game.
+
+## Parse-compliance measurement (2026-08-26, ADR-050)
+
+- **Parse rate on its own is a trap, and it took a near-miss to see it.** The first reading of this
+  measurement was "qwen2.5 87.5% vs llama3.2 43.8%, ship qwen2.5", and the second was "temperature 0
+  scores 100%, set it". Both are the metric being maximised by the thing that hurts most: at t=0 the
+  Cell repeated **one identical proposal eight times per run**. Any future compliance work must
+  report **distinct parseable proposals per wake** next to the rate. The three arms measured 0.25
+  (llama3.2 t=0.8), 0.12 (qwen2.5 t=0.8) and 0.06 (llama3.2 t=0.0) — i.e. **exactly inverted from the
+  parse rate**.
+- **§15.1's "here is what you recently proposed" does not deter repetition at low temperature.**
+  Context grew 1522 → 1628 input tokens across a run as prior proposals accreted, and the reply did
+  not change by a single token. Whatever the context is doing for a Cell, discouraging self-repetition
+  is not it — worth knowing before anything is built on the assumption that it does.
+- **No provider has ever sent a sampling parameter.** `providers.py` sends `num_predict` and nothing
+  else, on either provider. Every measurement in this repo's history — ADR-048's and ADR-049's
+  included — was taken at whatever default the endpoint happened to apply (0.8 for both Ollama models
+  tested; neither pins one in its Modelfile). **Any past number quoted without a temperature has this
+  caveat**, and the paid-model n=1 from 2026-08-06 has it too.
+- **`model_policy` is the socket for it and is empty.** §16.2 genome field, hashed to
+  `cells.model_policy_hash`, written at birth, read by nothing (`grep model_policy src tests` → 6
+  hits, all storage). §14.1's "temperature/sampling mutation" is what it is reserved for.
+- **The harness has now been lost to a wiped scratchpad twice.** "Nothing measures parse compliance in
+  CI" has been logged since ADR-049; the cost is no longer hypothetical — each re-measurement rebuilds
+  the scaffolding from scratch, and the ADR-049 harness could not be reproduced exactly, so ADR-050
+  re-ran its own control arm rather than trusting the recorded 20/56. A marked test that runs only
+  when Ollama is up, or a `mitosis` verb, would have saved both.
+- **`qwen2.5` on an 8 GB box is not a usable path**, whatever its compliance: 0.53 tok/s generation at
+  7% free memory, ~160 s median per wake against `llama3.2`'s 11 s, and a 16-wake arm took over four
+  hours of wall clock. This is a hardware ceiling, not a model verdict — the same model on a larger
+  box would be worth re-measuring, and its **flattening rate of 0/16 is the number to remember**.
+- **The pricing table's bare-tag requirement is a live trap for the next model pull.** `pricing.py`
+  keys Ollama models on the bare name, and `gateway._settle` falls back to `request.model` when the
+  resolved tag is unpriced — so `ollama pull qwen2.5` + `--model qwen2.5` settles at zero, while
+  `--model qwen2.5:7b` raises `UnknownModelError` before anything settles. Fails safe, but the error
+  arrives at settlement time and reads like a pricing bug rather than a tag typo.
+- **`OllamaProvider`'s 120 s default timeout is not reachable from the CLI.** `mitosis wake` has no
+  `--timeout`, so a slow local model silently records an empty reply, 0 output tokens and an
+  "unparseable" deliberation — a timeout that looks exactly like a compliance failure. This cost the
+  first qwen2.5 measurement, and it is the one way a wake can be *recorded* as the model's fault when
+  it is the harness's.

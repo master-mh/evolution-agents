@@ -169,14 +169,43 @@
   skeleton into prose, and no field named in prose that the parser rejects. **Measured 0/44 → 20/56**
   on `llama3.2`; at n=16, replies carrying all five required fields 1 → 11 and correct nesting
   0 → 10. Golden expectation 24 → 25, token counts only, `proposals` byte-identical.
-- [ ] **~36% is still far below the 7/8 of 2026-08-06, and the next move is a model, not a prompt.**
-  That baseline predates three conditional payloads. Replies now stop cleanly (`stop_reason: stop`,
-  26–87 output tokens) and are simply incomplete, which is a capability ceiling rather than an
-  ambiguity: `llama3.2` is 3B. Two options, both needing a decision rather than a slice — run
-  deliberation on a larger local model (a bigger Ollama pull), or accept the rate on the free path
-  and use a paid model where compliance matters. **Re-measure before assuming a prompt edit will
-  help**: reordering the five required keys among themselves took the rate from 7/20 to 0/20.
-  *Disproved by:* a live run on any model whose parse rate exceeds ~7/8.
+- [x] **"The next move is a model, not a prompt" — MEASURED AND REFUTED** (2026-08-26), ADR-050.
+  Pulled `qwen2.5` (7B) and ran three arms, n=16 each, fresh colony per run. It is neither a model
+  nor a prompt: **nobody had ever set the sampling temperature**, so every deliberation in this
+  project's history ran at Ollama's default 0.8. But the fix is not to set it, because
+  **parse rate is maximised by the setting that destroys the colony**:
+
+  | arm | parsed | distinct summaries | **distinct/wake** | median latency |
+  |---|---|---|---|---|
+  | `llama3.2` t=0.8 (control) | 7/16 | 4 | **0.25** | 11.3 s |
+  | `qwen2.5` t=0.8 | 14/16 | 2 | **0.12** | 162.5 s |
+  | `llama3.2` t=0.0 | **16/16** | **1** | **0.06** | 6.3 s |
+
+  `qwen2.5` wins on compliance (p = 0.012, ADR-049's flattening gone: 0/16 vs 3/16) and loses on
+  everything else — 14× slower here, and **fewer distinct proposals than the 3B model**. `temperature:
+  0` gives a perfect 16/16 and one proposal repeated eight times per run. **100% parse at 0.06
+  distinct/wake is worse than 44% at 0.25.** Control re-measured at 7/16 vs ADR-049's 20/56
+  (p = 0.38, NS), so the scenario is comparable. Zero USD_REAL in any arm.
+- [ ] **`temperature` belongs in the genome, not the kernel — and the socket is already there.**
+  §14.1 lists "temperature/sampling mutation" as a prompt-mutation operator, putting sampling in the
+  *mutable Cell* column, so a provider constant would delete a mutation dimension the spec
+  enumerates. `model_policy` is a §16.2 genome field, hashed to `cells.model_policy_hash`, **written
+  at birth and read by nothing** — the fourteenth reserved socket. The slice carries §14.2's
+  counterfactual-twin obligation ("same task, environment, seed where possible, and budget, differing
+  by one prompt-level change"), and the first real decision is whether sampling is inherited,
+  mutated, or both. **Report distinct parseable proposals per wake alongside parse rate**, or the
+  slice will optimise toward a mute colony.
+  *Disproved by:* anything in `providers.py` or `deliberation.py` that sets a temperature.
+- [ ] **`risk_tier` on `abstain` — two models now independently refuse it.** `qwen2.5`'s only two
+  failures in 16 were `abstain` replies carrying `kind` + `rationale` alone, dropping `summary`,
+  `risk_tier` and `estimated_cost_minor_units`; `llama3.2` returned `"risk_tier": null` on the same
+  shape. A stronger model reaching the same objection is evidence the schema is wrong rather than the
+  models — a Cell declining to act is arguably not stating a risk tier. Making it optional for
+  ABSTAIN is a schema change with §23.1 implications; the alternative is leaving a parse failure in
+  place for a defensible answer. Cheap, and now well-evidenced.
+- [ ] **`qwen2.5` at t=0 is the unmeasured cell of the 2×2.** Not needed for ADR-050's conclusion —
+  the diversity collapse is established on the arm that has data — but it would confirm whether the
+  collapse is universal or `llama3.2`-specific. ~30 min of a memory-bound box.
 - [ ] **A parse-repair retry is the standard remedy and is deliberately unbuilt.** Re-prompting with
   the validation error would probably lift the rate a lot. It is a second model call per failure, it
   is §24.3's "controlled retries" (still unbuilt), and it pays twice for a prompt bug. Worth arguing

@@ -8,59 +8,62 @@ scheduler, the §23 approval queue, the dead-Cell estate, the rung-7 promotion p
 read-back, §9.2's birth cap, Auditor Cells, genome content, the tool surface, the artifact
 store, the external-action registry, the §27.1 autonomy decisions, grant regeneration, the
 expiry sweep, establishable rights, scheduler liveness, the experiment, experiment attribution,
-proposed experiments, the strategy kind decided, the experiment_id foreign keys, and §13.1's
-normalised cost, 2026-07-21 through 2026-08-25):
+proposed experiments, the strategy kind decided, the experiment_id foreign keys, §13.1's
+normalised cost, and the reply format a model can follow, 2026-07-21 through 2026-08-25):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-25 — The reply format a model can actually follow
+## 2026-08-26 — Parse rate is maximised by the setting that destroys the colony
 
-`proposal.KIND_PAYLOADS` + a rewritten `_prompt_schema` / `_payload_rule` + one guidance line
-(ADR-049). No migration, and **no change to the parser** — `proposal.parse` stays strict.
+A measurement, and two refusals (ADR-050). **No code changed, no migration, no test added.**
 
-ADR-048's live run found parse compliance had fallen from **7/8 (2026-08-06) to 1/8**; a controlled
-re-measurement put it at **0/12**, every failure the same shape. Three conditional payloads have been
-added to the schema since that 7/8, and **none of them had ever been shown to a model.** The suite
-and the golden run stayed green the whole time, because `MockProvider`'s reply is an input rather
-than a response to the prompt's wording — the same blind spot the 2026-08-06 enum bug was recorded
-under, hit again somewhere new.
+ADR-049 left one item: at ~36% compliance the remaining gap was "a **model** decision, not a prompt
+edit," and PRIORITIES carried it as *pull a bigger local model and re-measure*. Pulled `qwen2.5` (7B)
+and measured three arms, n=16 each, fresh colony per run.
 
-### Four renderings, each measured
+| arm | parsed | distinct summaries | **distinct/wake** | median latency |
+|---|---|---|---|---|
+| `llama3.2` t=0.8 (control) | 7/16 | 4 | **0.25** | 11.3 s |
+| `qwen2.5` t=0.8 | 14/16 | 2 | **0.12** | 162.5 s |
+| `llama3.2` t=0.0 | **16/16** | **1** | **0.06** | 6.3 s |
 
-1. **A payload is an object, not a sentence describing one.** `"experiment"` used to render as a
-   long English string containing braces, so the model hoisted `hypothesis` to the top level.
-2. **The skeleton is ordered, not sorted.** `sort_keys=True` put `experiment` and `external_action`
-   *above* `kind` and `summary` — the model met two conditional payloads before the field that
-   decides whether they apply. **This was the largest lever, worth more than the other three
-   together.**
-3. **Optional keys left the skeleton for the prose.** Shown as populated examples, `artifact` and
-   `predictions` came back filled with empty strings. Hiding *everything* conditional was worse
-   (0/12 — the model stopped emitting the payload its own kind required), so the split is
-   sometimes-mandatory in the skeleton, almost-always-absent in prose.
-4. **The prompt names no field the parser rejects.** A draft that said "you do not choose what stage
-   it runs at" got back `"experiment": {"stage": "§25.1", "rung": "1"}`. **Naming a field is an
-   invitation to emit it**, even while denying the Cell controls it.
+### The hypothesis was refuted, and so was its obvious replacement
+
+- **`qwen2.5` wins on parse rate and loses the thing that matters.** 14/16 vs 7/16 is real
+  (Fisher p = 0.012) and it is precisely ADR-049's failure class vanishing — flattened **0/16 vs
+  3/16**. But it is **14× slower** here (0.53 tok/s at 7% free memory; an 8 GB box pages per token)
+  and produced **fewer distinct proposals than the 3B model it would replace**.
+- **Nobody had ever set the sampling temperature.** `providers.py` sends `num_predict` and nothing
+  else, and neither model pins one, so every deliberation in this project's history — ADR-049's
+  measurements included — ran at Ollama's default 0.8. Forcing `temperature: 0` gave a **perfect
+  16/16** and collapsed the Cell to **one proposal repeated eight times per run**, while §15.1's
+  context of its own recent proposals grew (1522 → 1628 tokens) and changed nothing.
+- **So the finding is the metric, not the model.** Parse rate is maximised by the setting that
+  deletes the colony's variation. **100% parse at 0.06 distinct/wake is worse than 44% at 0.25.**
+  Anything tuning compliance from here must report both numbers.
+- **§14.1 forbids the one-line fix.** "temperature/sampling mutation" is listed as a prompt-mutation
+  operator — sampling sits in the *mutable Cell* column, so pinning it in the kernel would delete a
+  mutation dimension the spec enumerates. The socket is already reserved and already empty:
+  `model_policy` is a §16.2 genome field, hashed to `cells.model_policy_hash`, **written at birth and
+  read by nothing** — the fourteenth such socket.
 
 ### Verification
 
-- **Measured 0/44 → 20/56 parseable** on `llama3.2`, same scenario, three runs per arm. Decomposed
-  at n=16: all five required fields present **1 → 11**, payload correctly nested **0 → 10**,
-  flattened **13 → 4**.
-- **1004 tests passing** (16 new, 0 removed; up from 988). **Golden expectation 24 → 25**, two
-  sections, **token counts only** — `proposals` and `deliberations` byte-identical, `balances`
-  identical in every account in every book.
-- **Teeth-checked nine ways.** Two of my own tests were weak and the teeth-check found both: one
-  asserted a bare substring (`"artifact" in rule`) that the key's own description text satisfied,
-  and one was parametrised over `KIND_PAYLOADS`, so deleting an entry deleted a case instead of
-  failing one — **the suite went quieter rather than redder**. Replaced with a test that derives the
-  pairing from the parser.
-- **One plausible hypothesis measured and refuted.** `risk_tier` and `estimated_cost_minor_units`
-  were the most-omitted fields, so moving them ahead of `summary`/`rationale` looked obviously right
-  — a model that runs out of steam drops its tail. It took the rate from **7/20 to 0/20**. Reverted,
-  and the order now carries a comment saying not to touch it without re-measuring.
-- **This is a repair, not a restoration, and the honest reason matters.** ~36% is far below 7/8, and
-  that baseline predates three conditional payloads. Replies now stop cleanly (`stop_reason: stop`,
-  26–87 output tokens) and are simply incomplete — a 3B capability ceiling, not an ambiguity. Not
-  truncation: checked.
-- Next: the remaining gap is a **model** decision, not a prompt edit — a larger local model, or a
-  paid one where compliance matters. A parse-repair retry is the standard third option and is
-  deliberately unbuilt (§24.3, and it pays twice for a prompt bug). All three are in PRIORITIES.
+- **The control validates the scenario:** re-measured at 7/16 against ADR-049's recorded 20/56,
+  Fisher one-sided p = 0.38 — not significantly different, so the arms read against that baseline.
+- **The temperature override was teeth-checked** rather than trusted: asserted `temperature: 0.0`
+  reaching the request payload, not just inferred from the changed result.
+- **Sampling defaults ruled out as a confound** — `ollama show --parameters` sets no temperature on
+  either model, so both t=0.8 arms sampled identically and the qwen2.5 gap is the model.
+- **`qwen2.5`'s only two failures are a known schema objection**, reached independently by a stronger
+  model: both `abstain` replies carrying `kind` + `rationale` alone. FUTURE_BUILD_HOOKS already logs
+  `risk_tier`-on-abstain from `llama3.2` doing the same. Two models now decline to state a risk tier
+  for declining to act — evidence the schema is wrong, not the models.
+- **Zero USD_REAL moved in any arm.** `qwen2.5` was newly exercised through the priced path and its
+  bare tag settled at zero; conservation OK per book, hash chains valid, breaker 0/100, A6 linkage
+  complete. **1004 tests and the golden run still green** — nothing changed to break them.
+- **The harness was lost to a wiped scratchpad for the second time.** FUTURE_BUILD_HOOKS has logged
+  "nothing measures parse compliance in CI" since ADR-049; that gap has now cost the harness twice.
+- Next: **`temperature` as a genome field** (§14.1), carrying §14.2's counterfactual-twin obligation
+  — the first real decision is whether sampling is inherited, mutated, or both. The `risk_tier`-on-
+  abstain schema question is now well-evidenced and cheap. `qwen2.5` at t=0 is the one unmeasured
+  cell of the 2×2.

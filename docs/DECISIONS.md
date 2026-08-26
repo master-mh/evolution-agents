@@ -2382,3 +2382,71 @@ from amendment ID to spec location is complete in one place:
     substring (`"artifact" in rule`) that its own description text satisfied; the other was
     parametrised over `KIND_PAYLOADS`, so deleting an entry deleted a case instead of failing one —
     the suite got quieter rather than redder. The replacement derives the pairing from the parser.
+
+## ADR-050: Parse rate is maximised by the setting that destroys the colony — temperature, not model size
+
+- **Status:** Accepted
+- **Spec ref:** §14.1, §14.2, §15.1, §16.2, §24; ADR-048, ADR-049
+- **Context:** ADR-049 repaired the reply format and left one item behind: at ~36% parse compliance on
+  `llama3.2` (3B), "the remaining gap is a **model** decision, not a prompt edit." PRIORITIES carried
+  that as the next move — pull a bigger local model and re-measure. This is that measurement.
+- **What was measured.** Three arms, n=16 each (2 runs × 8 wakes, a **fresh colony per run** so no arm
+  reads a history another arm wrote — ADR-048's caveat), one commercial Cell on a fixed genome,
+  everything else mirroring `cmd_wake`. Headline from `deliberations.status`; the decomposition from
+  `model_calls.response_text`, which keeps the raw reply even where the `deliberations` row keeps only
+  the validation error.
+
+  | arm | parsed | distinct summaries | kinds | **distinct/wake** | median latency |
+  |---|---|---|---|---|---|
+  | `llama3.2` t=0.8 (control) | 7/16 | 4 | 2 | **0.25** | 11.3 s |
+  | `qwen2.5` 7B t=0.8 | 14/16 | 2 | 1 | **0.12** | 162.5 s |
+  | `llama3.2` t=0.0 | **16/16** | **1** | 1 | **0.06** | 6.3 s |
+
+  The control re-measures at 7/16 against ADR-049's recorded 20/56 (Fisher one-sided p = 0.38, not
+  significant) — the scenario is comparable, so the arms can be read against that baseline.
+- **Decision: change neither the model nor the temperature. The hypothesis PRIORITIES scheduled is
+  refuted, and so is its obvious replacement.**
+  1. **`qwen2.5` beats `llama3.2` on parse rate and it is not the answer.** 14/16 vs 7/16 is real
+     (p = 0.012), and the win is exactly ADR-049's failure class disappearing: **flattened 0/16 vs
+     3/16**, with `hypothesis: Extra inputs are not permitted` and "an experiment proposal must carry
+     an experiment" — 6 of the control's 9 failures — absent entirely. But it costs **14× the latency**
+     on this 8 GB box (0.53 tok/s generation at 7% free memory: the machine pages per token), and it
+     produced **fewer distinct proposals than the model it replaced**.
+  2. **Temperature was never set, and setting it is worse.** Neither provider sends one
+     (`providers.py` sends `num_predict` and nothing else), and neither model pins one in its
+     Modelfile, so every deliberation this project has ever run — including ADR-049's — sampled at
+     Ollama's default **0.8**. Forcing `temperature: 0` took `llama3.2` to **16/16, a perfect parse
+     rate**, and collapsed it to **one distinct proposal repeated eight times per run**. The Cell
+     proposes the identical experiment every wake, forever.
+  3. **Therefore parse rate is the wrong objective, and this ADR's real content is the metric.**
+     It is maximised at exactly the setting that deletes the system's purpose. §15.1 shows a Cell its
+     own recent proposals *so it does not repeat itself*, and at t=0 that context grew (1522 → 1628
+     input tokens) while the reply did not change at all. **100% parse at 0.06 distinct/wake is worse
+     than 44% parse at 0.25.** Anything that tunes compliance from here must report distinct
+     parseable proposals per wake alongside it, or it will optimise toward a mute colony.
+- **What it displaced.**
+  - **`qwen2.5` as the deliberation default.** Better compliance, worse diversity, 14× slower, and on
+    this hardware a 16-wake arm took over four hours. Rejected on the composite, not on speed alone.
+  - **`temperature: 0` (or any fixed temperature) as a provider constant** — the one-line change this
+    measurement most obviously invites. Rejected twice over: it trades the colony's variation for a
+    metric, and **§14.1 names "temperature/sampling mutation" as a prompt-mutation operator**, which
+    puts sampling in the *mutable Cell* column. A kernel constant would delete a mutation dimension
+    the spec enumerates. The socket is already reserved and already empty: `model_policy` is a §16.2
+    genome field, hashed to `cells.model_policy_hash`, **written at birth and read by nothing** —
+    fourteenth such socket.
+  - **Concluding anything from parse rate alone.** The first draft of this measurement stopped at
+    "qwen2.5 87.5% vs llama3.2 43.8%, ship qwen2.5" and was wrong in the direction that mattered.
+- **Consequences:**
+  - **The `Next` item "the next move is a model, not a prompt" is closed as refuted.** It is neither a
+    model nor a prompt; it is a sampling parameter nobody set, and the right home for it is a genome
+    field, which is a slice with a §14.2 counterfactual-twin obligation attached.
+  - **`qwen2.5`'s only two failures in 16 are the same known schema objection**, and a stronger model
+    reaching it independently is evidence the schema is wrong rather than the models. Both were
+    `abstain` replies carrying `kind` and `rationale` alone, dropping `summary`, `risk_tier` and
+    `estimated_cost_minor_units` — FUTURE_BUILD_HOOKS already logs `risk_tier`-on-abstain as "worth
+    deciding rather than leaving", from `llama3.2` returning `"risk_tier": null` on the same shape.
+    Two models now decline to state a risk tier for declining to act.
+  - **Zero USD_REAL moved in any arm.** `qwen2.5` was newly exercised through the priced path and its
+    bare tag settled at zero as intended; per-book conservation OK, hash chains valid, real-spend
+    breaker 0/100, A6 linkage complete.
+  - **No code changed.** This ADR records a measurement and two refusals.
