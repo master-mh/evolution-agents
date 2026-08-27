@@ -14,55 +14,50 @@ measurement, §15.1 anchoring, the twins that
 chose the fix, and the fix itself, 2026-07-21 through 2026-08-26):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-27 — The proposal log shows no wording at all
+## 2026-08-27 — Showing a rejected proposal's wording causes the §23.4 repeat it was meant to prevent
 
-`context._was_decided` deleted, the section heading corrected, 6 tests, golden expectation
-**26 -> 27** (ADR-053). No migration.
+A measurement (ADR-054). **No code changed — the rule shipped hours earlier is confirmed by the
+experiment queued to challenge it.**
 
-§15.1's proposal log now renders `- [kind]\n    -> note` for every status. ADR-053 measured that an
-approved summary anchors exactly as hard as a pending one (1.122 shown vs 1.764 hidden, approvals
-held constant), so the status-conditional gate ADR-052 shipped was guarding the wrong thing.
+ADR-053 hid the proposal-log summary for every status and left one known cost: a rejected proposal
+loses its subject. Every other kind keeps a channel (approval's substance arrives on grant
+consumption); a rejection has none. Restoring the wording for rejections only was the obvious remedy,
+pinned by a test rather than shipped. Two predictions genuinely diverged — anchoring (the Cell copies
+what it sees) versus learning (`REJECTED` steers it away) — so it needed an arm.
 
-**Confirmed live at 2.122 effective ideas per run** — against 1.833 under the conditional rule and
-1.089 before either — with every parsed proposal distinct in all four runs. Parse rate 17/32.
+### The instrument was already in the kernel
 
-### The per-kind audit contradicted ADR-053's own inference
+§23.4's `repeat_after_rejection` compares normalised summaries and persists to `approval_signals`. It
+answers the question directly, with no metric of mine standing between it and the answer.
 
-ADR-053 assumed the other kinds' approvals reached the Cell the way `STRATEGY`'s did. Three of four
-were wrong. With the summary hidden:
+| arm | parsed | ideas@3 | **§23.4 repeats fired** |
+|---|---|---|---|
+| `reject_shown` (wording restored) | 20/32 | **1.210** | **12** |
+| `reject_hidden` (shipped rule) | 13/32 | **1.922** | **0** |
 
-| kind | does the approved substance still reach the Cell? |
-|---|---|
-| `strategy` | **yes, immediately** — `Your standing strategy` |
-| `experiment` | **yes, once the grant is started** — `Your current experiment` |
-| `tool_request` / `external_action` | **yes, on consumption** |
-| **any kind, rejected** | **no** — the reason survives, the subject does not |
+`reject_hidden` wins on diversity in **100% of 12 pairwise comparisons**.
 
-Approval's consequence arrives **when the grant is consumed**, not when it is granted; `STRATEGY`
-looked immediate only because approving it *is* the act, so there is nothing to consume.
+### The remedy causes the failure it was meant to prevent
 
-### One real cost, pinned rather than fixed
+Twelve `repeat_after_rejection` signals against zero. **A Cell shown the wording of a proposal a
+person just rejected proposes it again** — the feature intended to teach it what not to repeat is
+what makes it repeat. `REJECTED` is not read as a negative instruction any more than `APPROVED` was
+read as a positive one (ADR-053): **the label is not a modifier on the text beside it**, now measured
+twice from opposite signs.
 
-**A rejected proposal loses its subject.** The Cell learns that it was rejected and why, not what.
-`test_a_rejected_proposal_loses_its_subject_and_that_is_recorded` asserts it so it cannot become a
-surprise; fixing it means showing rejected summaries, which reintroduces the anchoring, and that
-trade is a §23.4 question deserving its own arm. §23.4's `repeat_after_rejection` detector is now the
-only thing watching for the repeat this invites.
+So the lost subject is the *price* of the rule, not a debt to repay.
+`test_a_rejected_proposal_loses_its_subject_and_that_is_recorded` stays as the written-down cost, and
+this entry is why it is not a TODO.
 
 ### Verification
 
-- **Teeth-checked three ways**, all caught, including a regression back to **ADR-052's own gate** —
-  so the refuted design cannot quietly return.
-- **The history-bound test had gone silently vacuous a second time.** It matched on probe wording,
-  which no longer renders, so it passed while measuring nothing. It now **counts entries** in the
-  log — the thing §15.1's bound actually governs — and separately asserts no wording leaks anywhere
-  in the render, which catches a different section dumping history.
-- **Golden diff is eight deliberation rows of eleven**, `context_tokens` only; the three that do not
-  move are the wakes with no proposal log. `model_calls` and `resource_usage` follow;
-  `resource_usage.minor_units` moves on no row, so **`balances` is identical in every account in
-  every book** and `proposals` is byte-identical.
-- **The heading was corrected too** — it claimed to show "your own prior words", which stopped being
-  true. ADR-052 measured heading edits at zero behavioural effect, so it is carried as pure accuracy.
-- **1010 tests passing** (1 net new; up from 1009).
-- Next: whether to restore the summary **for rejections only**, measured rather than argued — the
-  one case with no other channel, against the anchoring it would reintroduce.
+- **Instrument checked before the numbers counted:** 20 and 13 rejections made, run-0 statuses all
+  `rejected` in both, section medians **76 vs 36 tokens** confirming wording present and withheld.
+- **Parse rate rose while the colony got worse** — 20/32 against 13/32. A Cell re-proposing a
+  known-good shape parses more easily. **The clearest instance yet of ADR-050's theme:** anything
+  tuning on parse rate alone would have chosen the arm that breaks §23.4.
+- **1010 tests and the golden run green** — untouched, which is the point: this is a live-only
+  property that no replay can see.
+- Next: §15.1's remaining candidate causes for self-repetition — the genome pinning
+  market/problem/product, and the identical wake reason on every wake. Anchoring is now fixed and the
+  colony sits at ~2.1 effective ideas per run of 8; those two are what stands between that and 3.

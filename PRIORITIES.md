@@ -240,7 +240,14 @@
   reaches the Cell **on grant consumption**, not at approval (`strategy` looked immediate only
   because approving it *is* the act). Teeth-checked three ways including a regression to ADR-052's
   gate.
-- [ ] **Restore the summary for rejections only? — the one case with no other channel.** A rejected
+- [x] **Restore the summary for rejections only? — MEASURED, NO** (2026-08-27), ADR-054. It causes
+  the precise failure §23.4 exists to catch: **`repeat_after_rejection` fired 12 times against 0**,
+  and diversity fell to 1.210 from 1.922 (hidden higher in 100% of 12 pairwise comparisons). A Cell
+  shown the wording of a just-rejected proposal proposes it again — **the label is not a modifier on
+  the text beside it**, now measured from both signs. The lost subject is the price of the rule, not
+  a debt. Parse rate *rose* in the losing arm (20/32 vs 13/32), the clearest instance yet of
+  ADR-050's theme.
+- [x] **(answered) Restore the summary for rejections only? — the one case with no other channel.** A rejected
   proposal now loses its subject: the Cell learns *that* it was rejected and *why*, not *what*.
   Pinned by `test_a_rejected_proposal_loses_its_subject_and_that_is_recorded`, not fixed, because
   showing rejected summaries reintroduces the measured anchoring. **Measure it rather than argue it**

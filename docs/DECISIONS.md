@@ -2841,3 +2841,58 @@ The Cell learns *that* it was rejected and *why*, and not *what*. It is pinned b
 alternative — showing rejected summaries — reintroduces the anchoring this ADR measured, and
 choosing between them is a §23.4 question that deserves its own arm. §23.4's
 `repeat_after_rejection` detector is now the only thing watching for the repeat that invites.
+
+## ADR-054: Showing a rejected proposal's wording causes the §23.4 repeat it was meant to prevent
+
+- **Status:** Accepted — **no code change; the shipped rule is confirmed correct**
+- **Spec ref:** §14.2, §15.1, §23.4, §23.5; ADR-046, ADR-051, ADR-052, ADR-053
+- **Context:** ADR-053 hid the proposal-log summary for every status and left one known cost: a
+  rejected proposal loses its subject, so the Cell learns *that* it was rejected and *why*, but not
+  *what*. Every other kind keeps a channel (approval's substance arrives on grant consumption); a
+  rejection has none. Restoring the wording for rejections only was the obvious remedy, pinned by a
+  test rather than shipped, because it would reintroduce the measured anchoring. Two predictions
+  genuinely diverged, so it needed an arm rather than an argument:
+  - **anchoring** — the Cell copies text it can see, as it did for `APPROVED`, so showing the
+    rejected wording makes it re-propose the rejected thing;
+  - **learning** — `REJECTED` is a strong negative signal, so seeing the subject steers the Cell away
+    and *raises* diversity.
+- **The instrument was already in the kernel.** §23.4's `repeat_after_rejection` detector compares
+  normalised summaries and persists to `approval_signals`. It answers the first prediction directly,
+  without any metric of mine standing between the question and the answer. Both arms reject every
+  proposal as it is made, holding the rejection side-effects constant and varying only whether the
+  rejected entry shows its wording.
+
+  | arm | parsed | ideas@3 | **§23.4 `repeat_after_rejection` fired** |
+  |---|---|---|---|
+  | `reject_shown` (wording restored for rejections) | 20/32 | **1.210** | **12** |
+  | `reject_hidden` (shipped rule) | 13/32 | **1.922** | **0** |
+
+  `reject_hidden` is higher on diversity in **100% of 12 pairwise run comparisons**.
+- **Decision: do not restore the wording for rejections. The shipped unconditional rule stands.**
+  The remedy does not merely cost diversity — **it causes the precise failure §23.4 exists to catch.**
+  Twelve `repeat_after_rejection` signals against zero: a Cell shown the wording of a proposal a
+  person just rejected proposes it again. The feature intended to teach a Cell what not to repeat is
+  what makes it repeat. `REJECTED` is not read as a negative instruction any more than `APPROVED` was
+  read as a positive one (ADR-053) — **the label is not a modifier on the text beside it**, in either
+  direction, which is now measured twice from opposite signs.
+- **What it displaced.**
+  - **Restoring the summary for rejections only.** ADR-053 queued it as the likely next move and
+    named the trade as diversity-versus-§23.4 feedback. The trade does not exist: the arm loses on
+    both.
+  - **Reasoning from ADR-053's `APPROVED` result.** It would have reached the same conclusion, and
+    would have been an inference from a positive label to a negative one — the reasoning-instead-of-
+    measuring move that was wrong three times earlier in this thread. §23.4's detector cost one arm
+    and settles it as fact.
+  - **Treating the lost subject as a debt to repay.** It is the price of the rule and it is worth
+    paying, not a gap awaiting a fix. `test_a_rejected_proposal_loses_its_subject_and_that_is_recorded`
+    stays as the written-down cost; this ADR is why it is not a TODO.
+- **Consequences:**
+  - **Parse rate rose while the colony got worse** — 20/32 shown against 13/32 hidden. A Cell
+    re-proposing a known-good shape parses more easily. **The clearest instance yet of ADR-050's
+    theme**: any tuning that watches parse rate alone would have chosen the arm that breaks §23.4.
+  - **§23.4's detector is now doing double duty** — a §23.5 tripwire, and the only measurement in
+    this repo that reports a behavioural failure directly rather than through a metric built for the
+    occasion. Worth reaching for first when a future question can be phrased as "does the Cell do the
+    bad thing".
+  - **No code changed.** The rule shipped in ADR-053 is confirmed by the experiment that was queued
+    to challenge it.

@@ -1275,3 +1275,18 @@ actually queued for building — this file is memory, not a backlog to work thro
   *wording*; both times the wording stopped rendering, it passed while measuring nothing. It now
   counts entries. **A test that detects something by matching content the system might legitimately
   stop emitting will fail open, not closed** — prefer a structural signal.
+- **Reach for §23.4's `repeat_after_rejection` before building a metric** (ADR-054). It is the one
+  measurement in this repo that reports a behavioural failure *directly* — normalised-summary
+  comparison, persisted to `approval_signals` — rather than through a statistic assembled for the
+  occasion. It answered "does the Cell re-propose the rejected thing" as 12-versus-0, with nothing
+  of mine standing between the question and the answer. Whenever a future question can be phrased as
+  "does the Cell do the bad thing", check whether a §23.5 tripwire already watches for it.
+- **A prompt label is not a modifier on the text beside it — measured from both signs.** `APPROVED`
+  did not stop the Cell copying (ADR-053) and `REJECTED` did not either (ADR-054); the second is
+  worse, because the copying *is* the §23.4 violation. Any design of the form "show it, but tell the
+  Cell how to treat it" should be assumed not to work until measured. §19.4's untrusted-content
+  labelling rests on exactly this assumption and has never been tested.
+- **Parse rate rose in the arm that broke §23.4** (20/32 vs 13/32): a Cell re-proposing a known-good
+  shape parses more easily. Filed here because it is the sharpest counterexample available to anyone
+  tempted to tune on compliance alone — the metric preferred the arm that made the colony repeat
+  rejected work.
