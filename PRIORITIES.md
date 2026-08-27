@@ -188,7 +188,16 @@
   only §17.2 entry with no producer. `approve`/`reject` now enqueue it inside their own transactions,
   idempotent on the request, silent for dead Cells, with expiry keeping its own distinct reasons.
   Teeth-checked five ways including relabelling expiry as a decision.
-- [ ] **Re-measure ADR-055's +15% now the reasons are earned.** That number came from an arm that
+- [x] **Re-measured ADR-055's +15% with earned reasons — IT IS GONE** (2026-08-27). `reviewed_flat`
+  1.809 vs `reviewed_earned` 1.827: **+1%, higher in 41% of pairs, p = 0.73.** Approval side-effects
+  held constant; instrument verified 27 earned `human decision` wakes driving 42% of deliberations.
+  **The +15% was an artifact of rotation.** Caveat: ADR-055 rotated *eight* reasons, a reviewed
+  colony earns *two* — so the claim is "nil at the variety a real colony produces", not "wake reasons
+  cannot matter". **ADR-057 was right to ship and right to be argued on correctness.**
+  **Self-repetition is now closed**: anchoring +86% and fixed, wake reason ~0% honest, genome
+  rejected. The residual ~1.8–2.0 ideas/run is the model's ceiling; further work is ADR-050's model
+  question or §14's mutation operators, not context assembly.
+- [x] **(done) Re-measure ADR-055's +15% now the reasons are earned.** That number came from an arm that
   *rotated* reasons, and part of it was the Cell believing a false premise (3/38 proposals responded
   to events that never happened). With `human decision` wakes now arising naturally, the honest arm
   is a scheduled colony **with** an operator deciding against one without. **Expect less than +15%**;

@@ -3057,3 +3057,41 @@ choosing between them is a §23.4 question that deserves its own arm. §23.4's
   - **A structural test now asserts every §17.2 reason has a producer**, so the next reason added
     either gets wired to the event that justifies it or is listed deliberately as inert.
   - **Teeth-checked five ways**, all caught, including relabelling expiry as a human decision.
+
+### Correction to ADR-055 (2026-08-27): the +15% does not survive honesty
+
+ADR-055 measured +15% effective diversity from varying the wake reason, warned that part of it was
+the Cell believing false premises, and said the wiring should be argued "on correctness, not on the
+15%". ADR-057 then wired the one genuinely missing reason. **Re-measured with earned reasons, the
+effect is gone.**
+
+Three arms, `llama3.2` t=0.8, 8 runs × 8 wakes, **wakes drained from the inbox** so a reason is
+whatever the kernel actually earned:
+
+| arm | parsed | **ideas@3** | wake reasons that drove deliberations |
+|---|---|---|---|
+| `unreviewed` | 31/64 | 1.802 ± 0.286 | 64 scheduled |
+| `reviewed_flat` | 29/64 | **1.809 ± 0.213** | 64 scheduled (approvals happen, wake suppressed) |
+| `reviewed_earned` | 31/64 | **1.827 ± 0.248** | 37 scheduled + **27 human decision** |
+
+**`reviewed_flat` vs `reviewed_earned` is the experiment** — both approve every proposal, so the
+standing strategy, the grants and everything else approval changes are held constant, and only the
+wake reason varies. **+0.018 (+1%), higher in 41% of pairwise comparisons, p = 0.73.** A null, and
+by rank very slightly the wrong way.
+
+- **What this retires.** ADR-055's +15% was an artifact of rotation, not a property of wake reasons.
+  Its own caveat — that 3/38 proposals in the varied arm responded to events that never happened —
+  turns out to have understated the problem: strip the falsehoods and essentially nothing remains.
+- **What it does not claim.** ADR-055 rotated **eight** reasons across eight wakes, including exotic
+  ones a real colony rarely emits in sequence. A reviewed colony earns **two** — `scheduled research
+  cycle` and `human decision`. So the honest finding is *"at the variety a real colony actually
+  produces, the effect is nil"*, not *"wake reasons cannot matter"*. A colony running tools,
+  allocations and audits would earn more variety, and this measurement says nothing about that.
+- **ADR-057 was right to ship and right about why.** It was argued on §17.2 conformance and the §25.2
+  feedback loop, never on the diversity number, and it explicitly told the reader to expect less than
+  +15%. The number came back at +1%. **The instruction to argue it on correctness is now
+  measured-correct rather than merely prudent.**
+- **The self-repetition ledger closes harder.** Anchoring +86% and fixed; wake reason ~0% once
+  honest; genome rejected. **The residual ~1.8–2.0 effective ideas per run of 8 is the model's
+  ceiling**, and two of the three candidate causes turned out to be worth nothing once measured
+  properly.

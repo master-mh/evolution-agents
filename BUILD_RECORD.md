@@ -14,48 +14,57 @@ measurement, §15.1 anchoring, the twins that
 chose the fix, and the fix itself, 2026-07-21 through 2026-08-26):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-27 — A human decision wakes the Cell it was about
+## 2026-08-27 — The +15% does not survive honesty
 
-`approval._wake_on_human_decision_locked` + 6 tests + golden expectation **27 -> 28** (ADR-057).
-No migration.
+A measurement (correction to ADR-055). **No code changed.**
 
-ADR-055 queued "wire real events to the wake reasons they justify". **Auditing that found a smaller
-and more specific gap than the ADR had claimed, and corrected the ADR's own target.**
+ADR-055 measured +15% diversity from varying the wake reason, flagged that part of it was the Cell
+believing false premises, and said to argue the wiring "on correctness, not on the 15%". ADR-057
+wired the one genuinely missing reason. This re-measures with reasons **earned**, wakes drained from
+the inbox rather than set by hand.
 
-### Six of seven reasons were already earned
+| arm | parsed | **ideas@3** | reasons that drove deliberations |
+|---|---|---|---|
+| `unreviewed` | 31/64 | 1.802 ± 0.286 | 64 scheduled |
+| `reviewed_flat` | 29/64 | **1.809 ± 0.213** | 64 scheduled (approvals happen, wake suppressed) |
+| `reviewed_earned` | 31/64 | **1.827 ± 0.248** | 37 scheduled + **27 human decision** |
 
-`WAKE_TOOL_RESULT` by `tools.py`, `WAKE_CAPITAL_ALLOCATION` by `promotion.py`, `WAKE_AUDIT_REQUEST`
-by `auditor.py`, `WAKE_EXTERNAL_ACTION_RESULT` by `external_actions.py`, `WAKE_APPROVAL_EXPIRED` and
-`WAKE_GRANT_EXPIRED` by the sweep. **ADR-055's "only the scheduler's tick is hardcoded" was wrong
-twice:** the tick is *honest* — a scheduled tick genuinely is a scheduled research cycle — and the
-real gap was elsewhere. **`WAKE_HUMAN_DECISION` was defined and referenced nowhere else** — the
-fifteenth reserved socket, and the only entry in §17.2's list with no producer.
+**`reviewed_flat` vs `reviewed_earned` is the experiment** — both approve everything, so the standing
+strategy, grants and every other approval side-effect are constant and only the reason varies.
+**+0.018 (+1%), higher in 41% of pairs, p = 0.73.** A null.
 
-### What shipped
+### What it retires, and what it does not claim
 
-`approve` and `reject` now enqueue `WAKE_HUMAN_DECISION` **inside their own transactions**, following
-`expire_due`'s pattern, so a committed decision and its wake cannot come apart. Idempotent on the
-request (Charter C6). Silent for a dead or quarantined Cell, because `deliberate` *records* a refusal
-rather than raising, and waking one would turn every decision about a dead Cell into a deliberation
-row saying it could not think (C8). **Expiry keeps its own reasons** — the review window closing is
-not a judgement, which is the line `_decision_note` already refuses to blur.
+ADR-055's +15% was an artifact of rotation. Its own caveat — 3/38 proposals responding to events that
+never happened — understated it: strip the falsehoods and essentially nothing remains.
 
-It matters most for rejection: ADR-053 established a rejection has no other channel at all, and §25.2
-wants the reasons for promotion *or rejection* to reach the Cell.
+**It does not show wake reasons cannot matter.** ADR-055 rotated *eight* reasons across eight wakes,
+including ones a real colony rarely emits in sequence; a reviewed colony earns *two*. The honest
+claim is **"at the variety a real colony actually produces, the effect is nil"** — a colony running
+tools, allocations and audits would earn more, and this says nothing about that.
+
+**ADR-057 was right to ship and right about why.** It was argued on §17.2 conformance and §25.2's
+feedback loop, never on the number, and told the reader to expect less than +15%. It came back at
++1%. The instruction to argue it on correctness is now measured-correct rather than merely prudent.
+
+### The self-repetition ledger closes harder
+
+| candidate (ADR-052) | verdict | effect |
+|---|---|---|
+| §15.1 anchoring | confirmed, **fixed** | **+86%** |
+| identical wake reason | confirmed by rotation, **~0% once honest** | +1% (p = 0.73) |
+| genome pinning | rejected | none (p = 0.21) |
+
+**Two of the three candidate causes were worth nothing once measured properly**, and the residual
+~1.8–2.0 effective ideas per run of 8 is the model's ceiling.
 
 ### Verification
 
-- **Teeth-checked five ways, all caught**: no wake on approve; no wake on reject; dead Cells woken;
-  a dedupe key not derived from the request; and **expiry relabelled as a human decision** — the most
-  tempting way to make this fire more often and exactly the falsehood ADR-055 exists to prevent.
-- **Golden diff is one section.** `event_inbox` `cell_wake` rows **9 -> 20**, the scenario's 11
-  decisions, counted directly. **`deliberations`, `proposals` and `model_calls` are byte-identical**
-  — the scenario never drains the inbox, so this adds a wake and changes nothing any Cell thought —
-  and **`balances` is identical in every account in every book**.
-- **The golden scenario now exercises six distinct wake reasons**, up from five.
-- **A structural test asserts every §17.2 reason has a producer**, so the next one added is either
-  wired to the event that justifies it or listed deliberately as inert.
-- **1016 tests passing** (6 new; up from 1010).
-- Next: the honest re-measurement ADR-055 could not do — with reasons now earned rather than
-  rotated, is any of its +15% real? A colony that ticks and is reviewed produces `human decision`
-  wakes naturally, so the arm is a scheduled run with an operator deciding, against one without.
+- **Instrument checked before the numbers counted:** 27 genuinely earned `human decision` wakes drove
+  42% of `reviewed_earned`'s deliberations, while both controls stayed at 64 scheduled and zero.
+- **The confound ADR-053 taught was designed out.** Comparing reviewed against unreviewed would have
+  measured "does having an operator help" and reported it as "does the wake reason help";
+  `reviewed_flat` exists to hold that constant.
+- **1016 tests and the golden run green** — untouched.
+- Next: nothing further on self-repetition from context assembly; the ground is measured. Open work
+  is ADR-050's model question, §14's mutation operators, and Phase 2.

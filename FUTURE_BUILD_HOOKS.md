@@ -1335,3 +1335,17 @@ actually queued for building — this file is memory, not a backlog to work thro
   *different* wake broke both without touching the property they defend. They now assert on the wake
   **reason** by name. Any test counting rows in a shared queue is really asserting that nothing else
   ever writes there.
+- **Two of the three self-repetition causes were worth nothing once measured properly.** Anchoring was
+  real (+86%, fixed). The wake reason measured +15% *by rotation* and **+1% once earned** (p = 0.73).
+  The genome was rejected outright. **The residual ~1.8–2.0 effective ideas per run of 8 is the
+  model's ceiling on this hardware** — anyone reopening self-repetition should start from ADR-050's
+  model question or §14's mutation operators, because context assembly is now measured ground.
+- **An effect measured under a manipulation you would never ship is not an effect you have.** ADR-055
+  rotated eight wake reasons across eight wakes; a reviewed colony earns two. The +15% needed the
+  variety the manipulation supplied, and vanished at the variety the kernel actually produces.
+  **Before believing an intervention's number, ask whether the intervention is one the system would
+  ever really perform** — and if not, measure the version it would.
+- **A colony that runs tools, allocations and audits would earn more wake-reason variety than either
+  arm here saw.** This measurement covers `scheduled research cycle` + `human decision` only, so it
+  does not close the question for a busier colony — it closes it for the one the scheduler currently
+  produces.
