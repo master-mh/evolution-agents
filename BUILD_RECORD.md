@@ -11,61 +11,76 @@ expiry sweep, establishable rights, scheduler liveness, the experiment, experime
 proposed experiments, the strategy kind decided, the experiment_id foreign keys, §13.1's
 normalised cost, the reply format a model can follow, the temperature/diversity
 measurement, §15.1 anchoring and the twins that chose the fix, the proposal log that
-shows no wording, the §23.4 repeat, the wake reason, the genome, and the human-decision
-wake, 2026-07-21 through 2026-08-27):
+shows no wording, the §23.4 repeat, the wake reason, the genome, the human-decision wake,
+and the +15% that did not survive honesty, 2026-07-21 through 2026-08-27):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-27 — The +15% does not survive honesty
+## 2026-08-27 — The concreteness measure is §13.4, and the instrument had never been measured
 
-A measurement (correction to ADR-055). **No code changed.**
+`scripts/concreteness.py` + a labelled fixture + `scripts/genomes/loose.json` + `--genome` on the
+arm harness + `tests/test_analysis_boundary.py` (3 tests). **No kernel change, no migration**
+(ADR-058).
 
-ADR-055 measured +15% diversity from varying the wake reason, flagged that part of it was the Cell
-believing false premises, and said to argue the wiring "on correctness, not on the 15%". ADR-057
-wired the one genuinely missing reason. This re-measures with reasons **earned**, wakes drained from
-the inbox rather than set by hand.
+PRIORITIES asked for ADR-056's concreteness measure as the Phase 2 counterweight to selecting on
+variety alone, noting it "is not yet anywhere in the repo". It never had been: it lived in a scratch
+script and was gone by the next session — *the day after* `scripts/` was created to stop exactly
+that.
 
-| arm | parsed | **ideas@3** | reasons that drove deliberations |
+### The spec had named it, and this repo never had
+
+> **§13.4** Flag ideas where only the industry label changed, ordinary freelancing is described
+> exotically, the same mechanism is renamed, or **no new capability/transaction structure exists**.
+> **§13.5** LLMs are skilled at producing rhetorically novel but structurally ordinary ideas.
+
+§13.5 is ADR-056's finding written down before any of it was measured. **§13.4 appears nowhere in
+PRIORITIES, FUTURE_BUILD_HOOKS or DECISIONS before this slice** — the sixteenth reserved socket, and
+the first found by reading a *justification* clause rather than a mechanism clause. It also settles
+the Phase 2 warning in the spec's vocabulary: §12.1 makes `novelty distance` a MAP-Elites
+*descriptor*, and §13.4 is what stops a Cell cheating it.
+
+### The instrument was measured before its numbers were read
+
+The judge is asked to **quote** the words naming a specific thing, and the verdict is then decided
+deterministically — every content word of the quote must really be in the summary (§24.3:
+"verification → deterministic tools first, model second"). It may not be the generator's family
+(§24.3), which the script enforces by reading `model_calls.requested_model` and refusing.
+
+| rubric | agreement (24 labelled) | missed a real deliverable | invented one |
 |---|---|---|---|
-| `unreviewed` | 31/64 | 1.802 ± 0.286 | 64 scheduled |
-| `reviewed_flat` | 29/64 | **1.809 ± 0.213** | 64 scheduled (approvals happen, wake suppressed) |
-| `reviewed_earned` | 31/64 | **1.827 ± 0.248** | 37 scheduled + **27 human decision** |
+| first draft | 18/24 | 6/9 | 0 |
+| shipped | **19/24** | **5/9** | **0** |
 
-**`reviewed_flat` vs `reviewed_earned` is the experiment** — both approve everything, so the standing
-strategy, grants and every other approval side-effect are constant and only the reason varies.
-**+0.018 (+1%), higher in 41% of pairs, p = 0.73.** A null.
+**Every error is one-directional**, and safely so: an arm with no objects has none to miss, so the
+bias understates a gap and never manufactures one. `--selftest` therefore gates on **false
+positives, not agreement** — gating on agreement would gate on a number in the same file, this
+repo's recurring way of writing a test that passes for the wrong reason.
 
-### What it retires, and what it does not claim
+### The replication
 
-ADR-055's +15% was an artifact of rotation. Its own caveat — 3/38 proposals responding to events that
-never happened — understated it: strip the falsehoods and essentially nothing remains.
+| arm | parsed | **names a deliverable** | ideas@2 |
+|---|---|---|---|
+| `genome_tight` | 36/64 | **13/36 = 36%** | 1.524 ± 0.056 |
+| `genome_loose` | 14/64 | **0/14 = 0%** | 1.467 ± 0.065 |
 
-**It does not show wake reasons cannot matter.** ADR-055 rotated *eight* reasons across eight wakes,
-including ones a real colony rarely emits in sequence; a reviewed colony earns *two*. The honest
-claim is **"at the variety a real colony actually produces, the effect is nil"** — a colony running
-tools, allocations and audits would earn more, and this says nothing about that.
+**Fisher exact one-sided p = 0.0065.** Not one of the loose arm's fourteen proposals named a single
+object of its own business in eight independent runs. **ADR-056's diversity null replicates** (1.524
+vs 1.467 at matched n, against its 1.513 vs 1.612) — diversity and concreteness still move
+independently.
 
-**ADR-057 was right to ship and right about why.** It was argued on §17.2 conformance and §25.2's
-feedback loop, never on the number, and told the reader to expect less than +15%. It came back at
-+1%. The instruction to argue it on correctness is now measured-correct rather than merely prudent.
-
-### The self-repetition ledger closes harder
-
-| candidate (ADR-052) | verdict | effect |
-|---|---|---|
-| §15.1 anchoring | confirmed, **fixed** | **+86%** |
-| identical wake reason | confirmed by rotation, **~0% once honest** | +1% (p = 0.73) |
-| genome pinning | rejected | none (p = 0.21) |
-
-**Two of the three candidate causes were worth nothing once measured properly**, and the residual
-~1.8–2.0 effective ideas per run of 8 is the model's ceiling.
+**ADR-056's 100% vs 5% does not replicate and cannot**: the rubric that produced it was lost with
+its script, so the two are not measurements of one quantity. The direction, the completeness of the
+separation and the independence from diversity are what was load-bearing, and all three hold. An
+absolute rate from a lost instrument is not a result.
 
 ### Verification
 
-- **Instrument checked before the numbers counted:** 27 genuinely earned `human decision` wakes drove
-  42% of `reviewed_earned`'s deliberations, while both controls stayed at 64 scheduled and zero.
-- **The confound ADR-053 taught was designed out.** Comparing reviewed against unreviewed would have
-  measured "does having an operator help" and reported it as "does the wake reason help";
-  `reviewed_flat` exists to hold that constant.
-- **1016 tests and the golden run green** — untouched.
-- Next: nothing further on self-repetition from context assembly; the ground is measured. Open work
-  is ADR-050's model question, §14's mutation operators, and Phase 2.
+- **Teeth-checked six ways.** Three mutations of the deterministic verifier (`all`→`any`, stopwords
+  unstripped, empty quote counted as present) each failed the case written for it; three of the
+  boundary tests (a scorer importing the kernel, `deliberation` importing the scorer
+  function-locally, the scripts directory vanishing so the guard forbids an empty set) each failed
+  the named test. One vacuity case was rewritten after the first teeth-check MISSED — the original
+  gave the same answer with and without the bug.
+- **1019 tests and the golden run green**, hash unchanged: nothing under `src/` was touched.
+- Next: the counterweight exists; the **selector that consumes it** does not. §13.2 says hard gates
+  then a Pareto frontier, never a single weighted scalar. Otherwise open: ADR-050's model question
+  and §14's mutation operators.

@@ -7,8 +7,12 @@ model time. Not packaged (`pyproject.toml` builds from `src/`) and not collected
 These exist because **`MockProvider` structurally cannot validate a prompt** — its reply is an input,
 not a response to the prompt's wording — so the suite and the golden run stay green while every live
 proposal is discarded. That blind spot has hidden two live regressions (ADR-049's enum bug, then its
-conditional payloads, unnoticed for a month). Both scripts had to be rebuilt from scratch three times
-after living in a scratchpad; this directory is the fix.
+conditional payloads, unnoticed for a month).
+
+**Every measure here was lost at least once first.** The parse and diversity harnesses were rebuilt
+from scratch three times after living in a scratchpad, which is why this directory exists — and
+ADR-056's concreteness measure was then written into a scratch script and lost anyway, *the day
+after* it was created. Putting a measurement here is the discipline, not the directory.
 
 ## Measuring a change to the proposal schema or prompt
 
@@ -23,12 +27,69 @@ model time for a small arm.
 .venv/bin/python scripts/diversity.py /tmp/arms
 ```
 
-**Run both.** Parse rate alone is not a sufficient report — ADR-050 published a headline built on it
+```bash
+.venv/bin/python scripts/concreteness.py /tmp/arms
+```
+
+**Run all three.** Parse rate alone is not a sufficient report — ADR-050 published a headline built on it
 and had to withdraw the headline. Parse rate is maximised at temperature 0, which does not reliably
 buy compliance (32/32 on one model, 0/32 on another) and leaves a Cell whose replies fail to parse in
 a loop it cannot escape.
 
-`diversity.py --selftest` checks the eigenvalue maths against known matrices and needs no model.
+`diversity.py --selftest` checks the eigenvalue maths — and `ideas@K` — against known matrices and
+needs no model.
+`concreteness.py --check-verifier` does the same for its deterministic half; its `--selftest` also
+runs the judge against the labelled fixture and **does** need a model.
+
+## Comparing two genomes (or any two arms)
+
+`--genome` swaps the market hypothesis the Cell reasons from. Omitting it gives the tight baseline
+every measurement since ADR-050 has used (the `GENOME` constant in `measure_parse_compliance.py`);
+`scripts/genomes/loose.json` is ADR-056's broadened arm, kept as a file precisely because the
+original lived in a scratchpad and did not survive the session that wrote it.
+
+```bash
+.venv/bin/python scripts/measure_parse_compliance.py --model llama3.2 --runs 8 --wakes 8 --genome scripts/genomes/loose.json --out /tmp/arms
+```
+
+The genome name lands in the database filename, so **pass `--pattern` when two arms share an output
+directory** — the default `arm_*.db` matches both and would average the comparison away.
+
+**Compare arms on `ideas@K`, never on the raw Vendi score.** Vendi is bounded above by the number of
+proposals, so an arm that parsed 36 replies and one that parsed 14 differ mostly in how much they
+said, not in how varied it was. `--at 2` scores every pair and averages:
+
+```bash
+.venv/bin/python scripts/diversity.py /tmp/arms --pattern 'arm_llama3_2_loose_run*.db' --at 2
+```
+
+ADR-056 and ADR-058 both rest on `ideas@2`, and until ADR-058 it lived in neither script — the same
+way ADR-056's concreteness measure did not. Anything an ADR concludes from belongs in here.
+
+## What the concreteness number means
+
+**Proportion of proposals naming a specific thing the work is about** — SPEC §13.4's fourth flag,
+"no new capability/transaction structure exists". The judge is asked to *quote* the thing, and the
+verdict is then decided deterministically by checking that every content word of the quote is really
+in the summary; an unverifiable quote counts as not concrete and is reported in its own column.
+
+**The flag reads in one direction.** A proposal naming no specific object cannot be introducing a
+capability or transaction structure — it has not said what the structure would act on. A proposal
+that *does* name one has shown specificity, not novelty; certifying novelty needs §31's
+`novelty_archive`, which does not exist.
+
+It is also not a quality score. A proposal can be perfectly concrete and worthless — ADR-056's loose
+arm produced *"Send reminder about the upcoming scheduled research cycle"*, which names a real
+message about the Cell's own scaffolding, and should score concrete.
+
+**Why it exists:** diversity and concreteness move independently. A loose genome scored nominally
+*more* diverse per pair and **20× less concrete** — so a selector tuned on variety alone would favour
+the Cells that had stopped saying anything (§13.5: "LLMs are skilled at producing rhetorically novel
+but structurally ordinary ideas"). Report both numbers or neither.
+
+**The judge must not be the generator's family.** `concreteness.py` reads the generating model out of
+`model_calls` and refuses a same-family judge (§24.3 routes criticism to a different provider/family).
+The default judge is `qwen2.5`; the arms so far are `llama3.2`.
 
 ## What the diversity number means
 

@@ -1,0 +1,13 @@
+{
+  "cell_type": "commercial",
+  "market": "small businesses that keep their own books and want less admin",
+  "problem": "back-office administration takes time away from actually running the business",
+  "product": "software that reduces the routine bookkeeping work its users do by hand",
+  "revenue_model": "a recurring subscription paid by the businesses that use it",
+  "acquisition_channel": "online channels, word of mouth and referrals",
+  "workflow": "understand the need, build something useful, put it in front of customers",
+  "model_policy": "prefer local models for drafting; escalate only for customer-facing text",
+  "mutation_rate": 0.1,
+  "allowed_tools": ["http_fetch"],
+  "risk_class": "MEDIUM"
+}

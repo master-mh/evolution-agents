@@ -33,8 +33,10 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import itertools
 import math
 import os
+import random
 import sqlite3
 import urllib.request
 
@@ -94,6 +96,31 @@ def vendi_score(sims) -> float:
     return math.exp(-sum(e * math.log(e) for e in ev if e > 1e-12))
 
 
+def vendi_at(sims, k: int, cap: int = 400, seed: int = 0) -> float | None:
+    """Mean Vendi score over subsets of size `k` -- the matched-n comparison.
+
+    Vendi is bounded above by n, so an arm that produced 4.5 proposals per run
+    cannot be compared with one that produced 1.75 by their raw scores: the
+    difference would be mostly the count. Fixing the subset size removes that.
+    ADR-056 and ADR-058 both rest on `ideas@2`, and until ADR-058 it existed in
+    neither script -- the same way ADR-056's concreteness measure did not.
+
+    Exact over all C(n, k) subsets while that is small; beyond `cap`, a seeded
+    random sample of them, so the number stays reproducible.
+    """
+    n = len(sims)
+    if n < k:
+        return None
+    idx = range(n)
+    subsets = list(itertools.combinations(idx, k))
+    if len(subsets) > cap:
+        subsets = random.Random(seed).sample(subsets, cap)
+    total = 0.0
+    for sub in subsets:
+        total += vendi_score([[sims[i][j] for j in sub] for i in sub])
+    return total / len(subsets)
+
+
 def greedy_clusters(sims, tau: float) -> int:
     n = len(sims)
     seen = [False] * n
@@ -144,13 +171,36 @@ def selftest() -> int:
         ok = abs(got - expected) < tol
         failures += not ok
         print(f"  [{'ok' if ok else 'FAIL'}] {label}: vendi={got:.6f} expected={expected}")
+
+    #: `vendi_at` is the number arms are actually compared with, so it gets its
+    #: own cases. The third is the one that earns them: ideas@2 over two
+    #: identical pairs is 10/6, not 2 -- a third of the pairs are within a pair.
+    at_cases = [
+        ("ideas@2 of 4 identical items", [[1.0] * 4 for _ in range(4)], 2, 1.0),
+        ("ideas@2 of 4 orthogonal items",
+         [[1.0 if i == j else 0.0 for j in range(4)] for i in range(4)], 2, 2.0),
+        ("ideas@2 of 2 identical + 2 identical",
+         [[1.0, 1.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0],
+          [0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 1.0, 1.0]], 2, 10 / 6),
+        ("ideas@3 asked of a 2-item matrix is undefined",
+         [[1.0, 0.0], [0.0, 1.0]], 3, None),
+    ]
+    for label, K, k, expected in at_cases:
+        got = vendi_at(K, k)
+        ok = (got is None and expected is None) or (
+            got is not None and expected is not None and abs(got - expected) < 1e-6)
+        failures += not ok
+        shown = "None" if got is None else f"{got:.6f}"
+        print(f"  [{'ok' if ok else 'FAIL'}] {label}: {shown} expected={expected}")
+
     print("selftest:", "PASS" if not failures else f"{failures} FAILURE(S)")
     return 1 if failures else 0
 
 
 # --------------------------------------------------------------------------- main
 
-def score_directory(directory: str, pattern: str, host: str, model: str, tau: float) -> dict:
+def score_directory(directory: str, pattern: str, host: str, model: str, tau: float,
+                   at: int | None = None) -> dict:
     out = {}
     for path in sorted(glob.glob(os.path.join(directory, pattern))):
         conn = sqlite3.connect(path)
@@ -158,16 +208,20 @@ def score_directory(directory: str, pattern: str, host: str, model: str, tau: fl
         conn.close()
         name = os.path.basename(path)
         if not summaries:
-            out[name] = {"n": 0, "strings": 0, "vendi": 0.0, "clusters": 0}
+            out[name] = {"n": 0, "strings": 0, "vendi": 0.0, "clusters": 0, "at": None}
             continue
         strings = len({s.lower() for s in summaries})
+        at_k = None
         if len(summaries) == 1:
             vendi, clusters = 1.0, 1
         else:
             K = cosine_matrix(embed(summaries, host, model))
             vendi, clusters = vendi_score(K), greedy_clusters(K, tau)
+            if at:
+                got = vendi_at(K, at)
+                at_k = round(got, 3) if got is not None else None
         out[name] = {"n": len(summaries), "strings": strings,
-                     "vendi": round(vendi, 3), "clusters": clusters}
+                     "vendi": round(vendi, 3), "clusters": clusters, "at": at_k}
     return out
 
 
@@ -179,6 +233,11 @@ def main() -> int:
     ap.add_argument("--host", default=DEFAULT_HOST)
     ap.add_argument("--embed-model", default=DEFAULT_EMBED_MODEL)
     ap.add_argument("--tau", type=float, default=0.85, help="cross-check clustering threshold")
+    ap.add_argument("--at", type=int, metavar="K",
+                    help="also report ideas@K: the mean score over subsets of K proposals. "
+                         "**Use this to compare arms** -- a raw score is bounded by how many "
+                         "proposals an arm produced, so two arms with different parse rates "
+                         "cannot be compared without it")
     ap.add_argument("--selftest", action="store_true", help="check the maths; needs no model")
     ap.add_argument("--json", help="write per-database results here")
     args = ap.parse_args()
@@ -189,20 +248,31 @@ def main() -> int:
         ap.error("directory is required unless --selftest is given")
 
     results = score_directory(args.directory, args.pattern, args.host,
-                              args.embed_model, args.tau)
+                              args.embed_model, args.tau, args.at)
     if not results:
         print(f"no databases matched {args.pattern!r} in {args.directory}")
         return 1
 
-    print(f"{'database':34s} {'props':>6s} {'strings':>8s} {'ideas (vendi)':>14s} {'clust':>6s}")
+    at_col = f"ideas@{args.at}" if args.at else ""
+    print(f"{'database':34s} {'props':>6s} {'strings':>8s} {'ideas (vendi)':>14s} "
+          f"{'clust':>6s} {at_col:>9s}")
     for name, r in results.items():
-        print(f"{name:34s} {r['n']:6d} {r['strings']:8d} {r['vendi']:14.3f} {r['clusters']:6d}")
+        at = f"{r['at']:9.3f}" if r.get("at") is not None else " " * 9
+        print(f"{name:34s} {r['n']:6d} {r['strings']:8d} {r['vendi']:14.3f} "
+              f"{r['clusters']:6d} {at}")
     scored = [r for r in results.values() if r["n"]]
     if scored:
         print(f"\nmean over {len(scored)} scored databases: "
               f"{sum(r['n'] for r in scored) / len(scored):.2f} proposals, "
               f"**{sum(r['vendi'] for r in scored) / len(scored):.3f} ideas**, "
               f"{sum(r['strings'] for r in scored) / len(scored):.2f} distinct strings")
+        at_runs = [r["at"] for r in scored if r.get("at") is not None]
+        if at_runs:
+            mean = sum(at_runs) / len(at_runs)
+            var = sum((x - mean) ** 2 for x in at_runs) / (len(at_runs) - 1) if len(at_runs) > 1 else 0.0
+            print(f"**ideas@{args.at} = {mean:.3f} +/- {math.sqrt(var / len(at_runs)):.3f}** "
+                  f"over {len(at_runs)} databases with at least {args.at} proposals "
+                  f"-- this is the number to compare arms with")
     if args.json:
         with open(args.json, "w") as fh:
             json.dump(results, fh, indent=2)

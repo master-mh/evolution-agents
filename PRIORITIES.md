@@ -170,11 +170,25 @@
   **This closes all three of ADR-052's candidate causes**: anchoring confirmed and fixed (+86%), wake
   reason confirmed with the remedy refused (+15%), genome rejected. **The residual ~2 ideas/run is
   the model's ceiling, not a prompt defect.**
+- [x] **The concreteness measure now exists, and it is §13.4** (2026-08-27), ADR-058.
+  `scripts/concreteness.py`, its labelled fixture, `scripts/genomes/loose.json` and a `--genome`
+  flag on the arm harness. **The spec had already named this failure and nobody here had ever cited
+  it** — §13.4 "fake-novelty detection" flags an idea where "no new capability/transaction structure
+  exists", and §13.5 states ADR-056's finding outright: "LLMs are skilled at producing rhetorically
+  novel but structurally ordinary ideas". Sixteenth reserved socket, and the first found in a
+  *justification* clause. Replication: **13/36 = 36% tight vs 0/14 = 0% loose, p = 0.0065**, with
+  ADR-056's diversity null replicating at matched n (1.524 vs 1.467). ADR-056's *100% vs 5%* does
+  not replicate and cannot — that rubric was lost with its scratch script — so treat the direction
+  as the result and the absolute rate as a lower bound.
 - [ ] **Phase 2: do not select on variety alone.** Diversity and concreteness move independently —
-  `genome_loose` was nominally *more* diverse per pair and **20× less concrete**. A selector tuned on
-  proposal variety would favour exactly the Cells that have stopped saying anything. The concreteness
-  measure from ADR-056 (proportion of proposals naming a real deliverable) is the cheap counterweight
-  and is not yet anywhere in the repo.
+  `genome_loose` was nominally *more* diverse per pair and named **no object at all** in fourteen
+  proposals. A selector tuned on proposal variety would favour exactly the Cells that have stopped
+  saying anything; §12.1 makes `novelty distance` a MAP-Elites *descriptor*, and §13.4 is what stops
+  a Cell cheating it. The counterweight is now built (above) — **what is still unbuilt is the
+  selector that consumes it**, and §13.2's "hard gates, then a Pareto frontier, never a single
+  weighted scalar" is the shape it has to take.
+  *Disproved by:* anything ranking Cells or proposals by a single scalar combining novelty with
+  anything else.
 - [x] **Identical wake reason — TESTED, CONFIRMED, REMEDY REFUSED** (2026-08-27), ADR-055. Varying it
   moves ideas/run **1.764 → 2.025** (+15%, 80% of 100 pairs, p = 0.0116, 12 runs per arm). **But
   3/38 proposals in the varied arm responded to an event that never happened** (against 0/46 control)

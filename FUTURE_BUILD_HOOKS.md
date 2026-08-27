@@ -1360,3 +1360,28 @@ actually queued for building — this file is memory, not a backlog to work thro
   script, and it is the counterweight PRIORITIES now asks Phase 2 to select against; (d) **CI still
   cannot see parse compliance** — `scripts/` is committed but wired to nothing automated, which is
   the gap that let ADR-049's regression run for a month.
+
+<!-- 2026-08-27, ADR-058 (§13.4 concreteness) -->
+- **§13.4's other three flags are blocked on §31's `novelty_archive`, and that is the whole list.**
+  "Only the industry label changed" and "the same mechanism is renamed" both need a *prior* — the
+  thing it changed or was renamed *from* — and "ordinary freelancing described exotically" needs a
+  reference class. `scripts/concreteness.py` scores the fourth flag only. When the novelty archive
+  lands (Phase 2), that script is where the other three attach; do not invent a second home for
+  them.
+- **The concreteness judge is conservative and its recall is unmeasured beyond 9 items.** `qwen2.5`
+  at t=0 misses 5 of 9 labelled deliverables and invents none, so every rate is a lower bound. A
+  stronger judge (`qwen2.5:14b`, or a paid model behind `--yes-spend-real-money`) would raise recall
+  — **but nobody has checked whether it changes the *comparison***, which is what the metric is for.
+  Deliberately not done here: the honest claim ("the gap is understated, never manufactured") holds
+  at any recall, and a bigger judge is a bigger download, not a better argument.
+- **The fixture is in-sample.** Its 24 proposals are a seeded random sample of the two arms it then
+  scored, so `--selftest` measures *calibration*, not generalisation. A rubric that has to hold on a
+  genome nobody has run yet needs labels from a genome nobody has run yet.
+- **A one-directional metric is a shape worth reusing.** Naming no object is evidence of no new
+  structure; naming one proves nothing about novelty. Saying which direction a measure can be
+  trusted in was more useful than making it symmetrical, and §13.2's "hard gates, then Pareto" is
+  full of measures that probably want the same treatment.
+- **Still unpaid from 2026-08-27's earlier block:** `_recent_proposals_section` has no structural
+  test that it renders at all (ADR-046's mechanism is prose in a prompt), and CI still cannot see
+  parse compliance. `tests/test_analysis_boundary.py` is now the worked example for the first —
+  an AST walk with a vacuity guard and an allowlist that forces a classification.

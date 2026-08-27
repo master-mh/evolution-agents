@@ -74,11 +74,11 @@ def _cli(db: pathlib.Path, *args: str) -> str:
     return result.stdout
 
 
-def setup(db: pathlib.Path, out_dir: pathlib.Path) -> str:
+def setup(db: pathlib.Path, out_dir: pathlib.Path, genome: dict) -> str:
     if db.exists():
         db.unlink()
     genome_path = out_dir / "genome.json"
-    genome_path.write_text(json.dumps(GENOME, indent=2))
+    genome_path.write_text(json.dumps(genome, indent=2))
     _cli(db, "init")
     stdout = _cli(db, "create-cell", "--type", "commercial", "--budget", "5.00",
                   "--book", "USD_SIM", "--genome", str(genome_path))
@@ -203,21 +203,28 @@ def main() -> int:
                     help="override sampling temperature; omit to use the endpoint default "
                          "(0.8 for Ollama -- see ADR-050 before pinning this)")
     ap.add_argument("--timeout", type=float, default=900.0)
+    ap.add_argument("--genome", help="JSON genome file; omit for the tight baseline above "
+                                     "(ADR-056's arms live in scripts/genomes/)")
     args = ap.parse_args()
 
     out_dir = pathlib.Path(args.out).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(REPO / "src"))
 
+    genome = GENOME
     tag = args.model.replace(":", "_").replace(".", "_")
+    if args.genome:
+        genome = json.loads(pathlib.Path(args.genome).expanduser().read_text())
+        tag += "_" + pathlib.Path(args.genome).stem
     if args.temperature is not None:
         tag += "_t" + str(args.temperature).replace(".", "")
 
     agg = {"model": args.model, "temperature": args.temperature,
+           "genome": args.genome or "(module default)",
            "n": 0, "proposed": 0, "per_run": []}
     for run_index in range(args.runs):
         db = out_dir / f"arm_{tag}_run{run_index}.db"
-        cell_id = setup(db, out_dir)
+        cell_id = setup(db, out_dir, genome)
         print(f"[{args.model} t={args.temperature}] run {run_index}: cell {cell_id}", flush=True)
         run_wakes(db, cell_id, args.model, f"{tag}:r{run_index}", args.wakes,
                   args.timeout, args.temperature)

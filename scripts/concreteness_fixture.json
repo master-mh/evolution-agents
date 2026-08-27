@@ -1,0 +1,146 @@
+[
+  {
+    "arm": "tight",
+    "summary": "Test month-end reconciliation efficiency with incremental data feeding",
+    "concrete": false,
+    "why": "'reconciliation', 'efficiency', 'data feeding' are an activity, a quality and an activity; only activities, qualities or areas \u2014 no object the work would act on"
+  },
+  {
+    "arm": "tight",
+    "summary": "Month-end reconciliation report validation using POS exports and bank feeds",
+    "concrete": true,
+    "why": "report, POS exports, bank feeds \u2014 names a specific object of the business a person could point at"
+  },
+  {
+    "arm": "loose",
+    "summary": "Test the revenue growth hypothesis of our software",
+    "concrete": false,
+    "why": "'our software' is the generic self-reference the rubric names; 'revenue growth' is a quality"
+  },
+  {
+    "arm": "loose",
+    "summary": "Streamline bookkeeping processes to reduce administrative burden.",
+    "concrete": false,
+    "why": "'processes' and 'burden' are areas of work; only activities, qualities or areas \u2014 no object the work would act on"
+  },
+  {
+    "arm": "tight",
+    "summary": "Rethink the amount of money spent each month based on past revenue to avoid budget constraint issues",
+    "concrete": false,
+    "why": "quantities about the Cell's own budget, not an object of the business"
+  },
+  {
+    "arm": "loose",
+    "summary": "Test the impact of automation on back-office administration time",
+    "concrete": false,
+    "why": "only activities, qualities or areas \u2014 no object the work would act on"
+  },
+  {
+    "arm": "tight",
+    "summary": "Test the effectiveness of a new matching algorithm for reconciling POS exports and bank feeds",
+    "concrete": true,
+    "why": "matching algorithm, POS exports, bank feeds \u2014 names a specific object of the business a person could point at"
+  },
+  {
+    "arm": "loose",
+    "summary": "Validate the impact of reduced bookkeeping work on business productivity",
+    "concrete": false,
+    "why": "only activities, qualities or areas \u2014 no object the work would act on"
+  },
+  {
+    "arm": "tight",
+    "summary": "Reconcile POS exports with bank feeds semi-automatically and reduce manual errors by 50% through data validation",
+    "concrete": true,
+    "why": "POS exports and bank feeds are the objects being reconciled"
+  },
+  {
+    "arm": "loose",
+    "summary": "Test the revenue impact of using our software for more than 6 months",
+    "concrete": false,
+    "why": "'our software' names no particular thing; a duration is not an object"
+  },
+  {
+    "arm": "loose",
+    "summary": "Study the impact of automating bookkeeping tasks on business productivity.",
+    "concrete": false,
+    "why": "only activities, qualities or areas \u2014 no object the work would act on"
+  },
+  {
+    "arm": "tight",
+    "summary": "Test hypothesis: revenue >= 50 minor units in the next generation",
+    "concrete": false,
+    "why": "BOUNDARY: a precise, testable threshold and still no object \u2014 specific is not the same as concrete, and \u00a78.5's threshold claims are registered elsewhere, not here"
+  },
+  {
+    "arm": "tight",
+    "summary": "Validate the month-end reconciliation process for small retail clients",
+    "concrete": false,
+    "why": "BOUNDARY: 'process' is an activity and 'small retail clients' is the market, not a deliverable"
+  },
+  {
+    "arm": "tight",
+    "summary": "Test the efficiency of our POS export matching algorithm against bank feeds",
+    "concrete": true,
+    "why": "POS export matching algorithm and bank feeds \u2014 names a specific object of the business a person could point at, despite the 'efficiency of' framing"
+  },
+  {
+    "arm": "tight",
+    "summary": "Investigate the effectiveness of automated month-end reconciliation using POS exports and bank feeds",
+    "concrete": true,
+    "why": "POS exports and bank feeds \u2014 names a specific object of the business a person could point at"
+  },
+  {
+    "arm": "loose",
+    "summary": "Evaluate the impact of automated bookkeeping on small businesses' productivity",
+    "concrete": false,
+    "why": "only activities, qualities or areas \u2014 no object the work would act on"
+  },
+  {
+    "arm": "tight",
+    "summary": "Refine month-end reconciliation report to flag unmatched transactions with better suggestion match",
+    "concrete": true,
+    "why": "BOUNDARY: opens with 'Refine', an intention verb, yet names a report and unmatched transactions \u2014 the rubric is about the object, not the verb"
+  },
+  {
+    "arm": "tight",
+    "summary": "Test hypothesis that month-end reconciliation automation can reduce manual errors by at least 30%",
+    "concrete": false,
+    "why": "an error rate is a quality of an activity; only activities, qualities or areas \u2014 no object the work would act on"
+  },
+  {
+    "arm": "loose",
+    "summary": "Optimize software development workflow to reduce bookkeeping work for users",
+    "concrete": false,
+    "why": "'workflow' is the generic reference the rubric names"
+  },
+  {
+    "arm": "tight",
+    "summary": "Testing the effect of early reconciliation on manual error rate",
+    "concrete": false,
+    "why": "only activities, qualities or areas \u2014 no object the work would act on"
+  },
+  {
+    "arm": "tight",
+    "summary": "Test hypothesis that month-end reconciliation is automated",
+    "concrete": false,
+    "why": "only activities, qualities or areas \u2014 no object the work would act on"
+  },
+  {
+    "arm": "tight",
+    "summary": "Requesting external action: marketplace_listing",
+    "concrete": true,
+    "why": "BOUNDARY: barely a sentence, and a marketplace listing is a specific artifact \u2014 brevity is not vagueness"
+  },
+  {
+    "arm": "tight",
+    "summary": "Test POS export/bank feed reconciliation with local model vs. manual method for accuracy and speed improvement",
+    "concrete": true,
+    "why": "POS export and bank feed \u2014 names a specific object of the business a person could point at"
+  },
+  {
+    "arm": "tight",
+    "summary": "Validate proposed month-end reconciliation report workflow with small retail clients and gather feedback to refine the product",
+    "concrete": true,
+    "why": "names the reconciliation report; the trailing 'refine the product' does not remove it"
+  }
+]

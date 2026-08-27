@@ -3095,3 +3095,140 @@ by rank very slightly the wrong way.
   honest; genome rejected. **The residual ~1.8–2.0 effective ideas per run of 8 is the model's
   ceiling**, and two of the three candidate causes turned out to be worth nothing once measured
   properly.
+
+## ADR-058: Concreteness is §13.4, and the instrument ADR-056 used had never itself been measured
+
+- **Status:** Accepted (tooling + measurement); no kernel change
+- **Spec ref:** §13.4, §13.5, §12.1, §23.5, §24.3, §31; ADR-050, ADR-056
+- **Context:** ADR-056 rejected the genome hypothesis and found something it was not looking for:
+  loosening a Cell's market hypothesis left diversity unchanged and collapsed the proportion of
+  proposals naming a real deliverable from 100% to 5%. PRIORITIES then carried the warning —
+  **a Phase 2 selector tuned on variety alone would favour exactly the Cells that have stopped
+  saying anything** — and noted the measure "is not yet anywhere in the repo". It never had been:
+  it lived in a scratch script and was gone by the next session, *the day after* `scripts/` was
+  created to stop that.
+
+### The spec had already named this, and nobody in this repo had ever cited it
+
+`grep` for the socket before designing the subsystem, and §13 answers:
+
+> **§13.4 Fake-novelty detection.** Flag ideas where only the industry label changed, ordinary
+> freelancing is described exotically, the same mechanism is renamed, or **no new
+> capability/transaction structure exists**.
+>
+> **§13.5 Why required.** LLMs are skilled at producing rhetorically novel but structurally
+> ordinary ideas.
+
+§13.5 is ADR-056's finding, written down before any of it was measured. §13.4 is neither in
+`PRIORITIES.md`, `FUTURE_BUILD_HOOKS.md`, nor anywhere in this file before this entry — the
+sixteenth reserved socket, and the first one found by reading a *justification* clause rather than
+a mechanism clause. It also settles the Phase 2 warning in the spec's own vocabulary: §12.1 makes
+`novelty distance` a MAP-Elites **descriptor**, and §13.4 is what stops a Cell from cheating it.
+
+### What was built
+
+`scripts/concreteness.py`, `scripts/concreteness_fixture.json`, `scripts/genomes/loose.json`, a
+`--genome` flag on the arm harness, and `tests/test_analysis_boundary.py`.
+
+- **Quote, then verify — not a yes/no judge.** The judge is asked for the *exact words* naming a
+  specific thing the work is about; the verdict is then decided deterministically by checking that
+  every content word of the quote really appears in the summary. §24.3 in order: "verification →
+  deterministic tools first, model second". A judge that invents a deliverable lands in a third
+  bucket, `unverified`, and is reported rather than folded into either answer. It has not happened
+  yet — 0 of 50 — which is a fact worth having rather than an assumption worth making.
+- **The judge may not be the generator's family.** §24.3 routes criticism to a "different
+  provider/family". The generating model is read out of `model_calls.requested_model` and a
+  same-family judge is refused with exit 2 — `llama3.2` writes the proposals, `qwen2.5` grades
+  them. Self-grading is worth nothing: a model that thinks "improve our software" names a
+  deliverable will think so twice.
+- **The judge runs at temperature 0, and ADR-050's warning does not transfer.** ADR-050 is about
+  *generation*, where greedy decoding froze a Cell into one reply it could not escape. This is
+  classification (§24.3: "classification/extraction → cheap or local"), where a reproducible answer
+  is the point — an instrument that scores differently on Tuesday cannot separate two arms.
+- **One clause, one direction.** Only §13.4's fourth flag is scored. The other three need a *prior*
+  (a label that changed *from* something, a mechanism renamed *from* something) and §31's
+  `novelty_archive` — which does not exist — is where that prior would live. And the flag reads one
+  way only: naming no object is evidence of no new structure; naming one proves specificity, not
+  novelty.
+- **`abstain` is excluded from the denominator.** A Cell declining to act has no deliverable by
+  design, and scoring a principled refusal as waffle would punish the honest answer §23.1 wants.
+
+### The instrument check is the finding
+
+The judge was measured against 24 hand-labelled proposals — a seeded random sample of both arms,
+labels and reasons committed so they can be argued with — **before any arm number was read**.
+
+| rubric | agreement | missed a real deliverable | invented one |
+|---|---|---|---|
+| first draft | 18/24 | 6/9 | 0 |
+| shipped (adds "ignore the opening verb") | **19/24** | **5/9** | **0** |
+
+The judge is systematically conservative: it reads "Test the effectiveness of a new matching
+algorithm for reconciling POS exports and bank feeds" as naming nothing, because the sentence opens
+with an intention verb. **Every error is in one direction, and that direction is safe** — an arm
+with no objects has none to miss, so the bias attenuates the concrete arm and can only *understate*
+a gap. So `--selftest` gates on **false positives, not on agreement**: gating on agreement would be
+gating on a number stored in the same file, which is this repo's recurring way of writing a test
+that passes for the wrong reason.
+
+One rubric revision was allowed and taken. Stopping there is deliberate — a rubric tuned until it
+matches its own labels measures the tuning.
+
+### The measurement (llama3.2, t=0.8, 8 runs × 8 wakes per arm; judge qwen2.5, t=0)
+
+| arm | parsed | **names a deliverable** | ideas@2 |
+|---|---|---|---|
+| `genome_tight` | 36/64 | **13/36 = 36%** | 1.524 ± 0.056 |
+| `genome_loose` | 14/64 | **0/14 = 0%** | 1.467 ± 0.065 (4 runs with n ≥ 2) |
+
+**Fisher exact one-sided p = 0.0065.** Not one of the loose arm's fourteen proposals named a single
+object of its own business, across eight independent runs: *"Test the revenue growth hypothesis of
+our software"*, *"Streamline bookkeeping processes to reduce administrative burden"*, *"Evaluate the
+impact of automated bookkeeping on small businesses' productivity"*. The closest miss was
+*"Understand the need for automated bookkeeping better through user surveys and case studies"* — the
+judge scored it empty, which is one of the five misses the fixture predicts.
+
+**ADR-056's diversity null replicates**: 1.524 vs 1.467 at matched n, against its 1.513 vs 1.612.
+Diversity and concreteness still move independently, now with an instrument that lives in the repo.
+
+**ADR-056's 100% does not replicate, and cannot.** The rubric that produced it no longer exists,
+so 100% vs 5% and 36% vs 0% are not two measurements of one quantity — the second is stricter
+(it requires a *named object*, not a domain-flavoured phrase) and is a lower bound besides.
+What replicates is what was load-bearing: the direction, the completeness of the separation, and
+the independence from diversity. **An absolute rate from a lost instrument is not a result**, and
+recording that is more useful than defending the number.
+
+### What it displaced
+
+- **A lexical vagueness word-list.** Cheap, deterministic, no model — and a knob that would have
+  been tuned on the two arms it was meant to separate. A metric one knob drives to 100% measures the
+  knob. The judge's rubric is a knob too, which is why its generic examples ("our product", "the
+  workflow", "operations") are deliberately *not* drawn from either arm.
+- **A yes/no judge.** Simpler, and there would be nothing to check: the answer would be a verdict
+  with no evidence attached, and no way to tell a judgment from a hallucination.
+- **`llama3.2` as judge** — the model already resident, so free. Refused by §24.3 and now refused by
+  the script.
+- **Gating `--selftest` on total agreement**, which would have failed on every run for a
+  documented, one-directional bias and taught the reader to ignore it.
+- **Reporting the tight arm's rate as its concreteness.** It is a lower bound; the fixture's recall
+  suggests the true figure is nearer 80%, and that estimate rests on nine labelled items and is
+  offered as an estimate.
+- **Leaving the kernel boundary as prose.** Both scorers state that nothing in `deliberation` may
+  import them (§23.5: a Cell that learns it is scored on novelty learns to perform novelty); that
+  claim now has an AST test, with the forbidden set derived from the scripts directory and a
+  vacuity guard, because a guard over an empty set passes forever.
+
+### Consequences
+
+- **Phase 2 has its counterweight**, with a stated bias and a committed fixture. Report concreteness
+  beside diversity or report neither.
+- **A concreteness rate is a lower bound.** Two arms may be compared; an absolute level may not be
+  quoted without `--selftest`'s recall beside it.
+- **§13.4's other three flags are blocked on §31's `novelty_archive`**, which is a Phase 2 object.
+  When it lands, this script is where they attach.
+- **`scripts/genomes/` exists so an arm survives its session.** ADR-056's loose genome had to be
+  rebuilt from three sentences quoted in its own ADR; the reconstruction is 474 characters of prose
+  against the tight arm's 518, so length cannot carry the effect.
+- **The kernel-versus-analysis boundary is now structural**, and the allowlist in
+  `KERNEL_DRIVING_SCRIPTS` forces a new script to be a scorer unless someone deliberately says
+  otherwise.
