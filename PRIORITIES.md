@@ -162,6 +162,19 @@
   golden expectation version 4 → 5 via a reviewed migration (**no USD_REAL moves**).
 
 ## Next
+- [x] **Identical wake reason — TESTED, CONFIRMED, REMEDY REFUSED** (2026-08-27), ADR-055. Varying it
+  moves ideas/run **1.764 → 2.025** (+15%, 80% of 100 pairs, p = 0.0116, 12 runs per arm). **But
+  3/38 proposals in the varied arm responded to an event that never happened** (against 0/46 control)
+  — the Cell was told a tool result was available and proposed *emailing customers about it*. **Do
+  not rotate wake reasons**; emit the one the event justifies. §0.3 from the other side: the kernel
+  must not assert to a Cell something that is not so.
+- [ ] **Wire real events to the wake reasons they justify.** `WAKE_TOOL_RESULT`,
+  `WAKE_CAPITAL_ALLOCATION`, `WAKE_HUMAN_DECISION`, `WAKE_AUDIT_REQUEST`,
+  `WAKE_EXTERNAL_ACTION_RESULT` are all defined and all emitted somewhere; **only the scheduler's
+  tick is hardcoded to `scheduled research cycle`**. Additive, no new vocabulary. **Argue it on
+  correctness, not on the 15%** — part of that number was the Cell believing a false premise, so the
+  honest effect is smaller and unmeasured.
+  *Disproved by:* `scheduler.py` emitting any reason other than `WAKE_SCHEDULED_RESEARCH`.
 - [x] **Proposal parse compliance collapsed from 7/8 to 0/12 — REPAIRED, not restored**
   (2026-08-25), ADR-049. Four renderings of the reply format, no parser change: payloads shown as
   JSON objects rather than sentences, the skeleton **ordered rather than alphabetised** (the largest

@@ -14,50 +14,55 @@ measurement, §15.1 anchoring, the twins that
 chose the fix, and the fix itself, 2026-07-21 through 2026-08-26):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-27 — Showing a rejected proposal's wording causes the §23.4 repeat it was meant to prevent
+## 2026-08-27 — The wake reason matters, and rotating it makes a Cell act on things that never happened
 
-A measurement (ADR-054). **No code changed — the rule shipped hours earlier is confirmed by the
-experiment queued to challenge it.**
+A measurement and a refusal (ADR-055). **No code changed.**
 
-ADR-053 hid the proposal-log summary for every status and left one known cost: a rejected proposal
-loses its subject. Every other kind keeps a channel (approval's substance arrives on grant
-consumption); a rejection has none. Restoring the wording for rejections only was the obvious remedy,
-pinned by a test rather than shipped. Two predictions genuinely diverged — anchoring (the Cell copies
-what it sees) versus learning (`REJECTED` steers it away) — so it needed an arm.
+ADR-052's second candidate cause: `Why you were woken` renders the wake reason verbatim, the
+scheduler emits `scheduled research cycle` every time, so nothing in the prompt ever says the
+situation changed. Two arms, **12 runs × 8 wakes each** — deepened from 4 after the first pass came
+back at p = 0.11, the underpowered profile that produced four withdrawn claims earlier in this thread.
 
-### The instrument was already in the kernel
-
-§23.4's `repeat_after_rejection` compares normalised summaries and persists to `approval_signals`. It
-answers the question directly, with no metric of mine standing between it and the answer.
-
-| arm | parsed | ideas@3 | **§23.4 repeats fired** |
+| arm | runs | parsed | **ideas@3** |
 |---|---|---|---|
-| `reject_shown` (wording restored) | 20/32 | **1.210** | **12** |
-| `reject_hidden` (shipped rule) | 13/32 | **1.922** | **0** |
+| `wake_same` (shipped) | 12 | 46/96 | **1.764 ± 0.220** |
+| `wake_varied` | 12 | 38/96 | **2.025 ± 0.217** |
 
-`reject_hidden` wins on diversity in **100% of 12 pairwise comparisons**.
+**+0.261, 80% of 100 pairwise comparisons, exact one-sided p = 0.0116.** Parse-rate difference not
+significant (p = 0.31). **The hypothesis holds and is the smallest of the three** — anchoring was
++86%, this is +15%.
 
-### The remedy causes the failure it was meant to prevent
+### The remedy this invites is dangerous, and the arm proved it
 
-Twelve `repeat_after_rejection` signals against zero. **A Cell shown the wording of a proposal a
-person just rejected proposes it again** — the feature intended to teach it what not to repeat is
-what makes it repeat. `REJECTED` is not read as a negative instruction any more than `APPROVED` was
-read as a positive one (ADR-053): **the label is not a modifier on the text beside it**, now measured
-twice from opposite signs.
+The experiment asserted reasons rather than earning them — no tool result had arrived, no capital had
+been allocated. That was flagged in the script *before* it ran, which is why the output was checked
+for it. **Three of 38 proposals in `wake_varied` responded to an event that never happened**, against
+**zero of 46** in the control:
 
-So the lost subject is the *price* of the rule, not a debt to repay.
-`test_a_rejected_proposal_loses_its_subject_and_that_is_recorded` stays as the written-down cost, and
-this entry is why it is not a TODO.
+- *"Notify bookkeepers of an available tool result and request a review…"*
+- *"Email notification about available tool results to bookkeeping community forums"*
+
+The Cell was told a tool result was available, believed it, and proposed **contacting customers about
+it**. With an approved `external_action` grant and §27.1 autonomy on, that is a real email about a
+result that does not exist. **Part of the measured +15% is that failure**, so the effect size for
+*honest* wake reasons is smaller than 0.261 and this measurement cannot say by how much.
+
+### §0.3 from the other side
+
+The clause says a Cell may explain a result and never define it. The mirror is that **the kernel must
+not assert to a Cell something that is not so.** `Why you were woken` is `required=True` and never
+dropped, so whatever it says is read every wake, and a Cell cannot tell a scheduler placeholder from
+a real event.
 
 ### Verification
 
-- **Instrument checked before the numbers counted:** 20 and 13 rejections made, run-0 statuses all
-  `rejected` in both, section medians **76 vs 36 tokens** confirming wording present and withheld.
-- **Parse rate rose while the colony got worse** — 20/32 against 13/32. A Cell re-proposing a
-  known-good shape parses more easily. **The clearest instance yet of ADR-050's theme:** anything
-  tuning on parse rate alone would have chosen the arm that breaks §23.4.
-- **1010 tests and the golden run green** — untouched, which is the point: this is a live-only
-  property that no replay can see.
-- Next: §15.1's remaining candidate causes for self-repetition — the genome pinning
-  market/problem/product, and the identical wake reason on every wake. Anchoring is now fixed and the
-  colony sits at ~2.1 effective ideas per run of 8; those two are what stands between that and 3.
+- **Deepened rather than reported.** The first pass read +0.355 at p = 0.11; deepening moved the
+  estimate *down* and the confidence up. Acting on it would have overstated the effect and still
+  landed on the dangerous remedy.
+- **Instrument checked:** 8 distinct reasons reaching the prompt against 1.
+- **The false-premise check was pre-registered in the script docstring**, not invented after seeing a
+  number worth defending.
+- **1010 tests and the golden run green** — untouched.
+- Next: wire real events to the reasons they justify (`WAKE_TOOL_RESULT`, `WAKE_CAPITAL_ALLOCATION`
+  and the rest are all defined; only the scheduler's tick is hardcoded). Argue it on correctness, not
+  on the 15%. Then the last candidate cause: the genome pinning market/problem/product.

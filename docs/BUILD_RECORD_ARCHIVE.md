@@ -6,6 +6,54 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-08-27 — Showing a rejected proposal's wording causes the §23.4 repeat it was meant to prevent
+
+A measurement (ADR-054). **No code changed — the rule shipped hours earlier is confirmed by the
+experiment queued to challenge it.**
+
+ADR-053 hid the proposal-log summary for every status and left one known cost: a rejected proposal
+loses its subject. Every other kind keeps a channel (approval's substance arrives on grant
+consumption); a rejection has none. Restoring the wording for rejections only was the obvious remedy,
+pinned by a test rather than shipped. Two predictions genuinely diverged — anchoring (the Cell copies
+what it sees) versus learning (`REJECTED` steers it away) — so it needed an arm.
+
+### The instrument was already in the kernel
+
+§23.4's `repeat_after_rejection` compares normalised summaries and persists to `approval_signals`. It
+answers the question directly, with no metric of mine standing between it and the answer.
+
+| arm | parsed | ideas@3 | **§23.4 repeats fired** |
+|---|---|---|---|
+| `reject_shown` (wording restored) | 20/32 | **1.210** | **12** |
+| `reject_hidden` (shipped rule) | 13/32 | **1.922** | **0** |
+
+`reject_hidden` wins on diversity in **100% of 12 pairwise comparisons**.
+
+### The remedy causes the failure it was meant to prevent
+
+Twelve `repeat_after_rejection` signals against zero. **A Cell shown the wording of a proposal a
+person just rejected proposes it again** — the feature intended to teach it what not to repeat is
+what makes it repeat. `REJECTED` is not read as a negative instruction any more than `APPROVED` was
+read as a positive one (ADR-053): **the label is not a modifier on the text beside it**, now measured
+twice from opposite signs.
+
+So the lost subject is the *price* of the rule, not a debt to repay.
+`test_a_rejected_proposal_loses_its_subject_and_that_is_recorded` stays as the written-down cost, and
+this entry is why it is not a TODO.
+
+### Verification
+
+- **Instrument checked before the numbers counted:** 20 and 13 rejections made, run-0 statuses all
+  `rejected` in both, section medians **76 vs 36 tokens** confirming wording present and withheld.
+- **Parse rate rose while the colony got worse** — 20/32 against 13/32. A Cell re-proposing a
+  known-good shape parses more easily. **The clearest instance yet of ADR-050's theme:** anything
+  tuning on parse rate alone would have chosen the arm that breaks §23.4.
+- **1010 tests and the golden run green** — untouched, which is the point: this is a live-only
+  property that no replay can see.
+- Next: §15.1's remaining candidate causes for self-repetition — the genome pinning
+  market/problem/product, and the identical wake reason on every wake. Anchoring is now fixed and the
+  colony sits at ~2.1 effective ideas per run of 8; those two are what stands between that and 3.
+
 ## 2026-08-27 — The proposal log shows no wording at all
 
 `context._was_decided` deleted, the section heading corrected, 6 tests, golden expectation

@@ -1290,3 +1290,21 @@ actually queued for building — this file is memory, not a backlog to work thro
   shape parses more easily. Filed here because it is the sharpest counterexample available to anyone
   tempted to tune on compliance alone — the metric preferred the arm that made the colony repeat
   rejected work.
+- **A Cell believes what the kernel tells it, and will propose outward-facing action on it**
+  (ADR-055). Told `tool result available` when none was, three proposals in one arm asked to *email
+  customers about the result*. `Why you were woken` is `required=True` and never dropped, so a
+  placeholder there is indistinguishable from a real event. **§0.3 has a mirror image nobody had
+  written down: a Cell may not define a result, and the kernel may not assert one that is not so.**
+  Worth auditing every kernel-authored context section on that basis — which of them can currently
+  say something untrue?
+- **§19.4's untrusted-content labelling has never been tested and is now doubly suspect.** ADR-053 and
+  ADR-054 showed a label does not change how a model treats the text beside it, from both signs;
+  ADR-055 shows a Cell takes a kernel-authored section as true without corroboration. The assumption
+  that marking a section "untrusted" changes how a Cell uses it is exactly the assumption those three
+  results undermine. One arm would settle it: put a hostile instruction in a labelled untrusted
+  section and see whether the label does any work.
+- **Pre-register the check that would deflate your result.** ADR-055's script named the
+  false-premise risk in its docstring before the arm ran, so the check was run on principle rather
+  than invented after seeing a number worth defending — and it found 3/38 against 0/46, which
+  changed the recommendation from "rotate the wake reason" to "never rotate the wake reason". A
+  check written after the result is a check you can talk yourself out of.

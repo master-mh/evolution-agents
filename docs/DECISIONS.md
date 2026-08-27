@@ -2896,3 +2896,60 @@ choosing between them is a §23.4 question that deserves its own arm. §23.4's
     bad thing".
   - **No code changed.** The rule shipped in ADR-053 is confirmed by the experiment that was queued
     to challenge it.
+
+## ADR-055: The wake reason matters, and rotating it makes a Cell act on things that never happened
+
+- **Status:** Accepted (measurement); **the naive remedy is refused**, the real one is queued
+- **Spec ref:** §0.3, §15.1, §17.2, §19.4, §23.1; ADR-051, ADR-052, ADR-054
+- **Context:** ADR-052 parked three candidate causes for a Cell proposing ~1 idea per run. Anchoring
+  is fixed (ADR-051/053/054) and the colony sits at ~2 effective ideas per run of 8. This tests the
+  second: `Why you were woken` renders the wake reason verbatim and the scheduler emits
+  `scheduled research cycle` every time, so nothing in the prompt ever says the situation changed.
+- **The measurement.** Two arms, `llama3.2` t=0.8, **12 runs × 8 wakes each** — deepened from 4 after
+  the first pass came back at p = 0.11, the exact underpowered profile that produced four withdrawn
+  claims earlier in this thread. `wake_varied` cycles the kernel's own §17.2 reasons; `wake_same` is
+  the shipped scheduler.
+
+  | arm | runs | parsed | **ideas@3** |
+  |---|---|---|---|
+  | `wake_same` (shipped) | 12 | 46/96 | **1.764 ± 0.220** |
+  | `wake_varied` | 12 | 38/96 | **2.025 ± 0.217** |
+
+  **+0.261, higher in 80% of 100 pairwise comparisons, exact one-sided p = 0.0116.** The parse-rate
+  difference is not significant (p = 0.31). Instrument check: 8 distinct reasons reaching the prompt
+  against 1.
+- **So the hypothesis holds — and it is the smallest of the three.** Anchoring was +86%; this is
+  +15%. Worth having, not worth much on its own.
+- **Decision: do not rotate the wake reason. Emit the reason the event actually justifies.** The
+  experiment asserted reasons rather than earning them — no tool result had arrived, no capital had
+  been allocated — and that was flagged in the script before it ran, which is why the result was
+  checked for it. **Three of 38 proposals in `wake_varied` responded to an event that never
+  happened**, against **zero of 46** in the control:
+  - *"Notify bookkeepers of an available tool result and request a review…"*
+  - *"Email notification about available tool results to bookkeeping community forums"*
+
+  The Cell was told a tool result was available, believed it, and proposed **contacting customers
+  about it**. In a colony with an approved `external_action` grant and §27.1 autonomy enabled, that
+  is a real email about a result that does not exist.
+- **What it displaced.**
+  - **Rotating wake reasons in the scheduler**, which is the one-line reading of this result and
+    would manufacture diversity by feeding the Cell false premises. **Part of the measured +15% is
+    that failure**, so the effect size for honest wake reasons is smaller than 0.261 and this
+    measurement cannot say by how much.
+  - **Concluding from the first pass.** At 4 runs it read +0.355 and p = 0.11; deepening moved the
+    estimate *down* and the confidence up. Acting on the first pass would have overstated the effect
+    and still landed on the dangerous remedy.
+- **Consequences:**
+  - **This is a §0.3 hazard from the other side.** The clause says a Cell may explain a result and
+    never define it; the mirror is that **the kernel must not assert to a Cell something that is not
+    so**. `Why you were woken` is `required=True` and never dropped, so whatever it says is read
+    every time, and a Cell cannot distinguish a scheduler placeholder from a real event.
+  - **The honest fix already has its vocabulary.** `WAKE_TOOL_RESULT`, `WAKE_CAPITAL_ALLOCATION`,
+    `WAKE_HUMAN_DECISION`, `WAKE_AUDIT_REQUEST`, `WAKE_EXTERNAL_ACTION_RESULT` are all defined and
+    all emitted somewhere; the gap is that the *scheduler's* tick always says
+    `scheduled research cycle`. Wiring real events to the reasons they justify is additive and needs
+    no new vocabulary — and it is worth roughly a 15% ceiling, so it should be argued on correctness
+    rather than on this number.
+  - **§19.4's labelling assumption is now doubly suspect.** ADR-053 and ADR-054 showed a label does
+    not change how a model treats the text beside it; this shows a Cell takes a kernel-authored
+    section as true without corroboration. Both bear on whether "untrusted" markings do any work.
