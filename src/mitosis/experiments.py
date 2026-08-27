@@ -518,7 +518,7 @@ def stage_tranche(conn: sqlite3.Connection, cell_id: str) -> tuple[int, int] | N
 
     **The latest promotion, not the sum of them.** §13.1 says "*current* stage
     tranche", singular, and a tranche is an instalment rather than a running
-    total; `promotion._transfer_degradation` already reads "the Cell's latest
+    total; `promotion.transfer_degradation` already reads "the Cell's latest
     promotion" the same way.
 
     **`None` when the Cell has never been promoted**, which today is most of

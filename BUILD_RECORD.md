@@ -12,75 +12,71 @@ proposed experiments, the strategy kind decided, the experiment_id foreign keys,
 normalised cost, the reply format a model can follow, the temperature/diversity
 measurement, §15.1 anchoring and the twins that chose the fix, the proposal log that
 shows no wording, the §23.4 repeat, the wake reason, the genome, the human-decision wake,
-and the +15% that did not survive honesty, 2026-07-21 through 2026-08-27):
+the +15% that did not survive honesty, and §13.4's concreteness measure,
+2026-07-21 through 2026-08-27):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-27 — The concreteness measure is §13.4, and the instrument had never been measured
+## 2026-08-27 — §13.2's selector: four of its nine dimensions have no data
 
-`scripts/concreteness.py` + a labelled fixture + `scripts/genomes/loose.json` + `--genome` on the
-arm harness + `tests/test_analysis_boundary.py` (3 tests). **No kernel change, no migration**
-(ADR-058).
+`selection.py` + 21 tests + `mitosis frontier` + golden expectations **28 -> 29** (ADR-059).
+**No migration.** `promotion.transfer_degradation` made public; `UNINFORMATIVE_BRIER` moved to
+`prediction.py`.
 
-PRIORITIES asked for ADR-056's concreteness measure as the Phase 2 counterweight to selecting on
-variety alone, noting it "is not yet anywhere in the repo". It never had been: it lived in a scratch
-script and was gone by the next session — *the day after* `scripts/` was created to stop exactly
-that.
+PRIORITIES asked for the selector that consumes ADR-058's concreteness measure. §13.2 says what one
+is: *"Reject candidates below minimum thresholds on evidence quality, reproducibility, policy
+compliance, and software-native advantage; then select from a Pareto frontier over structural
+novelty, information gain, economic potential, experiment cost, and transfer robustness. Do not rely
+on a single weighted scalar."*
 
-### The spec had named it, and this repo never had
+### Five of the nine are measurable here; four abstain
 
-> **§13.4** Flag ideas where only the industry label changed, ordinary freelancing is described
-> exotically, the same mechanism is renamed, or **no new capability/transaction structure exists**.
-> **§13.5** LLMs are skilled at producing rhetorically novel but structurally ordinary ideas.
+| live | unmeasurable, and why |
+|---|---|
+| evidence quality (§8.5, bar = `UNINFORMATIVE_BRIER`) | reproducibility — §11.2's adoption record |
+| policy compliance (§18 quarantine, §23.4 signals) | software-native advantage — §13.3 judges *content* |
+| information gain (entropy of the filed forecasts) | structural novelty — §31's `novelty_archive` |
+| experiment cost (§13.1's first consumer) | economic potential — no proper scoring rule over it |
+| transfer robustness (§25.2's degradation) | |
 
-§13.5 is ADR-056's finding written down before any of it was measured. **§13.4 appears nowhere in
-PRIORITIES, FUTURE_BUILD_HOOKS or DECISIONS before this slice** — the sixteenth reserved socket, and
-the first found by reading a *justification* clause rather than a mechanism clause. It also settles
-the Phase 2 warning in the spec's vocabulary: §12.1 makes `novelty distance` a MAP-Elites
-*descriptor*, and §13.4 is what stops a Cell cheating it.
+**An unmeasurable dimension abstains and never scores zero** — `structural_novelty = 0.0` is a claim
+about the idea; `None` is the truth. `UNEVALUABLE` (a new Cell) and `UNMEASURABLE` (no data anywhere)
+stay separate for the reason §25.2 splits `INSUFFICIENT_EVIDENCE` from `EVIDENCE_WITHHELD`.
 
-### The instrument was measured before its numbers were read
+### Why one self-reported number is safe and another is not
 
-The judge is asked to **quote** the words naming a specific thing, and the verdict is then decided
-deterministically — every content word of the quote must really be in the summary (§24.3:
-"verification → deterministic tools first, model second"). It may not be the generator's family
-(§24.3), which the script enforces by reading `model_calls.requested_model` and refusing.
+`information_gain` comes from the Cell's own forecasts, and §8.5 is what makes that admissible:
+**Brier is a proper scoring rule**, so overstating uncertainty loses points at resolution and the
+register is hash-chained before the outcome is knowable. `economic_potential` has no such rule, so
+§0.3 stands and the module declines. **That contrast is what "no single weighted scalar" protects** —
+the axes hold each other honest only while they are separate.
 
-| rubric | agreement (24 labelled) | missed a real deliverable | invented one |
-|---|---|---|---|
-| first draft | 18/24 | 6/9 | 0 |
-| shipped | **19/24** | **5/9** | **0** |
+The exception is named rather than hidden: `experiment_cost`'s numerator is the Cell's own estimate,
+and nothing yet compares it with what the experiment consumed.
 
-**Every error is one-directional**, and safely so: an arm with no objects has none to miss, so the
-bias understates a gap and never manufactures one. `--selftest` therefore gates on **false
-positives, not agreement** — gating on agreement would gate on a number in the same file, this
-repo's recurring way of writing a test that passes for the wrong reason.
+### ADR-058's concreteness measure is not wired in, and that is the finding
 
-### The replication
-
-| arm | parsed | **names a deliverable** | ideas@2 |
-|---|---|---|---|
-| `genome_tight` | 36/64 | **13/36 = 36%** | 1.524 ± 0.056 |
-| `genome_loose` | 14/64 | **0/14 = 0%** | 1.467 ± 0.065 |
-
-**Fisher exact one-sided p = 0.0065.** Not one of the loose arm's fourteen proposals named a single
-object of its own business in eight independent runs. **ADR-056's diversity null replicates** (1.524
-vs 1.467 at matched n, against its 1.513 vs 1.612) — diversity and concreteness still move
-independently.
-
-**ADR-056's 100% vs 5% does not replicate and cannot**: the rubric that produced it was lost with
-its script, so the two are not measurements of one quantity. The direction, the completeness of the
-separation and the independence from diversity are what was load-bearing, and all three hold. An
-absolute rate from a lost instrument is not a result.
+Concreteness judges an idea's *content*, which is §13.3's category — and §13.2 puts that behind a
+human or an independent Auditor. The kernel is excluded by §23.5 and by the AST boundary this repo
+added one slice ago. **So concreteness enters §13.2 as `software_native_advantage`'s missing judge,
+not as an axis.** The shape of the gap is now written down instead of assumed.
 
 ### Verification
 
-- **Teeth-checked six ways.** Three mutations of the deterministic verifier (`all`→`any`, stopwords
-  unstripped, empty quote counted as present) each failed the case written for it; three of the
-  boundary tests (a scorer importing the kernel, `deliberation` importing the scorer
-  function-locally, the scripts directory vanishing so the guard forbids an empty set) each failed
-  the named test. One vacuity case was rewritten after the first teeth-check MISSED — the original
-  gave the same answer with and without the bug.
-- **1019 tests and the golden run green**, hash unchanged: nothing under `src/` was touched.
-- Next: the counterweight exists; the **selector that consumes it** does not. §13.2 says hard gates
-  then a Pareto frontier, never a single weighted scalar. Otherwise open: ADR-050's model question
-  and §14's mutation operators.
+- **Teeth-checked nine ways** — sign flip, gates not removing, frontier over rejected candidates,
+  unmeasured rejected instead of unevaluable, three abstain-becomes-zero mutations,
+  `understated_risk` escalating, and domination reading an unmeasured axis as zero. Each failed the
+  test written for it.
+- **An existing guard caught a real mistake.** `test_no_kernel_path_acts_on_an_assessment` failed the
+  moment `selection` imported `outcome` for two constants, and it was right to — a selector that can
+  see a §25.2 verdict is one edit from acting on it. `UNINFORMATIVE_BRIER` moved to the scoring rule
+  that defines it; the count threshold became this module's own number.
+- **The golden section would have been born dead** — every grant the scenario made was consumed by
+  the step that made it, the shape ADR-045 found here once already. Step 19f leaves one approved,
+  unallocated candidate, from the Cell with a rung-7 promotion so `experiment_cost` resolves to 0.4
+  rather than abstaining. **`assessments.forecasts_made_while_funded` moves 0 -> 2 with the verdict
+  unchanged** — §23.5's exclusion demonstrated for the first time.
+- **1040 tests green; USD_REAL and USD_SIM identical in every account.** Only RESOURCE moved, by 2
+  minor units of metering for a mock call priced at zero.
+- Next: three axes is a frontier, not quality-diversity. §31's `novelty_archive` and
+  `behavioural_descriptors`, §11.2's adoption record, and an Auditor path for content judgments —
+  in that order, since the archive also unblocks §13.4's other three flags.

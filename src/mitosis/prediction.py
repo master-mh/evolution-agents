@@ -357,9 +357,21 @@ def resolve(
     return get(conn, prediction_id)  # type: ignore[return-value]
 
 
+#: The Brier score of always saying 0.5 — "the score to beat" below, given a
+#: name because two callers now need to compare against it (§25.2's verdict and
+#: §13.2's evidence-quality gate).
+#:
+#: **Not a tuning knob and not a policy**: it is what a forecaster who knows
+#: nothing scores, so it falls out of the scoring rule rather than out of anyone's
+#: judgment. It lives here rather than beside either caller because a threshold
+#: that two modules import from a third cannot drift into meaning two things.
+UNINFORMATIVE_BRIER = 0.25
+
+
 def brier_score(probability: float, occurred: bool) -> float:
     """(p - o)^2. Lower is better; 0 is perfect, 1 is maximally wrong, and 0.25
-    is what you get by always saying 0.5 — the score to beat."""
+    is what you get by always saying 0.5 — the score to beat
+    (`UNINFORMATIVE_BRIER`)."""
     return (probability - (1.0 if occurred else 0.0)) ** 2
 
 

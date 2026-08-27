@@ -1,5 +1,5 @@
 {
-  "expectation_version": 28,
+  "expectation_version": 29,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,14 +10,14 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "42f3e2d6d7279b4c58fa397b8d647774aebd94add1788a3f5a55813654749a70",
+  "semantic_hash": "b807a0ce615b5fc2528b60631481786cf92d0b1172dc83119be74d4ec87b1bce",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
       "expired": 5,
-      "live": 0,
+      "live": 1,
       "regenerated": 4,
-      "total": 11
+      "total": 12
     },
     "approval_requests": [
       {
@@ -133,6 +133,16 @@
         "signals": [],
         "sla_seconds": 3600,
         "status": "approved"
+      },
+      {
+        "assessed_tier": "HIGH",
+        "cell": "cell#4",
+        "claimed_tier": "MEDIUM",
+        "exposure_minor_units": 42,
+        "reversible": true,
+        "signals": [],
+        "sla_seconds": 3600,
+        "status": "approved"
       }
     ],
     "artifact_attributed_ledger_entries": 1,
@@ -162,15 +172,15 @@
       {
         "allocated_minor_units": 30,
         "cell": "cell#4",
-        "forecasts_made_while_funded": 0,
+        "forecasts_made_while_funded": 2,
         "forecasts_open_at_funding": 4,
         "forecasts_overdue": 0,
         "forecasts_resolved_since": 3,
         "forecasts_still_open": 1,
         "funded_mean_brier": null,
-        "human_interventions": 10,
+        "human_interventions": 11,
         "intervention_kinds": {
-          "approval_granted": 7,
+          "approval_granted": 8,
           "prediction_resolved": 3
         },
         "liability_minor_units": null,
@@ -184,13 +194,13 @@
       }
     ],
     "audit_event_types": {
-      "approval_granted": 11,
-      "approval_requested": 11,
+      "approval_granted": 12,
+      "approval_requested": 12,
       "artifact_created": 1,
       "artifact_exported": 1,
       "autonomy_flag_changed": 3,
       "capital_allocated": 1,
-      "cell_deliberated": 11,
+      "cell_deliberated": 12,
       "cell_estate_reclaimed": 1,
       "cell_lifecycle_transition": 12,
       "cell_revenue_recorded": 1,
@@ -206,8 +216,8 @@
       "grant_expired": 5,
       "human_minutes_subsidised": 1,
       "model_call_reconciled": 1,
-      "model_call_settled": 13,
-      "prediction_registered": 8,
+      "model_call_settled": 14,
+      "prediction_registered": 10,
       "prediction_resolved": 5,
       "promotion_pool_funded": 1,
       "real_spend_limit_configured": 1,
@@ -240,10 +250,10 @@
       "RESOURCE::cell:cell#1:committed": 0,
       "RESOURCE::cell:cell#2:cash": 5000,
       "RESOURCE::cell:cell#2:committed": 1150,
-      "RESOURCE::cell:cell#4:cash": 1437,
+      "RESOURCE::cell:cell#4:cash": 1435,
       "RESOURCE::cell:cell#4:committed": 0,
       "RESOURCE::external_capital": -50000,
-      "RESOURCE::infrastructure_reserve": 2421,
+      "RESOURCE::infrastructure_reserve": 2423,
       "RESOURCE::seed_bank": 35000,
       "USD_REAL::cell:cell#1:cash": 965,
       "USD_REAL::cell:cell#1:committed": 15,
@@ -448,6 +458,15 @@
         "made_model_call": true,
         "status": "proposed",
         "wake_reason": "scheduled research cycle"
+      },
+      {
+        "cell": "cell#4",
+        "context_dropped": [],
+        "context_tokens": 1016,
+        "failure_reason": null,
+        "made_model_call": true,
+        "status": "proposed",
+        "wake_reason": "scheduled research cycle"
       }
     ],
     "egress_allowlist": [
@@ -489,6 +508,12 @@
         "event_type": "cell_wake",
         "priority": 100,
         "status": "processed"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
       },
       {
         "attempt_number": 0,
@@ -930,6 +955,22 @@
         "resolved_model": "mock-1",
         "settled_minor_units": 0,
         "status": "succeeded"
+      },
+      {
+        "cell": "cell#4",
+        "cost_actual_micro_usd": 0,
+        "input_tokens": 3925,
+        "mirror_minor_units": 0,
+        "output_tokens": 236,
+        "pricing_table_version": "2026-07-27",
+        "provider": "mock",
+        "reconciled": false,
+        "reconciled_micro_usd": null,
+        "reconciliation_source": null,
+        "requested_model": "mock-1",
+        "resolved_model": "mock-1",
+        "settled_minor_units": 0,
+        "status": "succeeded"
       }
     ],
     "predictions": [
@@ -1012,6 +1053,26 @@
         "probability": 0.8,
         "resolution_source": "golden-run observation 2",
         "resolved": true
+      },
+      {
+        "brier_score": null,
+        "cell": "cell#4",
+        "claim": "golden-run second probe returns a signal",
+        "log_score": null,
+        "outcome": null,
+        "probability": 0.5,
+        "resolution_source": null,
+        "resolved": false
+      },
+      {
+        "brier_score": null,
+        "cell": "cell#4",
+        "claim": "golden-run second probe stays inside its cap",
+        "log_score": null,
+        "outcome": null,
+        "probability": 0.9,
+        "resolution_source": null,
+        "resolved": false
       }
     ],
     "promotions": [
@@ -1116,6 +1177,14 @@
         "kind": "external_action",
         "risk_tier": "HIGH",
         "summary": "golden-run outreach on a fixed channel"
+      },
+      {
+        "cell": "cell#4",
+        "derived_from_untrusted": true,
+        "estimated_cost_minor_units": 12,
+        "kind": "spend_request",
+        "risk_tier": "MEDIUM",
+        "summary": "golden-run second probe, left waiting on the pool"
       }
     ],
     "reservations": [
@@ -1414,6 +1483,22 @@
         "maximum_amount": 2,
         "settled_amount": 2,
         "status": "settled"
+      },
+      {
+        "book": "USD_REAL",
+        "cell": "cell#4",
+        "external_operation_type": "model_call",
+        "maximum_amount": 1,
+        "settled_amount": 0,
+        "status": "released"
+      },
+      {
+        "book": "RESOURCE",
+        "cell": "cell#4",
+        "external_operation_type": "model_call",
+        "maximum_amount": 2,
+        "settled_amount": 2,
+        "status": "settled"
       }
     ],
     "resource_usage": [
@@ -1620,6 +1705,18 @@
         "minor_units": 1,
         "quantity": 225,
         "resource_type": "output_tokens"
+      },
+      {
+        "cell": "cell#4",
+        "minor_units": 1,
+        "quantity": 3925,
+        "resource_type": "input_tokens"
+      },
+      {
+        "cell": "cell#4",
+        "minor_units": 1,
+        "quantity": 236,
+        "resource_type": "output_tokens"
       }
     ],
     "rights_attestations": [
@@ -1632,6 +1729,38 @@
         "subject_kind": "domain"
       }
     ],
+    "selection": {
+      "candidates": [
+        {
+          "axes": {
+            "economic_potential": null,
+            "experiment_cost": 0.4,
+            "information_gain": 0.734498,
+            "structural_novelty": null,
+            "transfer_robustness": null
+          },
+          "cell": "cell#4",
+          "estimated_cost_minor_units": 12,
+          "gates": {
+            "evidence_quality": "passed",
+            "policy_compliance": "passed",
+            "reproducibility": "unmeasurable",
+            "software_native_advantage": "unmeasurable"
+          },
+          "on_frontier": true,
+          "rejected_by": []
+        }
+      ],
+      "measured_dimensions": [
+        "experiment_cost",
+        "information_gain"
+      ],
+      "unmeasured_dimensions": [
+        "economic_potential",
+        "structural_novelty",
+        "transfer_robustness"
+      ]
+    },
     "tool_calls": [
       {
         "arguments": {
@@ -1653,13 +1782,13 @@
       "RESOURCE::cell_funding": 2,
       "RESOURCE::colony_seed_capital": 1,
       "RESOURCE::reservation_release": 2,
-      "RESOURCE::reservation_reserve": 18,
-      "RESOURCE::reservation_settle": 18,
+      "RESOURCE::reservation_reserve": 19,
+      "RESOURCE::reservation_settle": 19,
       "USD_REAL::cell_birth_funding": 1,
       "USD_REAL::cell_funding": 1,
       "USD_REAL::colony_seed_capital": 1,
-      "USD_REAL::reservation_release": 13,
-      "USD_REAL::reservation_reserve": 15,
+      "USD_REAL::reservation_release": 14,
+      "USD_REAL::reservation_reserve": 16,
       "USD_REAL::reservation_settle": 1,
       "USD_SIM::capital_allocation": 1,
       "USD_SIM::cell_birth_funding": 2,

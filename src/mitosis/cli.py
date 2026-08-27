@@ -51,6 +51,7 @@ from . import (
     reservations,
     resource_metering,
     rights,
+    selection,
     artifacts as artifacts_module,
     revenue,
     tool_registry,
@@ -2046,6 +2047,49 @@ def cmd_allocations(args: argparse.Namespace) -> None:
     conn.close()
 
 
+def cmd_frontier(args: argparse.Namespace) -> None:
+    """§13.2 over the grants waiting on the pool: gates, then a Pareto frontier.
+
+    Prints a **set**, not an order. `allocations` lists the same grants by grant
+    time, which is first-come-first-funded; this says which of them nothing else
+    beats on every axis at once. Neither is a decision — a human still allocates.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    result = selection.evaluate(conn)
+    if not result.candidates:
+        print("No grants are waiting on the promotion pool.")
+        conn.close()
+        return
+
+    print(f"{len(result.candidates)} candidate(s); "
+          f"{len(result.rejected_grant_ids)} rejected by a §13.2 gate")
+    print(f"  measured dimensions:   {', '.join(result.measured_dimensions) or 'none'}")
+    print(f"  unmeasured dimensions: {', '.join(result.unmeasured_dimensions) or 'none'}")
+    print()
+    for candidate in result.candidates:
+        if candidate.grant_id in result.frontier_grant_ids:
+            standing = "ON FRONTIER"
+        elif candidate.rejected_by:
+            standing = "REJECTED"
+        else:
+            standing = "dominated"
+        print(f"  {candidate.grant_id}  {standing}")
+        print(f"    cell {candidate.cell_id}  "
+              f"estimate {candidate.estimated_cost_minor_units} minor units")
+        for gate in candidate.gates:
+            if gate.outcome is not selection.GateOutcome.PASSED:
+                print(f"    gate {gate.dimension}: {gate.outcome.value} — {gate.reason}")
+        for axis in candidate.axes:
+            if axis.measured:
+                print(f"    {axis.dimension}: {axis.value:.4f} ({axis.reason})")
+    print()
+    print("§13.2 forbids a single weighted scalar, so this is unordered on purpose, "
+          "and nothing in the kernel acts on it.")
+    conn.close()
+
+
 def cmd_allocate(args: argparse.Namespace) -> None:
     """§25.1 rung 7: consume an approved grant and fund the Cell."""
     _require_existing_db(args.db)
@@ -3248,6 +3292,12 @@ def build_parser() -> argparse.ArgumentParser:
         "allocations", help="approved grants ready to allocate, and the pool balance"
     )
     allocations_parser.set_defaults(func=cmd_allocations)
+
+    frontier_parser = subparsers.add_parser(
+        "frontier",
+        help="§13.2: gate the waiting grants, then show the Pareto frontier over them",
+    )
+    frontier_parser.set_defaults(func=cmd_frontier)
 
     allocate_parser = subparsers.add_parser(
         "allocate", help="§25.1 rung 7: consume an approved grant and fund the Cell"

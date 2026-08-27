@@ -76,6 +76,7 @@ from . import (
     lifecycle,
     lineage,
     outcome,
+    selection,
     population,
     prediction,
     promotion,
@@ -896,7 +897,57 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           (c) **`balances` is identical in every account in every book.**
 #               Enqueuing an event costs nothing in any book, and USD_REAL is
 #               untouched.
-EXPECTATION_VERSION = 28
+#   28 -> 29 (§13.2's selector; §13.1, §13.2, §10.2, §23.5, §25.2; ADR-059).
+#           **This slice adds a scenario step, not just a section.** Every grant
+#           this scenario made was consumed by the step that made it, so a
+#           correct selector replayed against an empty list — the dead-in-the-
+#           golden-run shape ADR-045 found here once already. Step 19f gives
+#           cell#4 a second spend request, approves it, and **deliberately never
+#           allocates it**: an approved grant nobody has funded is what a §13.2
+#           candidate is.
+#           (a) **New section `selection`.** One candidate, on the frontier,
+#               rejected by nothing. `evidence_quality: passed` (cell#4's three
+#               forecasts resolved at 0.8 and all occurred), `policy_compliance:
+#               passed`, and `reproducibility` / `software_native_advantage`
+#               both **`unmeasurable`** — §11.2's adoption record and §13.3's
+#               content judgment have no data here, and abstaining is the
+#               answer rather than a gap. Watch those two: an "unmeasurable"
+#               that becomes "passed" is a gate that stopped abstaining, which
+#               reads exactly like a gate that started working.
+#           (b) **Two axes carry numbers and three abstain.** `experiment_cost`
+#               **0.4** is §13.1's ratio with its first consumer — 12 minor
+#               units against the rung-7 tranche of 30. `information_gain`
+#               **0.734498** is the mean normalised entropy of forecasts at 0.5
+#               and 0.9. The Cell was chosen *because* it has a promotion: an
+#               unpromoted one abstains on cost, and a section where every axis
+#               abstained would pass against a selector that had stopped
+#               measuring anything.
+#           (c) **`assessments` moves in exactly one field that matters:
+#               `forecasts_made_while_funded` 0 -> 2, and the verdict does not
+#               change.** That field has pinned nothing since it was added.
+#               §23.5's rule is that forecasts registered after the money
+#               arrived are counted and kept out of the verdict, and this is the
+#               first replay where there are any to keep out. A verdict that
+#               moved here would mean the exclusion had stopped working.
+#               `human_interventions` 10 -> 11 is the extra `approval_granted`.
+#           (d) **The rest is one deliberation's exhaust, and it is arithmetic.**
+#               `deliberations` 11 -> 12, `proposals` 11 -> 12,
+#               `approval_requests` 11 -> 12 (claimed MEDIUM, assessed HIGH from
+#               the genome's `risk_class`, **no signals**), `approval_grants`
+#               11 -> 12 with `live` 0 -> 1 — the live grant *is* the candidate.
+#               `predictions` 8 -> 10, `model_calls` 13 -> 14,
+#               `resource_usage` 34 -> 36, `reservations` 37 -> 39,
+#               `event_inbox` 26 -> 27, and `audit_event_types` +1 on each of
+#               `approval_requested`, `approval_granted`, `cell_deliberated`,
+#               `model_call_settled`, +2 on `prediction_registered`.
+#           (e) **`balances`: USD_REAL and USD_SIM are identical in every
+#               account.** Only RESOURCE moves, by 2 minor units of metering for
+#               a mock call priced at zero — cell#4 cash 1437 -> 1435 against
+#               `infrastructure_reserve` 2421 -> 2423. `transaction_types` shows
+#               a USD_REAL `reservation_reserve` and a matching
+#               `reservation_release`, which is a reservation opened and given
+#               back, not a spend.
+EXPECTATION_VERSION = 29
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -935,6 +986,27 @@ GOLDEN_PROPOSAL_REPLY = json.dumps(
 # The commercial Cell's reply for the §25 promotion step. A spend request,
 # because only a spend request allocates capital — an approved experiment is a
 # human saying "yes, think about that", not a capital decision.
+#: A second spend request, approved and deliberately never allocated — the
+#: candidate §13.2 selects among (ADR-059). Its two forecasts sit either side of
+#: the coin flip so `information_gain` pins a number that a flipped or truncated
+#: entropy would move: 0.5 is a whole bit, 0.9 is roughly half of one.
+GOLDEN_WAITING_REQUEST_REPLY = json.dumps(
+    {
+        "kind": "spend_request",
+        "summary": "golden-run second probe, left waiting on the pool",
+        "rationale": "fixed scenario: exists to give §13.2 something to select among",
+        "risk_tier": "MEDIUM",
+        "estimated_cost_minor_units": 12,
+        "predictions": [
+            {"claim": "golden-run second probe returns a signal", "probability": 0.5,
+             "horizon_days": 30},
+            {"claim": "golden-run second probe stays inside its cap", "probability": 0.9,
+             "horizon_days": 30},
+        ],
+    },
+    sort_keys=True,
+)
+
 GOLDEN_SPEND_REQUEST_REPLY = json.dumps(
     {
         "kind": "spend_request",
@@ -2211,6 +2283,41 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     #      terminal (concluded or abandoned), so `running` — the state §9.2's cap
     #      actually counts — was the one an expectation never pinned.
 
+    # 19f. A candidate left waiting, so §13.2 has something to select among
+    #      (§13.1, §13.2, §10.2; ADR-059). Every grant this scenario creates was
+    #      consumed by the step that created it, which left the new selector
+    #      correct and **replayed against an empty list** — the shape ADR-045
+    #      found sitting in this same file for four months. A colony always has a
+    #      queue; this pins one.
+    #
+    #      The Cell is the auditor's child *because it has a rung-7 promotion*.
+    #      §13.1's `normalised_cost` divides by "current stage tranche", so an
+    #      unpromoted Cell abstains on the cost axis — and a section where every
+    #      axis abstained would pass against a selector that had stopped
+    #      measuring anything. Two of the three measurable axes carry real
+    #      numbers here for exactly that reason.
+    deliberation.deliberate(
+        conn,
+        cell_id=auditor_child.cell_id,
+        provider=providers.MockProvider(reply=GOLDEN_WAITING_REQUEST_REPLY),
+        wake_key="golden:wake:auditor-child-waiting",
+        wake_reason=deliberation.WAKE_SCHEDULED_RESEARCH,
+        model="mock-1",
+        proposal_sink=approval.QueueSink(),
+    )
+    waiting_request = next(
+        r for r in approval.queue(conn) if r.cell_id == auditor_child.cell_id
+    )
+    approval.approve(
+        conn,
+        request_id=waiting_request.request_id,
+        decided_by="golden-operator",
+        reason="fixed scenario: approved, and left for the pool to choose",
+    )
+    #      Not allocated. An approved grant that no one has funded yet is what a
+    #      §13.2 candidate *is*, and allocating it here would consume the grant
+    #      and empty the frontier again.
+
     # 20. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
@@ -2741,6 +2848,28 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         for item in outcome.assess_all(conn)
     ]
 
+    # §13.2's frontier. Grant ids are volatile, so a candidate is identified by
+    # its Cell and its estimate; `on_frontier` and `rejected_by` are what a
+    # regression in the gates or the domination rule would move. Gate outcomes
+    # are included in full because "unmeasurable" turning into "passed" is a
+    # silent widening — a gate that stopped abstaining would look like a gate
+    # that started working.
+    frontier = selection.evaluate(conn)
+    selection_rows = [
+        {
+            "cell": aliases.get(candidate.cell_id, "cell#?"),
+            "estimated_cost_minor_units": candidate.estimated_cost_minor_units,
+            "on_frontier": candidate.grant_id in frontier.frontier_grant_ids,
+            "rejected_by": list(candidate.rejected_by),
+            "gates": {gate.dimension: gate.outcome.value for gate in candidate.gates},
+            "axes": {
+                axis.dimension: (round(axis.value, 6) if axis.measured else None)
+                for axis in candidate.axes
+            },
+        }
+        for candidate in frontier.candidates
+    ]
+
     model_call_rows = [
         {
             "cell": aliases.get(row["cell_id"], "cell#?"),
@@ -2795,6 +2924,11 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "audits": audit_rows,
         "promotions": promotion_rows,
         "assessments": assessment_rows,
+        "selection": {
+            "candidates": selection_rows,
+            "measured_dimensions": list(frontier.measured_dimensions),
+            "unmeasured_dimensions": list(frontier.unmeasured_dimensions),
+        },
         "audit_event_types": audit_event_types,
         "event_inbox": inbox,
         "event_outbox": outbox,

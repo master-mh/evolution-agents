@@ -87,11 +87,13 @@ from enum import StrEnum
 from . import ledger, prediction, promotion, revenue
 from .models import Book
 
-#: The Brier score of always saying 0.5 — `prediction.py` names it as "the score
-#: to beat", and it is the only calibration bar available to a Cell being judged
-#: on its first promotion, where there is no earlier record to have degraded
-#: from. Not a tuning knob: it is what a forecaster who knows nothing scores.
-UNINFORMATIVE_BRIER = 0.25
+#: The only calibration bar available to a Cell being judged on its first
+#: promotion, where there is no earlier record to have degraded from. **Defined
+#: by the scoring rule, so it lives with the scoring rule** — this module used to
+#: hold the literal while its own comment pointed at `prediction.py` for the
+#: meaning. §13.2's evidence-quality gate needed the same bar, and a second
+#: copy of a threshold is a second version of it (ADR-059).
+UNINFORMATIVE_BRIER = prediction.UNINFORMATIVE_BRIER
 
 #: How many resolved forecasts before the kernel will state a verdict at all.
 #:

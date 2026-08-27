@@ -180,13 +180,20 @@
   ADR-056's diversity null replicating at matched n (1.524 vs 1.467). ADR-056's *100% vs 5%* does
   not replicate and cannot — that rubric was lost with its scratch script — so treat the direction
   as the result and the absolute rate as a lower bound.
-- [ ] **Phase 2: do not select on variety alone.** Diversity and concreteness move independently —
-  `genome_loose` was nominally *more* diverse per pair and named **no object at all** in fourteen
-  proposals. A selector tuned on proposal variety would favour exactly the Cells that have stopped
-  saying anything; §12.1 makes `novelty distance` a MAP-Elites *descriptor*, and §13.4 is what stops
-  a Cell cheating it. The counterweight is now built (above) — **what is still unbuilt is the
-  selector that consumes it**, and §13.2's "hard gates, then a Pareto frontier, never a single
-  weighted scalar" is the shape it has to take.
+- [x] **The §13.2 selector — BUILT** (2026-08-27), ADR-059, golden 28 -> 29. `selection.py`: four
+  hard gates, then a Pareto frontier, nothing acting on the result. **Five of §13.2's nine
+  dimensions can be measured here and four cannot**, and the four abstain rather than scoring zero —
+  `reproducibility` (§11.2's adoption record), `software_native_advantage` (§13.3 judges content),
+  `structural_novelty` (§31's `novelty_archive`), `economic_potential` (no proper scoring rule over a
+  Cell's own upside). Live: evidence quality (§8.5, thresholded at `UNINFORMATIVE_BRIER`), policy
+  compliance (§18 quarantine + §23.4's escalating signals), information gain, experiment cost
+  (§13.1's first consumer) and transfer robustness.
+- [ ] **Phase 2's selector is honest but it is not yet quality-diversity.** Three measurable axes is
+  a real frontier and not an archive. What it needs, in the order §13.2 and §12 imply: §31's
+  `novelty_archive` and `behavioural_descriptors` (which also unblock §13.4's other three flags,
+  ADR-058), §11.2's independent-adoption record, and an **Auditor path for content judgments** —
+  ADR-059's finding is that concreteness cannot be a kernel computation (§23.5), so it enters as
+  `software_native_advantage`'s missing judge rather than as an axis.
   *Disproved by:* anything ranking Cells or proposals by a single scalar combining novelty with
   anything else.
 - [x] **Identical wake reason — TESTED, CONFIRMED, REMEDY REFUSED** (2026-08-27), ADR-055. Varying it

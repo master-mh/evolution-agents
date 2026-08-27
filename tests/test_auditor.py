@@ -364,7 +364,7 @@ def test_precision_is_unmeasured_rather_than_perfect_before_resolution(conn):
     """An Auditor with no resolved flags has *no* record, not a spotless one.
 
     Reporting 1.0 would rank a brand-new Auditor above one with a real history
-    — the same error `promotion._transfer_degradation` avoids by reporting NULL
+    — the same error `promotion.transfer_degradation` avoids by reporting NULL
     rather than 0.
     """
     _, reviewer, request = _setup(conn)

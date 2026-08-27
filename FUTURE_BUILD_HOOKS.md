@@ -1385,3 +1385,29 @@ actually queued for building — this file is memory, not a backlog to work thro
   test that it renders at all (ADR-046's mechanism is prose in a prompt), and CI still cannot see
   parse compliance. `tests/test_analysis_boundary.py` is now the worked example for the first —
   an AST walk with a vacuity guard and an allowlist that forces a classification.
+
+<!-- 2026-08-27, ADR-059 (§13.2's selector) -->
+- **`experiment_cost` is the one frontier axis a Cell can improve by lying, and nothing detects it
+  yet.** §13.1's numerator is the Cell's own `estimated_cost_minor_units`. The denominator is safe (a
+  human set the tranche) and `ExperimentReport` already records what an experiment actually consumed
+  — so the detector is a comparison nobody has written: systematic under-estimation, per Cell, over
+  concluded experiments. It is §23.4-shaped (an anti-gaming signal) rather than a new table, and the
+  contrast with `information_gain` is the argument for building it: that axis is safe *only* because
+  Brier is a proper scoring rule, and this one has no equivalent.
+- **A frontier over three axes is not an archive.** §12 wants MAP-Elites with 2–3 descriptor
+  dimensions and raw descriptors stored separately; `selection.py` computes a frontier and stores
+  nothing. When §31's `behavioural_descriptors` lands, the question to ask first is whether the
+  frontier becomes a *view over the archive* rather than a second mechanism beside it — §12.2's
+  "the archive is a derived view" is the same posture §2.5 takes toward balances.
+- **The evidence-quality gate can only reject, never rank.** A Cell at Brier 0.05 and one at 0.24
+  both pass, and §13.2 gives calibration no frontier axis to separate them on. That is faithful to
+  the clause, and it means the selector is blind to the difference between a good forecaster and a
+  barely-adequate one. If it should not be, the argument is for adding a dimension §13.2 does not
+  name, which is a change to the clause's shape rather than to this module.
+- **`selection` has no CLI filter and prints every waiting candidate.** Fine at one candidate;
+  a colony with fifty approved grants wants at least `--frontier-only`. Deliberately not built
+  against an imagined queue.
+- **Nothing wakes on a selection, and that is the §25.1 rung-8 question again.** A Cell whose
+  candidate is dominated learns nothing, because §23.5 forbids telling it. What *could* honestly
+  reach the Cell is the operator's eventual decision — which already wakes it (`WAKE_HUMAN_DECISION`,
+  ADR-057). Check that path is enough before inventing a selection-specific wake.

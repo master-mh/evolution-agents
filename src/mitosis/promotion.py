@@ -329,7 +329,7 @@ def _allocate_locked(
             scores.get("mean_brier"),
             int(scores.get("resolved", 0) or 0),
             int(scores.get("unresolved", 0) or 0),
-            _transfer_degradation(conn, cell.cell_id),
+            transfer_degradation(conn, cell.cell_id),
             request.decided_by or "unknown",
             allocated_by,
             reason,
@@ -383,9 +383,14 @@ def _real_spending_enabled(conn: sqlite3.Connection) -> bool:
     return bool(row["real_spending_enabled"]) if row is not None else False
 
 
-def _transfer_degradation(conn: sqlite3.Connection, cell_id: str) -> float | None:
+def transfer_degradation(conn: sqlite3.Connection, cell_id: str) -> float | None:
     """§25.2's "transfer degradation": how much worse this Cell did at its last
     rung than predicted.
+
+    Public because §13.2 names transfer robustness as one of its five frontier
+    dimensions and `selection.py` reads it there. It was private while §25.2's
+    payload was its only consumer; a second, higher caller is the reason to
+    promote a name rather than to reach through the underscore.
 
     NULL until a Cell has been promoted before, because degradation needs
     something to degrade *from*. Reported as unavailable rather than 0 — a zero

@@ -3232,3 +3232,134 @@ recording that is more useful than defending the number.
 - **The kernel-versus-analysis boundary is now structural**, and the allowlist in
   `KERNEL_DRIVING_SCRIPTS` forces a new script to be a scorer unless someone deliberately says
   otherwise.
+
+## ADR-059: §13.2's selector — four of its nine dimensions have no data, and saying so is the build
+
+- **Status:** Accepted; new `selection.py`, no migration, golden expectations 28 -> 29
+- **Spec ref:** §13.2, §13.1, §13.3, §8.5, §10.2, §10.3, §10.5, §11.2, §12.1, §23.4, §23.5, §25.2,
+  §31; ADR-029, ADR-045, ADR-048, ADR-058
+- **Context:** ADR-058 measured concreteness and PRIORITIES carried the consequence — "a selector
+  tuned on proposal variety would favour exactly the Cells that have stopped saying anything" — with
+  the selector itself unbuilt. §13.2 is the clause that says what one looks like:
+
+  > Reject candidates below minimum thresholds on evidence quality, reproducibility, policy
+  > compliance, and software-native advantage; then select from a Pareto frontier over structural
+  > novelty, information gain, economic potential, experiment cost, and transfer robustness.
+  > **Do not rely on a single weighted scalar.**
+
+### The finding: five of the nine can be measured here, and four cannot
+
+`DIMENSION_SENSE` transcribes all nine and forces each into a gate or a frontier axis
+(`unclassified_dimensions()` fails otherwise — the `accounts.py` idiom). What came out:
+
+| dimension | half | today |
+|---|---|---|
+| evidence quality | gate | **live** — §8.5's register, thresholded at `UNINFORMATIVE_BRIER` |
+| policy compliance | gate | **live** — §18 quarantine + §23.4's escalating signals |
+| reproducibility | gate | **unmeasurable** — §11.2's adoption record does not exist |
+| software-native advantage | gate | **unmeasurable** — §13.3 judges an idea's *content* |
+| information gain | frontier | **live** — entropy of the forecasts filed with the proposal |
+| experiment cost | frontier | **live** — §13.1's `normalised_cost`, its first consumer |
+| transfer robustness | frontier | **live** — §25.2's transfer degradation |
+| structural novelty | frontier | **unmeasurable** — needs §31's `novelty_archive` |
+| economic potential | frontier | **unmeasurable** — no proper scoring rule over a Cell's own upside |
+
+**An unmeasurable dimension abstains; it never scores zero.** `structural_novelty = 0.0` is the
+claim "this idea is not novel"; the truth is that nothing here can tell. §2.6's report and
+ADR-042/043 settled that shape and this reuses it, including the split between `UNEVALUABLE` (this
+candidate has no record yet — a new Cell) and `UNMEASURABLE` (no candidate could be scored). A
+single "unknown" would hide which of the two a build can fix, the same reason §25.2 separates
+`INSUFFICIENT_EVIDENCE` from `EVIDENCE_WITHHELD`.
+
+### Why a Cell's own probability may drive selection and its own upside may not
+
+`information_gain` is computed from forecasts the Cell registered itself. §8.5 is what makes that
+safe: **Brier and log score are proper scoring rules**, so stating 0.5 when you believe 0.9 loses
+points at resolution, and the register is hash-chained before the outcome is knowable. A Cell gaming
+this axis pays for it on the evidence-quality gate. `economic_potential` has no such rule over it,
+so §0.3 applies unchanged — "a Cell may *explain* a result; it may never *define* the canonical
+result" — and the module declines rather than inventing a number.
+
+**This is what §13.2's "no single weighted scalar" is protecting.** The dimensions are supposed to
+hold each other honest, and they stop being able to the moment they are summed.
+
+**One dimension has no such protection, and it is named rather than hidden.**
+`experiment_cost`'s numerator is the Cell's own `estimated_cost_minor_units`, so understating a cost
+looks cheap on the frontier. §13.1's denominator is safe — a human set the tranche — and the ledger
+records what an experiment actually consumed, but nothing yet compares the two. Recorded in
+FUTURE_BUILD_HOOKS rather than papered over.
+
+### ADR-058's concreteness measure is *not* wired in, and that is the answer
+
+PRIORITIES asked for "the selector that consumes it". It cannot be a kernel computation: concreteness
+is a judgment about an idea's *content*, which is the same category as §13.3's software-native
+advantage, and §13.2's structure puts that behind a human (§23) or an independent Auditor (§10.4).
+The kernel is excluded by §23.5 and by `tests/test_analysis_boundary.py`, which this repo added one
+slice ago precisely so a Cell cannot be scored on novelty inside the loop that produces novelty.
+**So concreteness enters §13.2 as `software_native_advantage`'s missing judge, not as an axis** —
+and the shape of the gap is now written down instead of guessed at.
+
+### What it displaced
+
+- **`promotion.allocatable_grants` as the candidate set.** It looked like the same list and is not:
+  it answers a capital-pool question and filters to spend requests, while §13.1's formula is written
+  about an *experiment's* cost. Selecting from it would have left the clause's own cost dimension
+  measuring only the kind it was not named for. `CANDIDATE_KINDS` / `NON_CANDIDATE_SENSE` make every
+  other kind carry a reason it is excluded.
+- **Rejecting a Cell with no forecasting record.** `death._has_realised_record` names the trap from
+  the other side: an unmeasured Cell is not inferior, it is unmeasured. A gate that rejected the
+  unmeasured would reject every Cell the colony has just born — §9.4's founder problem manufactured
+  by the selector.
+- **Setting the evidence bar at "worse than average" rather than "worse than saying nothing".** A
+  percentile is a tuning knob; `UNINFORMATIVE_BRIER` falls out of the scoring rule.
+- **Gating on overdue unresolved forecasts.** `outcome.py` is explicit that resolution is the
+  operator's job, so a withheld outcome is "a defect in the evidence, not a finding against the
+  Cell". The Cell-attributable version already exists as §23.4's `selective_evidence` — filing *new*
+  forecasts while its own sit open — and is checked under policy compliance.
+- **Letting `understated_risk` reject.** `approval.py` excludes it from `_ESCALATING_SIGNALS`
+  because it is derived from the kernel's own assessment; a selector gating on it would rebuild that
+  circularity one layer up.
+- **Importing `outcome` for two constants — and the existing guard caught it.**
+  `test_no_kernel_path_acts_on_an_assessment` failed the moment `selection` imported `outcome`, and
+  it was right to: a selector that can see a §25.2 verdict is one edit from acting on it. The fix
+  says where the constants belong. `UNINFORMATIVE_BRIER` moved to `prediction.py`, beside the
+  scoring rule that defines it (its comment in `outcome.py` already pointed there for the meaning),
+  and the count threshold is `selection.MIN_RESOLVED_FOR_A_GATE` — its own number, because "enough
+  evidence to call a funded promotion a success" and "enough to refuse a candidate a hearing" are
+  different questions that happen to share a value.
+
+### The golden section would have been born dead, so the scenario gained a step
+
+Every grant this scenario made was consumed by the step that made it, so a correct selector replayed
+against an empty list — **the exact shape ADR-045 found sitting in this file for four months**. Step
+19f gives cell#4 a second spend request, approves it, and never allocates it: an approved grant
+nobody has funded is what a §13.2 candidate *is*. The Cell was chosen because it holds a rung-7
+promotion, so `experiment_cost` resolves to **0.4** (12 against a tranche of 30) instead of
+abstaining — a section where every axis abstained would pass against a selector that had stopped
+measuring anything.
+
+**A second field came alive with it.** `assessments.forecasts_made_while_funded` moves 0 -> 2 and the
+verdict does not change. That field has pinned nothing since it was added; §23.5's rule is that
+forecasts registered after the money arrived are counted and kept *out* of the verdict, and this is
+the first replay in which there are any to keep out.
+
+### Consequences
+
+- **Nothing acts on a frontier**, enforced structurally. Being off it is an estimate, and §10.5
+  forbids "estimated negative EV alone" killing a Cell without a concurring Auditor; being on it is
+  not an approval. `test_no_kernel_path_acts_on_a_frontier` is the successor to
+  `test_no_kernel_path_acts_on_an_assessment`, and names `death.py`, `promotion.py` and
+  `scheduler.py` individually.
+- **The frontier never reaches a Cell** (§23.5): `context.py` and `deliberation.py` may not import
+  `selection`. Two of the three measurable axes are the Cell's own numbers, and a Cell shown which
+  axis placed it learns to move that axis.
+- **`Candidate` and `Frontier` carry no `score`, `rank`, `weight` or `priority` field**, and
+  `frontier_grant_ids` is a `frozenset`. §13.2 forbids the scalar; the surest way to keep one out is
+  to give it nowhere to live, and an ordered list is a scalar arrived at by presentation.
+- **§13.1's `normalised_cost` has a consumer.** FUTURE_BUILD_HOOKS asked, when ADR-048 shipped it
+  inert, that §13.2 "check that this ratio is the dimension it wants rather than assuming it". It
+  is — §13.2 lists "experiment cost" and §13.1 exists to make that quantity dimensionless.
+- **What Phase 2 still needs before it can select for real:** the `novelty_archive` and
+  `behavioural_descriptors` of §31 (which also unblock §13.4's other three flags, ADR-058), §11.2's
+  adoption record, and an Auditor path for content judgments. Three of nine axes is a real frontier
+  and an honest one; it is not yet quality-diversity.

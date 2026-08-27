@@ -196,7 +196,7 @@ def test_the_tranche_is_keyed_on_the_cell_not_on_the_experiments_rung(conn):
 
 def test_the_current_tranche_is_the_latest_promotion_not_the_total(conn):
     """§13.1 says "*current* stage tranche", singular — an instalment, not a
-    running total. `promotion._transfer_degradation` already reads "the Cell's
+    running total. `promotion.transfer_degradation` already reads "the Cell's
     latest promotion" the same way. Summing would make a Cell look cheaper every
     time it was funded again, which inverts the meaning of the ratio."""
     _seed_pool(conn)
