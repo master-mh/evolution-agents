@@ -6,6 +6,59 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-08-27 — The wake reason matters, and rotating it makes a Cell act on things that never happened
+
+A measurement and a refusal (ADR-055). **No code changed.**
+
+ADR-052's second candidate cause: `Why you were woken` renders the wake reason verbatim, the
+scheduler emits `scheduled research cycle` every time, so nothing in the prompt ever says the
+situation changed. Two arms, **12 runs × 8 wakes each** — deepened from 4 after the first pass came
+back at p = 0.11, the underpowered profile that produced four withdrawn claims earlier in this thread.
+
+| arm | runs | parsed | **ideas@3** |
+|---|---|---|---|
+| `wake_same` (shipped) | 12 | 46/96 | **1.764 ± 0.220** |
+| `wake_varied` | 12 | 38/96 | **2.025 ± 0.217** |
+
+**+0.261, 80% of 100 pairwise comparisons, exact one-sided p = 0.0116.** Parse-rate difference not
+significant (p = 0.31). **The hypothesis holds and is the smallest of the three** — anchoring was
++86%, this is +15%.
+
+### The remedy this invites is dangerous, and the arm proved it
+
+The experiment asserted reasons rather than earning them — no tool result had arrived, no capital had
+been allocated. That was flagged in the script *before* it ran, which is why the output was checked
+for it. **Three of 38 proposals in `wake_varied` responded to an event that never happened**, against
+**zero of 46** in the control:
+
+- *"Notify bookkeepers of an available tool result and request a review…"*
+- *"Email notification about available tool results to bookkeeping community forums"*
+
+The Cell was told a tool result was available, believed it, and proposed **contacting customers about
+it**. With an approved `external_action` grant and §27.1 autonomy on, that is a real email about a
+result that does not exist. **Part of the measured +15% is that failure**, so the effect size for
+*honest* wake reasons is smaller than 0.261 and this measurement cannot say by how much.
+
+### §0.3 from the other side
+
+The clause says a Cell may explain a result and never define it. The mirror is that **the kernel must
+not assert to a Cell something that is not so.** `Why you were woken` is `required=True` and never
+dropped, so whatever it says is read every wake, and a Cell cannot tell a scheduler placeholder from
+a real event.
+
+### Verification
+
+- **Deepened rather than reported.** The first pass read +0.355 at p = 0.11; deepening moved the
+  estimate *down* and the confidence up. Acting on it would have overstated the effect and still
+  landed on the dangerous remedy.
+- **Instrument checked:** 8 distinct reasons reaching the prompt against 1.
+- **The false-premise check was pre-registered in the script docstring**, not invented after seeing a
+  number worth defending.
+- **1010 tests and the golden run green** — untouched.
+- Next: wire real events to the reasons they justify (`WAKE_TOOL_RESULT`, `WAKE_CAPITAL_ALLOCATION`
+  and the rest are all defined; only the scheduler's tick is hardcoded). Argue it on correctness, not
+  on the 15%. Then the last candidate cause: the genome pinning market/problem/product.
+
 ## 2026-08-27 — Showing a rejected proposal's wording causes the §23.4 repeat it was meant to prevent
 
 A measurement (ADR-054). **No code changed — the rule shipped hours earlier is confirmed by the

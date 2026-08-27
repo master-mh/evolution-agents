@@ -1308,3 +1308,17 @@ actually queued for building — this file is memory, not a backlog to work thro
   than invented after seeing a number worth defending — and it found 3/38 against 0/46, which
   changed the recommendation from "rotate the wake reason" to "never rotate the wake reason". A
   check written after the result is a check you can talk yourself out of.
+- **The genome is what makes a proposal concrete, and that job was undocumented** (ADR-056). §16.2/§16.3
+  describe it as identity and an inheritable market hypothesis. Measured, it is also **the only part
+  of the context that tells a Cell what a proposal is about**: broaden it and concreteness falls from
+  100% to 5% while length holds. Anything that later trims or generalises the genome section to save
+  context budget should expect to pay in proposal quality, not just identity.
+- **A diversity score cannot tell "varied" from "vacuous".** `genome_loose` scored nominally *higher*
+  per pair while 20× fewer of its proposals named a real deliverable. **Keep the concreteness measure
+  beside any variety measure** — proportion of proposals matching a deliverable vocabulary is crude
+  but separated two arms that Vendi could not. This is the same lesson as parse-rate-alone (ADR-050),
+  one level up: a single number preferred the arm that had stopped saying anything.
+- **The three prompt-level causes of self-repetition are now closed** (ADR-051/053/054 anchoring,
+  ADR-055 wake reason, ADR-056 genome). ~2 effective ideas per run of 8 is the model's ceiling on this
+  hardware. Anyone reopening this should start from ADR-050's model question or §14's mutation
+  operators, not from context assembly — that ground is measured.

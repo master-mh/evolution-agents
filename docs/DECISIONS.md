@@ -2953,3 +2953,55 @@ choosing between them is a §23.4 question that deserves its own arm. §23.4's
   - **§19.4's labelling assumption is now doubly suspect.** ADR-053 and ADR-054 showed a label does
     not change how a model treats the text beside it; this shows a Cell takes a kernel-authored
     section as true without corroboration. Both bear on whether "untrusted" markings do any work.
+
+## ADR-056: The genome is not the constraint — it is what makes a proposal concrete at all
+
+- **Status:** Accepted (measurement); **hypothesis rejected**, no code change
+- **Spec ref:** §9.4, §14, §15.1, §16.2, §16.3; ADR-052, ADR-055
+- **Context:** ADR-052 parked three candidate causes for a Cell proposing ~1 idea per run of 8 wakes.
+  Anchoring is confirmed and fixed (ADR-051/053/054, +86%); the wake reason is confirmed, small, and
+  its obvious remedy refused (ADR-055, +15%). This is the third and last: that the genome pins
+  market/problem/product so tightly that one idea is the honest answer.
+- **The measurement.** Two arms, `llama3.2` t=0.8, 8 runs × 8 wakes. `genome_loose` keeps every §16.2
+  field and roughly the same length, and broadens the scope: "small businesses that keep their own
+  books" against "independent bookkeepers serving 5-20 small retail clients".
+
+  | arm | parsed | ideas (all) | **ideas@2** | **names a concrete deliverable** |
+  |---|---|---|---|---|
+  | `genome_tight` | 26/64 | **1.887** | 1.513 ± 0.111 | **26/26 (100%)** |
+  | `genome_loose` | 19/64 | 1.718 | 1.612 ± 0.165 | **1/19 (5%)** |
+
+  **Diversity: no effect.** +0.099, 65% of 48 pairwise comparisons, exact one-sided p = 0.207 — and
+  on the all-proposals measure the *tight* genome scores higher. **The hypothesis is rejected.**
+- **The pre-registered check is the finding.** It was written into the script before the arm ran
+  (the habit ADR-055 earned): a loose genome can raise a diversity score by making proposals vaguer
+  rather than more varied. It did not raise the score — and concreteness collapsed anyway, from
+  **100% to 5%**, at nearly identical summary length (83 vs 87 chars). The loose arm is not shorter,
+  it is emptier: *"Refine our software to reduce routine back-office work"*, *"Invest in customer
+  support"*. One proposal asked to **"Send reminder about the upcoming scheduled research cycle"** —
+  a Cell with no market hypothesis proposing about its own scaffolding, because that is the only
+  concrete noun left in its context.
+- **So the genome is load-bearing for proposal *quality*, not merely for identity.** §16.3 makes the
+  market hypothesis inheritable so a lineage stays that lineage; this measures a second job nobody
+  had written down. **It is the only thing in the context telling a Cell what a proposal is
+  *about*** — remove the specificity and the Cell still proposes, still parses less often, and says
+  nothing. Parse rate falls too (19/64 against 26/64), which is consistent: a vaguer prompt gives the
+  model less to be precise with.
+- **What it displaced.**
+  - **Loosening the seed genomes** to buy diversity, which §9.4's founder-effect measures might have
+    seemed to invite. It buys none, and costs everything that makes a proposal actionable.
+  - **Reading "the genome constrains the Cell" as a defect.** It constrains it the way §16.3 intends;
+    ~2 ideas per run is the tight genome's honest answer, not a symptom.
+- **Consequences:**
+  - **All three of ADR-052's candidate causes are now accounted for**, and the search for
+    prompt-level causes of self-repetition is complete: one large and fixed, one small with a refused
+    remedy, one rejected. **The residual ~2 effective ideas per run of 8 is the model's ceiling on
+    this hardware, not a defect in the prompt.** Anything further is a model decision (ADR-050) or a
+    §14 mutation-operator decision, not a context-assembly one.
+  - **A concreteness measure now exists and is worth keeping** — proportion of proposals naming a
+    real deliverable. It separated two arms that the diversity score could not tell apart, and it is
+    the first metric in this thread that measures whether a proposal is *worth* anything rather than
+    whether it differs from its neighbour.
+  - **Phase 2 warning.** Diversity and concreteness move independently: `genome_loose` was
+    nominally *more* diverse per pair and 20× less concrete. Selection tuned on variety alone would
+    favour exactly the Cells that have stopped saying anything.

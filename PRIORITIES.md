@@ -162,6 +162,19 @@
   golden expectation version 4 → 5 via a reviewed migration (**no USD_REAL moves**).
 
 ## Next
+- [x] **Genome pinning — TESTED, HYPOTHESIS REJECTED** (2026-08-27), ADR-056. Loosening the genome
+  gives **no diversity gain** (+0.099, 65% of 48 pairs, p = 0.207; the tight genome scores *higher*
+  on the all-proposals measure) and collapses concreteness from **100% to 5%** at the same summary
+  length. **The genome is the only part of the context telling a Cell what a proposal is about** —
+  one loose-arm proposal asked to "send reminder about the upcoming scheduled research cycle".
+  **This closes all three of ADR-052's candidate causes**: anchoring confirmed and fixed (+86%), wake
+  reason confirmed with the remedy refused (+15%), genome rejected. **The residual ~2 ideas/run is
+  the model's ceiling, not a prompt defect.**
+- [ ] **Phase 2: do not select on variety alone.** Diversity and concreteness move independently —
+  `genome_loose` was nominally *more* diverse per pair and **20× less concrete**. A selector tuned on
+  proposal variety would favour exactly the Cells that have stopped saying anything. The concreteness
+  measure from ADR-056 (proportion of proposals naming a real deliverable) is the cheap counterweight
+  and is not yet anywhere in the repo.
 - [x] **Identical wake reason — TESTED, CONFIRMED, REMEDY REFUSED** (2026-08-27), ADR-055. Varying it
   moves ideas/run **1.764 → 2.025** (+15%, 80% of 100 pairs, p = 0.0116, 12 runs per arm). **But
   3/38 proposals in the varied arm responded to an event that never happened** (against 0/46 control)

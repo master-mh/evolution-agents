@@ -14,55 +14,54 @@ measurement, §15.1 anchoring, the twins that
 chose the fix, and the fix itself, 2026-07-21 through 2026-08-26):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-27 — The wake reason matters, and rotating it makes a Cell act on things that never happened
+## 2026-08-27 — The genome is not the constraint; it is what makes a proposal concrete at all
 
-A measurement and a refusal (ADR-055). **No code changed.**
+A measurement (ADR-056). **Hypothesis rejected. No code changed.** This closes ADR-052's third and
+last candidate cause.
 
-ADR-052's second candidate cause: `Why you were woken` renders the wake reason verbatim, the
-scheduler emits `scheduled research cycle` every time, so nothing in the prompt ever says the
-situation changed. Two arms, **12 runs × 8 wakes each** — deepened from 4 after the first pass came
-back at p = 0.11, the underpowered profile that produced four withdrawn claims earlier in this thread.
+| arm | parsed | ideas (all) | **ideas@2** | **names a concrete deliverable** |
+|---|---|---|---|---|
+| `genome_tight` | 26/64 | **1.887** | 1.513 ± 0.111 | **26/26 (100%)** |
+| `genome_loose` | 19/64 | 1.718 | 1.612 ± 0.165 | **1/19 (5%)** |
 
-| arm | runs | parsed | **ideas@3** |
-|---|---|---|---|
-| `wake_same` (shipped) | 12 | 46/96 | **1.764 ± 0.220** |
-| `wake_varied` | 12 | 38/96 | **2.025 ± 0.217** |
+**Diversity: no effect** — +0.099, 65% of 48 pairwise comparisons, p = 0.207, and on the
+all-proposals measure the *tight* genome scores higher.
 
-**+0.261, 80% of 100 pairwise comparisons, exact one-sided p = 0.0116.** Parse-rate difference not
-significant (p = 0.31). **The hypothesis holds and is the smallest of the three** — anchoring was
-+86%, this is +15%.
+### The pre-registered check is the finding
 
-### The remedy this invites is dangerous, and the arm proved it
+It was written into the script before the arm ran (the habit ADR-055 earned): a loose genome could
+raise a diversity score by making proposals vaguer rather than more varied. It raised no score — and
+concreteness collapsed anyway, **100% → 5%**, at nearly identical summary length (83 vs 87 chars).
+The loose arm is not shorter, it is emptier: *"Refine our software to reduce routine back-office
+work"*, *"Invest in customer support"*. One proposal asked to **"Send reminder about the upcoming
+scheduled research cycle"** — a Cell with no market hypothesis proposing about its own scaffolding,
+because that was the only concrete noun left in its context.
 
-The experiment asserted reasons rather than earning them — no tool result had arrived, no capital had
-been allocated. That was flagged in the script *before* it ran, which is why the output was checked
-for it. **Three of 38 proposals in `wake_varied` responded to an event that never happened**, against
-**zero of 46** in the control:
+### So the genome has a second job nobody had written down
 
-- *"Notify bookkeepers of an available tool result and request a review…"*
-- *"Email notification about available tool results to bookkeeping community forums"*
+§16.3 makes the market hypothesis inheritable so a lineage stays that lineage. This measures the
+other thing it does: **it is the only part of the context that tells a Cell what a proposal is
+*about*.** Remove the specificity and the Cell still proposes, parses less often, and says nothing.
 
-The Cell was told a tool result was available, believed it, and proposed **contacting customers about
-it**. With an approved `external_action` grant and §27.1 autonomy on, that is a real email about a
-result that does not exist. **Part of the measured +15% is that failure**, so the effect size for
-*honest* wake reasons is smaller than 0.261 and this measurement cannot say by how much.
+### The search for prompt-level causes is complete
 
-### §0.3 from the other side
+| candidate (ADR-052) | verdict | effect |
+|---|---|---|
+| §15.1 anchoring | confirmed, **fixed** | **+86%** |
+| identical wake reason | confirmed, remedy refused | +15% |
+| genome pinning | **rejected** | none (p = 0.21) |
 
-The clause says a Cell may explain a result and never define it. The mirror is that **the kernel must
-not assert to a Cell something that is not so.** `Why you were woken` is `required=True` and never
-dropped, so whatever it says is read every wake, and a Cell cannot tell a scheduler placeholder from
-a real event.
+**The residual ~2 effective ideas per run of 8 is the model's ceiling on this hardware, not a defect
+in the prompt.** Anything further is a model decision (ADR-050) or a §14 mutation-operator decision,
+not a context-assembly one.
 
 ### Verification
 
-- **Deepened rather than reported.** The first pass read +0.355 at p = 0.11; deepening moved the
-  estimate *down* and the confidence up. Acting on it would have overstated the effect and still
-  landed on the dangerous remedy.
-- **Instrument checked:** 8 distinct reasons reaching the prompt against 1.
-- **The false-premise check was pre-registered in the script docstring**, not invented after seeing a
-  number worth defending.
+- **Instrument checked**: the genome section is present in the prompt in both arms; the concreteness
+  and length comparisons are computed over all proposals, not a sample.
 - **1010 tests and the golden run green** — untouched.
-- Next: wire real events to the reasons they justify (`WAKE_TOOL_RESULT`, `WAKE_CAPITAL_ALLOCATION`
-  and the rest are all defined; only the scheduler's tick is hardcoded). Argue it on correctness, not
-  on the 15%. Then the last candidate cause: the genome pinning market/problem/product.
+- **A concreteness measure now exists and is worth keeping.** It separated two arms the diversity
+  score could not tell apart, and it is the first metric here that asks whether a proposal is *worth*
+  anything rather than whether it differs from its neighbour.
+- Next: **Phase 2 warning recorded** — diversity and concreteness move independently, so selection
+  tuned on variety alone would favour exactly the Cells that have stopped saying anything.
