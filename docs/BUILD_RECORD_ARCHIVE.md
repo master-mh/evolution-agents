@@ -6,6 +6,46 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-08-26 — A recent proposal shows its wording only once a person judged it
+
+`context._was_decided` + 5 tests + golden expectation **25 -> 26** (ADR-052, implementing what its
+twins chose). No migration.
+
+§15.1's proposal log now renders `- [kind]\n    -> note` for an undecided proposal and keeps the
+summary once a person judged it. This is the pending-only variant ADR-052 recommended — narrower
+than the `nosummary` arm that won, because that one hides the summary even on the decided proposals
+ADR-046 exists to deliver.
+
+### The line is drawn where `_decision_note` already drew it
+
+**`expired` is not decided**, and that is the one judgement ADR-052 did not settle — its arms had no
+expired proposals. The docstring of `_decision_note` refuses to collapse "nobody looked" into "was
+judged", so a closed review window withholds the summary like any other undecided state. It is the
+status that looks decided and is not, which is why it gets its own test.
+
+### Verification
+
+- **Confirmed live, because no replay can see a prompt edit.** The shipped kernel scores **1.833
+  effective ideas per run** against ADR-052's arm at 1.852 and control at 1.089 — every parsed
+  proposal distinct in all four runs. `MockProvider` cannot show this, which is the whole reason
+  ADR-052 existed.
+- **Teeth-checked three ways**, each caught by a named test: always-decided (the old behaviour),
+  never-decided (the `nosummary` arm, which deletes ADR-046), and expired-counted-as-decided.
+- **Two existing tests failed for the right reason and were repaired, not weakened.**
+  `test_context_never_loads_the_entire_history` detected history-loading *through* the summaries, so
+  hiding them made it **silently vacuous** (`got []`) rather than red — it now approves its probes,
+  which restores the detection and tests the leaky case: the slice must stay bounded even when every
+  entry is fully shown. `test_an_unreviewed_proposal_is_distinguishable_from_an_expired_one` lost its
+  summary prefix, so it asserts **order** instead, which is what still ties each note to its proposal.
+- **Golden diff is two rows of eleven**, and only `context_tokens` — the only two wakes in the
+  scenario that assemble a non-empty proposal log. `model_calls` and `resource_usage` follow in the
+  matching rows; `resource_usage.minor_units` is unchanged at 1, so **`balances` is identical in
+  every account in every book** and `proposals` is byte-identical.
+- **1009 tests passing** (5 new, 0 removed; up from 1004).
+- Next: an arm that **approves proposals mid-run**. Nothing measured yet exercises the decided
+  branch, so nothing shows whether a Cell anchors to an *approved* summary too — the one result that
+  would put ADR-046 and diversity back in genuine conflict and move this line.
+
 ## 2026-08-26 — The Cell copies what it can see, and cannot be instructed out of it
 
 §14.2 counterfactual twins on §15.1's recent-proposals section (ADR-052). **No code changed** — the

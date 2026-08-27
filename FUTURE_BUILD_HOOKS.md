@@ -1244,3 +1244,20 @@ actually queued for building — this file is memory, not a backlog to work thro
   variants re-ran the whole batch and overwrote four arms mid-flight. It was caught only because a
   database had an mtime *later* than the arm that ran after it — worth checking mtimes against run
   order whenever results look surprising.
+- **A prompt annotation does not change how a model treats the text beside it** (ADR-053). Showing a
+  summary marked `-> APPROVED` anchors exactly as hard as showing it marked `-> waiting on a person`
+  (1.122 vs the pre-fix control's 1.089). The Cell reads the summary; the label is not a modifier on
+  it. Assume this for any future "show it but tell the Cell how to treat it" design — §19.4's
+  untrusted-content labelling included, which is worth a look on the same basis.
+- **A section can be redundant with another section and nobody notices, because both are prose.** An
+  approved strategy reaches the Cell through *both* `Your standing strategy` and the proposal log.
+  ADR-052 justified keeping the proposal-log summary on a job the standing-strategy section was
+  already doing. Worth an inventory: for each `ProposalKind`, which section actually delivers the
+  consequence of approval? `STRATEGY` -> standing strategy (confirmed). `EXPERIMENT` -> current
+  experiment (inferred). `TOOL_REQUEST` / `EXTERNAL_ACTION` -> the grant (inferred). If that holds,
+  the proposal log's summary delivers nothing any kind depends on.
+- **Approval itself costs diversity, separately from the summary.** `decided_hidden` (1.764) scores
+  below `pending` (2.195) with summaries withheld in both. A standing strategy is a strong
+  instruction and the Cell follows it — arguably correct behaviour, but it means an attentive
+  operator narrows the colony's search whether or not the anchoring bug is fixed. Worth knowing
+  before Phase 2 tunes selection on proposal variety.

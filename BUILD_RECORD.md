@@ -10,46 +10,61 @@ store, the external-action registry, the §27.1 autonomy decisions, grant regene
 expiry sweep, establishable rights, scheduler liveness, the experiment, experiment attribution,
 proposed experiments, the strategy kind decided, the experiment_id foreign keys, §13.1's
 normalised cost, the reply format a model can follow, the temperature/diversity
-measurement, §15.1 anchoring, and the twins that
-chose the fix, 2026-07-21 through 2026-08-26):
+measurement, §15.1 anchoring, the twins that
+chose the fix, and the fix itself, 2026-07-21 through 2026-08-26):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-26 — A recent proposal shows its wording only once a person judged it
+## 2026-08-27 — An approved summary anchors exactly as hard
 
-`context._was_decided` + 5 tests + golden expectation **25 -> 26** (ADR-052, implementing what its
-twins chose). No migration.
+A measurement (ADR-053). **No code changed** — the remedy is the third design iteration on this
+section and needs its own twins run first.
 
-§15.1's proposal log now renders `- [kind]\n    -> note` for an undecided proposal and keeps the
-summary once a person judged it. This is the pending-only variant ADR-052 recommended — narrower
-than the `nosummary` arm that won, because that one hides the summary even on the decided proposals
-ADR-046 exists to deliver.
+ADR-052 shipped `_was_decided` on a branch it had never measured: every arm behind it left every
+proposal `pending`, because an unattended colony queues and nobody reviews. Both the ADR and
+`_was_decided`'s docstring said so and named this as the result that would move the line. It does.
 
-### The line is drawn where `_decision_note` already drew it
+Approving does more than reveal a summary — it sets a standing strategy, issues grants, changes what
+§15 assembles. So three arms, `llama3.2` t=0.8, 4 runs × 8 wakes:
 
-**`expired` is not decided**, and that is the one judgement ADR-052 did not settle — its arms had no
-expired proposals. The docstring of `_decision_note` refuses to collapse "nobody looked" into "was
-judged", so a closed review window withholds the summary like any other undecided state. It is the
-status that looks decided and is not, which is why it gets its own test.
+| arm | approvals | section | parsed | **ideas/run** |
+|---|---|---|---|---|
+| `decided_shown` | every proposal | 64 tok, summaries **present** | 13/32 | **1.122** |
+| `decided_hidden` | every proposal | 35 tok, summaries withheld | 14/32 | **1.764** |
+| `pending` (shipped default) | none | 21 tok, summaries withheld | 18/32 | **2.195** |
+
+`decided_shown` vs `decided_hidden` holds every approval side-effect constant and varies only whether
+the summary renders. **`decided_hidden` is higher in 100% of 16 pairwise comparisons.**
+
+### Approval makes no difference to anchoring
+
+`decided_shown` scores **1.122** — the original pre-ADR-052 control was **1.089**. The anchoring
+returns in full the moment the summary is visible, approved or not. **A Cell copies text it can see;
+the annotation beside that text is not what it is reading.** So ADR-046 and diversity are in genuine
+conflict on the branch that shipped, and the current rule is safe only in a colony nobody reviews.
+
+### ADR-052's reason for showing it was wrong, and that is the way out
+
+The reasoning was "APPROVED is meaningless if the Cell cannot tell *what* was approved." An approved
+strategy in fact reaches the Cell through **two** sections — the proposal log and `Your standing
+strategy (your words, approved by a person — this is how you operate)`, a dedicated independent
+channel. **ADR-046's delivery for `STRATEGY` never ran through the proposal log**, so the summary
+there is redundant for the one kind ADR-046 is about. Likely the same for the others — an approved
+experiment reaches the Cell through the current-experiment section, a tool through its grant — but
+that is inferred, not measured.
 
 ### Verification
 
-- **Confirmed live, because no replay can see a prompt edit.** The shipped kernel scores **1.833
-  effective ideas per run** against ADR-052's arm at 1.852 and control at 1.089 — every parsed
-  proposal distinct in all four runs. `MockProvider` cannot show this, which is the whole reason
-  ADR-052 existed.
-- **Teeth-checked three ways**, each caught by a named test: always-decided (the old behaviour),
-  never-decided (the `nosummary` arm, which deletes ADR-046), and expired-counted-as-decided.
-- **Two existing tests failed for the right reason and were repaired, not weakened.**
-  `test_context_never_loads_the_entire_history` detected history-loading *through* the summaries, so
-  hiding them made it **silently vacuous** (`got []`) rather than red — it now approves its probes,
-  which restores the detection and tests the leaky case: the slice must stay bounded even when every
-  entry is fully shown. `test_an_unreviewed_proposal_is_distinguishable_from_an_expired_one` lost its
-  summary prefix, so it asserts **order** instead, which is what still ties each note to its proposal.
-- **Golden diff is two rows of eleven**, and only `context_tokens` — the only two wakes in the
-  scenario that assemble a non-empty proposal log. `model_calls` and `resource_usage` follow in the
-  matching rows; `resource_usage.minor_units` is unchanged at 1, so **`balances` is identical in
-  every account in every book** and `proposals` is byte-identical.
-- **1009 tests passing** (5 new, 0 removed; up from 1004).
-- Next: an arm that **approves proposals mid-run**. Nothing measured yet exercises the decided
-  branch, so nothing shows whether a Cell anchors to an *approved* summary too — the one result that
-  would put ADR-046 and diversity back in genuine conflict and move this line.
+- **Instrument checked before the numbers counted**: 13 and 14 approvals against 0, run-0 statuses
+  all `approved` against all `pending`, section medians **64 / 35 / 21 tokens** confirming summaries
+  present, withheld, withheld. (35 > 21 because an approved entry's decision note is longer.)
+- **The confounded comparison is reported and not used.** `pending` vs `decided_shown` shows the
+  right direction and attributes it wrongly; `decided_hidden` is the arm that isolates the summary.
+- **A second finding, separate:** `decided_hidden` (1.764) scores below `pending` (2.195), so
+  approval itself costs diversity through its other effects — a standing strategy is a strong
+  instruction and the Cell follows it. Not obviously a fault.
+- **1009 tests and the golden run green** — untouched, which is the point: this is a live-only
+  property and no replay can see it.
+- Next: verify each kind's approval still reaches the Cell with the proposal-log summary gone
+  (`STRATEGY` is confirmed; experiment, tool and external-action are inferred), then a twins run on
+  hiding it unconditionally. **Not shipped on this measurement alone** — §14.2 caught ADR-052
+  reasoning instead of measuring once already.

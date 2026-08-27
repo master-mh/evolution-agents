@@ -229,7 +229,20 @@
   so it inherits the full gain. Touches the assembled prompt, so it **moves the golden run**:
   Amendment A12 reviewed act, expectation bump with a written migration note.
   *Disproved by:* any status-conditional branch in `_recent_proposals_section`.
-- [ ] **Test whether a Cell anchors to an *approved* summary too** — the one result that would put
+- [x] **Does a Cell anchor to an *approved* summary? — YES, MEASURED** (2026-08-27), ADR-053.
+  `decided_shown` **1.122** vs `decided_hidden` **1.764** with approvals held constant — higher in
+  100% of 16 pairwise comparisons — and 1.122 is the pre-ADR-052 control's 1.089. **Approval makes no
+  difference to anchoring**; a Cell copies text it can see. So ADR-046 and diversity *are* in conflict
+  on the branch ADR-052 shipped, and `_was_decided` is safe only while nobody reviews.
+- [ ] **Hide the proposal-log summary unconditionally — ADR-052's reason for keeping it was wrong.**
+  An approved strategy reaches the Cell through `Your standing strategy`, a dedicated independent
+  section: **ADR-046's delivery never ran through the proposal log**, so the summary there is
+  redundant for the kind ADR-046 is about. Before shipping: confirm the same for `experiment`,
+  `tool_request` and `external_action` (inferred — current-experiment section and grants — not
+  measured), then a §14.2 twins run. **Not shipped on ADR-053 alone**: §14.2 already caught ADR-052
+  reasoning instead of measuring.
+  *Disproved by:* `_was_decided` returning False unconditionally, or being deleted.
+- [ ] **(answered) Test whether a Cell anchors to an *approved* summary too** — the one result that would put
   ADR-046 and diversity back in genuine conflict. Needs an arm that approves proposals mid-run;
   nothing measured so far exercises the decided branch at all.
 - [ ] **(superseded framing, kept for the reasoning) The remedy is what §15.1's section SAYS, not

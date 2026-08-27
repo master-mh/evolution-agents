@@ -2756,3 +2756,61 @@ looks decided and is not, which is why it has its own test.
 **Confirmed live, because no replay can see a prompt edit** (the reason ADR-052 needed measuring at
 all): the shipped kernel scores **1.833 effective ideas per run** against the experiment's 1.852 and
 control's 1.089, with every parsed proposal distinct in all four runs.
+
+## ADR-053: An approved summary anchors exactly as hard — and ADR-052's reason for showing it was wrong
+
+- **Status:** Accepted (measurement); the remedy is **not** shipped here
+- **Spec ref:** §14.2, §15.1, §23.4; ADR-046, ADR-051, ADR-052
+- **Context:** ADR-052 shipped `_was_decided`: §15.1's proposal log shows a summary once a person
+  judged the proposal, and withholds it while undecided. Every arm behind that decision left every
+  proposal `pending`, because an unattended colony queues and nobody reviews — so **the decided
+  branch was never measured**, and both ADR-052 and the implementation said so in writing. This is
+  that measurement.
+- **The design.** Approving does more than reveal a summary — it sets a standing strategy, issues
+  grants, changes what §15 assembles. So approve-vs-pending would confound those with the anchoring
+  under test. Three arms, `llama3.2` t=0.8, 4 runs × 8 wakes:
+
+  | arm | approvals | section | parsed | **ideas/run** | ideas@2 |
+  |---|---|---|---|---|---|
+  | `decided_shown` | every proposal | 64 tok, summaries **present** | 13/32 | **1.122** | 1.029 |
+  | `decided_hidden` | every proposal | 35 tok, summaries withheld | 14/32 | **1.764** | 1.467 |
+  | `pending` (shipped default) | none | 21 tok, summaries withheld | 18/32 | **2.195** | 1.432 |
+
+  `decided_shown` vs `decided_hidden` holds every approval side-effect constant and varies only
+  whether the summary renders. **`decided_hidden` is higher in 100% of 16 pairwise run comparisons.**
+- **Finding: approval makes no difference to anchoring.** `decided_shown` scores **1.122**, which is
+  the original pre-ADR-052 control's **1.089** — the anchoring returns in full the moment the summary
+  is visible, whether or not a person approved it. A Cell copies text it can see; the annotation
+  beside that text is not what it is reading. **So ADR-046 and diversity are in genuine conflict on
+  the branch ADR-052 shipped**, and the shipped rule is safe only in a colony nobody is reviewing.
+- **But ADR-052's stated reason for showing the summary was wrong, and that is the way out.** The
+  reasoning was: "APPROVED is meaningless if the Cell cannot tell *what* was approved." Checking
+  where an approved strategy actually reaches the Cell, it appears in **two** sections — the proposal
+  log *and* `Your standing strategy (your words, approved by a person — this is how you operate)`,
+  which is its own dedicated, independent channel. **ADR-046's delivery for `STRATEGY` does not run
+  through the proposal log at all**, so the summary there is redundant for the one kind ADR-046 is
+  about. The same shape is likely for the other kinds — an approved experiment reaches the Cell
+  through §15.1's current-experiment section, an approved tool through its grant — but that is
+  inferred, not measured here.
+- **What it displaced.**
+  - **Leaving `_was_decided` as shipped.** Defensible only while nothing is ever approved. The first
+    attentive operator would halve the colony's effective diversity, and no test would notice.
+  - **Reverting to hiding summaries unconditionally, immediately.** It is very likely right — and it
+    is the third design iteration on this section in two days, on a branch whose delivery channels
+    are inferred rather than measured for three of four kinds. §14.2 got ADR-052's prediction wrong
+    once already by reasoning instead of measuring; the correct next step is an arm that verifies
+    each kind's approval still reaches the Cell with the proposal-log summary gone, then a twins run.
+  - **Concluding from `pending` vs `decided_shown` alone.** It shows the right direction (2.195 vs
+    1.122) and attributes it wrongly: approval changes several sections at once. `decided_hidden`
+    is the arm that isolates the summary, and it is why the claim here is about the summary rather
+    than about approval.
+- **Consequences:**
+  - **`_was_decided` is now known to be wrong in the direction it guards**, and its docstring's
+    "untested, and the reason to watch this" is resolved: the Cell does anchor to an approved
+    summary. The follow-up is queued rather than shipped.
+  - **`decided_hidden` (1.764) scores below `pending` (2.195)**, so approval itself costs some
+    diversity through its other effects — a standing strategy is a strong instruction, and the Cell
+    follows it. That is a separate finding and not obviously a fault.
+  - **Instrument checked before the numbers counted**: 13 and 14 approvals made against 0, run-0
+    statuses all `approved` against all `pending`, and section medians of 64 / 35 / 21 tokens
+    confirming summaries present, withheld, and withheld.
