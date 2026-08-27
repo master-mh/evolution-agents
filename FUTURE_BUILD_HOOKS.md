@@ -1322,3 +1322,16 @@ actually queued for building — this file is memory, not a backlog to work thro
   ADR-055 wake reason, ADR-056 genome). ~2 effective ideas per run of 8 is the model's ceiling on this
   hardware. Anyone reopening this should start from ADR-050's model question or §14's mutation
   operators, not from context assembly — that ground is measured.
+- **Fifteenth reserved socket: `WAKE_HUMAN_DECISION`** (ADR-057) — defined in `deliberation` since the
+  agent loop shipped, referenced nowhere, and the only entry in §17.2's wake-event list with no
+  producer. Found by auditing *all* the reasons rather than trusting the previous ADR's claim about
+  which one was missing; that claim was wrong, and the socket was the answer.
+- **A queued next-step can name the wrong target, and the audit is cheap.** ADR-055 said the gap was
+  the scheduler's hardcoded tick. The tick was right — a scheduled tick genuinely *is* a scheduled
+  research cycle — and the gap was a reason nothing emitted. **Grep every member of the set before
+  building against the one the last write-up blamed.**
+- **`event_inbox` row counts are a fragile test proxy.** Two strategy tests asserted
+  `COUNT(*) FROM event_inbox == 0` and `== 1` to mean "the lapse did (not) wake the Cell". Adding a
+  *different* wake broke both without touching the property they defend. They now assert on the wake
+  **reason** by name. Any test counting rows in a shared queue is really asserting that nothing else
+  ever writes there.

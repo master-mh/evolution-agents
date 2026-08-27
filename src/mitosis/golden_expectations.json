@@ -1,5 +1,5 @@
 {
-  "expectation_version": 27,
+  "expectation_version": 28,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "b4cec54629fe19abc704f7fea0d85ff1f880305d9b484dd3fbd0fafb7ac059e0",
+  "semantic_hash": "42f3e2d6d7279b4c58fa397b8d647774aebd94add1788a3f5a55813654749a70",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -489,6 +489,72 @@
         "event_type": "cell_wake",
         "priority": 100,
         "status": "processed"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
+      },
+      {
+        "attempt_number": 0,
+        "event_type": "cell_wake",
+        "priority": 100,
+        "status": "pending"
       },
       {
         "attempt_number": 0,

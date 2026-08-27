@@ -875,7 +875,28 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           *heading* also changed here — it claimed to show "your own prior
 #           words", which stopped being true — and ADR-052 measured heading edits
 #           at zero behavioural effect, so it is carried as pure accuracy.
-EXPECTATION_VERSION = 27
+#   27 -> 28 (a human decision wakes the Cell it was about; §17.2, §25.2;
+#           ADR-057).
+#           **One section differs: `event_inbox`, and only by rows added.**
+#           `cell_wake` at `pending` goes **9 -> 20**; every other shape in the
+#           section is untouched, and nothing was removed.
+#           (a) The 11 new rows are exactly the scenario's 11 approve/reject
+#               decisions, each now enqueuing `WAKE_HUMAN_DECISION`. Counted
+#               directly: the scenario's wake reasons are now `human decision` 11,
+#               `grant_expired` 4, `external action result` 3, and one each of
+#               `capital allocation`, `tool result available` and
+#               `scheduled research cycle`. **If this count moves without the
+#               scenario gaining a decision, something is waking a Cell that no
+#               person decided about** — the §0.3 mirror ADR-055 named.
+#           (b) **`deliberations`, `proposals` and `model_calls` are all
+#               byte-identical**, because the scenario never drains the inbox
+#               after its decisions — the new events are enqueued and stay
+#               `pending`. That is the assertion worth naming: this slice adds a
+#               *wake*, and changes nothing about what any Cell thought.
+#           (c) **`balances` is identical in every account in every book.**
+#               Enqueuing an event costs nothing in any book, and USD_REAL is
+#               untouched.
+EXPECTATION_VERSION = 28
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

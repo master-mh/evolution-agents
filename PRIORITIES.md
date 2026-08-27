@@ -181,7 +181,20 @@
   — the Cell was told a tool result was available and proposed *emailing customers about it*. **Do
   not rotate wake reasons**; emit the one the event justifies. §0.3 from the other side: the kernel
   must not assert to a Cell something that is not so.
-- [ ] **Wire real events to the wake reasons they justify.** `WAKE_TOOL_RESULT`,
+- [x] **Wire real events to the wake reasons they justify — DONE** (2026-08-27), ADR-057, golden
+  27 -> 28. **The audit corrected ADR-055's own target**: six of seven reasons were already earned,
+  and the scheduler's tick is *honest* (a scheduled tick is a scheduled research cycle). The gap was
+  **`WAKE_HUMAN_DECISION`, defined and produced by nothing** — the fifteenth reserved socket, and the
+  only §17.2 entry with no producer. `approve`/`reject` now enqueue it inside their own transactions,
+  idempotent on the request, silent for dead Cells, with expiry keeping its own distinct reasons.
+  Teeth-checked five ways including relabelling expiry as a decision.
+- [ ] **Re-measure ADR-055's +15% now the reasons are earned.** That number came from an arm that
+  *rotated* reasons, and part of it was the Cell believing a false premise (3/38 proposals responded
+  to events that never happened). With `human decision` wakes now arising naturally, the honest arm
+  is a scheduled colony **with** an operator deciding against one without. **Expect less than +15%**;
+  the point is to find out how much of it survives honesty.
+  *Disproved by:* any measurement of earned-reason diversity.
+- [x] **(done) Wire real events to the wake reasons they justify.** `WAKE_TOOL_RESULT`,
   `WAKE_CAPITAL_ALLOCATION`, `WAKE_HUMAN_DECISION`, `WAKE_AUDIT_REQUEST`,
   `WAKE_EXTERNAL_ACTION_RESULT` are all defined and all emitted somewhere; **only the scheduler's
   tick is hardcoded to `scheduled research cycle`**. Additive, no new vocabulary. **Argue it on

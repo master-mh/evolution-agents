@@ -14,54 +14,48 @@ measurement, §15.1 anchoring, the twins that
 chose the fix, and the fix itself, 2026-07-21 through 2026-08-26):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-27 — The genome is not the constraint; it is what makes a proposal concrete at all
+## 2026-08-27 — A human decision wakes the Cell it was about
 
-A measurement (ADR-056). **Hypothesis rejected. No code changed.** This closes ADR-052's third and
-last candidate cause.
+`approval._wake_on_human_decision_locked` + 6 tests + golden expectation **27 -> 28** (ADR-057).
+No migration.
 
-| arm | parsed | ideas (all) | **ideas@2** | **names a concrete deliverable** |
-|---|---|---|---|---|
-| `genome_tight` | 26/64 | **1.887** | 1.513 ± 0.111 | **26/26 (100%)** |
-| `genome_loose` | 19/64 | 1.718 | 1.612 ± 0.165 | **1/19 (5%)** |
+ADR-055 queued "wire real events to the wake reasons they justify". **Auditing that found a smaller
+and more specific gap than the ADR had claimed, and corrected the ADR's own target.**
 
-**Diversity: no effect** — +0.099, 65% of 48 pairwise comparisons, p = 0.207, and on the
-all-proposals measure the *tight* genome scores higher.
+### Six of seven reasons were already earned
 
-### The pre-registered check is the finding
+`WAKE_TOOL_RESULT` by `tools.py`, `WAKE_CAPITAL_ALLOCATION` by `promotion.py`, `WAKE_AUDIT_REQUEST`
+by `auditor.py`, `WAKE_EXTERNAL_ACTION_RESULT` by `external_actions.py`, `WAKE_APPROVAL_EXPIRED` and
+`WAKE_GRANT_EXPIRED` by the sweep. **ADR-055's "only the scheduler's tick is hardcoded" was wrong
+twice:** the tick is *honest* — a scheduled tick genuinely is a scheduled research cycle — and the
+real gap was elsewhere. **`WAKE_HUMAN_DECISION` was defined and referenced nowhere else** — the
+fifteenth reserved socket, and the only entry in §17.2's list with no producer.
 
-It was written into the script before the arm ran (the habit ADR-055 earned): a loose genome could
-raise a diversity score by making proposals vaguer rather than more varied. It raised no score — and
-concreteness collapsed anyway, **100% → 5%**, at nearly identical summary length (83 vs 87 chars).
-The loose arm is not shorter, it is emptier: *"Refine our software to reduce routine back-office
-work"*, *"Invest in customer support"*. One proposal asked to **"Send reminder about the upcoming
-scheduled research cycle"** — a Cell with no market hypothesis proposing about its own scaffolding,
-because that was the only concrete noun left in its context.
+### What shipped
 
-### So the genome has a second job nobody had written down
+`approve` and `reject` now enqueue `WAKE_HUMAN_DECISION` **inside their own transactions**, following
+`expire_due`'s pattern, so a committed decision and its wake cannot come apart. Idempotent on the
+request (Charter C6). Silent for a dead or quarantined Cell, because `deliberate` *records* a refusal
+rather than raising, and waking one would turn every decision about a dead Cell into a deliberation
+row saying it could not think (C8). **Expiry keeps its own reasons** — the review window closing is
+not a judgement, which is the line `_decision_note` already refuses to blur.
 
-§16.3 makes the market hypothesis inheritable so a lineage stays that lineage. This measures the
-other thing it does: **it is the only part of the context that tells a Cell what a proposal is
-*about*.** Remove the specificity and the Cell still proposes, parses less often, and says nothing.
-
-### The search for prompt-level causes is complete
-
-| candidate (ADR-052) | verdict | effect |
-|---|---|---|
-| §15.1 anchoring | confirmed, **fixed** | **+86%** |
-| identical wake reason | confirmed, remedy refused | +15% |
-| genome pinning | **rejected** | none (p = 0.21) |
-
-**The residual ~2 effective ideas per run of 8 is the model's ceiling on this hardware, not a defect
-in the prompt.** Anything further is a model decision (ADR-050) or a §14 mutation-operator decision,
-not a context-assembly one.
+It matters most for rejection: ADR-053 established a rejection has no other channel at all, and §25.2
+wants the reasons for promotion *or rejection* to reach the Cell.
 
 ### Verification
 
-- **Instrument checked**: the genome section is present in the prompt in both arms; the concreteness
-  and length comparisons are computed over all proposals, not a sample.
-- **1010 tests and the golden run green** — untouched.
-- **A concreteness measure now exists and is worth keeping.** It separated two arms the diversity
-  score could not tell apart, and it is the first metric here that asks whether a proposal is *worth*
-  anything rather than whether it differs from its neighbour.
-- Next: **Phase 2 warning recorded** — diversity and concreteness move independently, so selection
-  tuned on variety alone would favour exactly the Cells that have stopped saying anything.
+- **Teeth-checked five ways, all caught**: no wake on approve; no wake on reject; dead Cells woken;
+  a dedupe key not derived from the request; and **expiry relabelled as a human decision** — the most
+  tempting way to make this fire more often and exactly the falsehood ADR-055 exists to prevent.
+- **Golden diff is one section.** `event_inbox` `cell_wake` rows **9 -> 20**, the scenario's 11
+  decisions, counted directly. **`deliberations`, `proposals` and `model_calls` are byte-identical**
+  — the scenario never drains the inbox, so this adds a wake and changes nothing any Cell thought —
+  and **`balances` is identical in every account in every book**.
+- **The golden scenario now exercises six distinct wake reasons**, up from five.
+- **A structural test asserts every §17.2 reason has a producer**, so the next one added is either
+  wired to the event that justifies it or listed deliberately as inert.
+- **1016 tests passing** (6 new; up from 1010).
+- Next: the honest re-measurement ADR-055 could not do — with reasons now earned rather than
+  rotated, is any of its +15% real? A colony that ticks and is reviewed produces `human decision`
+  wakes naturally, so the arm is a scheduled run with an operator deciding, against one without.

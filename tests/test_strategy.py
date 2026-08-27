@@ -109,6 +109,22 @@ def _standing(conn, cell) -> str | None:
     return None
 
 
+def _wake_reasons(conn) -> list[str]:
+    """Wake reasons currently queued, by name.
+
+    Counting rows in `event_inbox` was the old proxy for "did the lapse wake
+    it", and it stopped meaning that once a human decision started emitting its
+    own wake (ADR-057). The reason is what these tests were ever about.
+    """
+    return [
+        json.loads(row["payload_json"])["wake_reason"]
+        for row in conn.execute(
+            "SELECT payload_json FROM event_inbox WHERE event_type = ? ORDER BY rowid",
+            (deliberation.WAKE_EVENT_TYPE,),
+        )
+    ]
+
+
 def _proposal_log(conn, cell) -> str | None:
     for name, body in _sections(conn, cell).items():
         if name.startswith("Your recent proposals"):
@@ -298,7 +314,10 @@ def test_a_lapsed_strategy_grant_does_not_wake_the_cell(conn):
 
     assert [g.grant_id for g in expired] == [grant.grant_id]
     assert approval.get_grant(conn, grant.grant_id).expired_at_utc is not None
-    assert conn.execute("SELECT COUNT(*) AS n FROM event_inbox").fetchone()["n"] == 0
+    # The lapse must add nothing. The approval's own wake (ADR-057) is a
+    # different event with a different reason and is asserted against by name,
+    # because a bare row count stopped distinguishing the two.
+    assert approval.WAKE_GRANT_EXPIRED not in _wake_reasons(conn)
 
 
 def test_a_lapsed_action_grant_still_wakes_the_cell(conn):
@@ -315,7 +334,7 @@ def test_a_lapsed_action_grant_still_wakes_the_cell(conn):
     approval.expire_grants_due(conn, now=datetime.now(timezone.utc) + timedelta(days=365))
 
     assert approval.get_grant(conn, grant.grant_id).regenerated_wake_key is not None
-    assert conn.execute("SELECT COUNT(*) AS n FROM event_inbox").fetchone()["n"] == 1
+    assert _wake_reasons(conn).count(approval.WAKE_GRANT_EXPIRED) == 1
 
 
 # --- what a person decided reaches the Cell -----------------------------------

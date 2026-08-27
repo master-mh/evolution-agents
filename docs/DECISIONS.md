@@ -3005,3 +3005,55 @@ choosing between them is a §23.4 question that deserves its own arm. §23.4's
   - **Phase 2 warning.** Diversity and concreteness move independently: `genome_loose` was
     nominally *more* diverse per pair and 20× less concrete. Selection tuned on variety alone would
     favour exactly the Cells that have stopped saying anything.
+
+## ADR-057: A human decision wakes the Cell — the one wake reason §17.2 names that nothing produced
+
+- **Status:** Accepted
+- **Spec ref:** §17.2, §23.3, §25.2, Charter C6, C8; ADR-039, ADR-046, ADR-055
+- **Context:** ADR-055 measured that varying the wake reason raises effective diversity ~15%, and
+  refused the obvious remedy: rotating reasons made a Cell act on fictions — told `tool result
+  available` with none, it proposed emailing customers about it. The queued follow-up was "wire real
+  events to the reasons they justify". **Auditing that turned up a smaller and more specific gap
+  than the ADR had claimed.**
+- **Six of the seven reasons were already earned.** `WAKE_TOOL_RESULT` by `tools.py`,
+  `WAKE_CAPITAL_ALLOCATION` by `promotion.py`, `WAKE_AUDIT_REQUEST` by `auditor.py`,
+  `WAKE_EXTERNAL_ACTION_RESULT` by `external_actions.py`, `WAKE_APPROVAL_EXPIRED` and
+  `WAKE_GRANT_EXPIRED` by the sweep. **ADR-055's "only the scheduler's tick is hardcoded" was wrong
+  twice over:** the scheduler's tick is *honest* — a scheduled tick genuinely is a scheduled research
+  cycle, not a placeholder — and the real gap was elsewhere. **`WAKE_HUMAN_DECISION` was defined in
+  `deliberation` and referenced nowhere else**: the fifteenth reserved socket, and the only entry in
+  §17.2's list with no producer.
+- **Decision: `approve` and `reject` enqueue `WAKE_HUMAN_DECISION` inside their own transactions.**
+  A person deciding is a real event; until now it produced an audit record and no wake, so a Cell
+  learned what was decided only whenever it next happened to tick. For a rejection that matters most
+  — ADR-053 established a rejection has no other channel at all, and §25.2 wants the reasons for
+  promotion *or rejection* to reach the Cell.
+  - **Inside the decision transaction**, following `expire_due`'s established pattern
+    (`_enqueue_wake_locked`), so a committed decision and its wake cannot come apart.
+  - **Idempotent on the request** (`human-decision:{request_id}`), so redelivery cannot buy a second
+    deliberation — Charter C6.
+  - **Silent for a dead or quarantined Cell.** `deliberate` *records* a refusal rather than raising,
+    so waking one would turn every decision about a dead Cell into a deliberation row saying it could
+    not think (Charter C8).
+  - **Expiry keeps its own reasons.** The review window closing is not a judgement — the same line
+    `_decision_note` refuses to blur, and relabelling it would be the §0.3 mirror ADR-055 named: the
+    kernel asserting to a Cell something that is not so.
+- **What it displaced.**
+  - **Rotating wake reasons in the scheduler**, refused by ADR-055 and not revisited here.
+  - **Waking on expiry as a "decision".** It is the single most tempting way to make the wake fire
+    more often, and it is exactly the falsehood this whole line of work exists to prevent. It has its
+    own teeth-check.
+  - **Treating ADR-055's next-step as correct.** It said the scheduler was the gap. The audit says
+    the scheduler is right and `WAKE_HUMAN_DECISION` was the gap — recorded because the ADR is
+    already pushed and a reader would otherwise inherit the wrong target.
+- **Consequences:**
+  - **Golden expectation 27 -> 28**, one section: `event_inbox` `cell_wake` rows 9 -> 20, the
+    scenario's 11 decisions. **`deliberations`, `proposals` and `model_calls` are byte-identical** —
+    the scenario never drains the inbox, so this adds a wake and changes nothing any Cell thought —
+    and `balances` is identical in every account in every book.
+  - **The golden scenario now exercises six distinct wake reasons** where it previously exercised
+    five, which is worth keeping: a scenario that only ever ticks cannot catch a reason wired to the
+    wrong event.
+  - **A structural test now asserts every §17.2 reason has a producer**, so the next reason added
+    either gets wired to the event that justifies it or is listed deliberately as inert.
+  - **Teeth-checked five ways**, all caught, including relabelling expiry as a human decision.

@@ -984,6 +984,7 @@ def reject(
                 "decided_by": decided_by,
             },
         )
+        _wake_on_human_decision_locked(conn, request=request)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -1111,6 +1112,7 @@ def _decide_approve(
                 "exposure_minor_units": request.exposure_minor_units,
             },
         )
+        _wake_on_human_decision_locked(conn, request=request)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -1119,6 +1121,43 @@ def _decide_approve(
     grant = get_grant(conn, grant_id)
     assert grant is not None
     return grant
+
+
+def _wake_on_human_decision_locked(
+    conn: sqlite3.Connection, *, request: ApprovalRequest
+) -> str | None:
+    """§17.2 lists "human decision" among its wake events. Emit it (ADR-057).
+
+    **This is the only wake reason §17.2 names that nothing produced.** The other
+    six are all earned by a real event — `WAKE_TOOL_RESULT` by a tool result,
+    `WAKE_CAPITAL_ALLOCATION` by an allocation, `WAKE_APPROVAL_EXPIRED` and
+    `WAKE_GRANT_EXPIRED` by the sweep — while a person approving or rejecting
+    produced an audit record and no wake at all, so a Cell learned what was
+    decided only whenever it next happened to tick.
+
+    **Earned, not rotated.** ADR-055 measured what happens when a wake reason is
+    asserted rather than justified: told `tool result available` with no tool
+    result, a Cell proposed emailing customers about it. So this fires on the
+    decision transaction and nowhere else, and expiry keeps its own distinct
+    reasons — the review window closing is not a decision, which is the same
+    line `_decision_note` refuses to blur.
+
+    Idempotent on the request, so a redelivered decision cannot double-wake
+    (Charter C6), and silent for a Cell that is dead or quarantined: waking one
+    is recorded as a refusal, which would turn every decision about a dead Cell
+    into a deliberation row saying so.
+    """
+    cell = lifecycle.get_cell(conn, request.cell_id)
+    if cell is None or cell.status not in {CellStatus.ALIVE, CellStatus.DORMANT}:
+        return None
+    wake_key = f"human-decision:{request.request_id}"
+    deliberation._enqueue_wake_locked(
+        conn,
+        cell_id=request.cell_id,
+        wake_reason=deliberation.WAKE_HUMAN_DECISION,
+        dedupe_key=wake_key,
+    )
+    return wake_key
 
 
 def _pending_or_raise_locked(
