@@ -1411,3 +1411,32 @@ actually queued for building — this file is memory, not a backlog to work thro
   candidate is dominated learns nothing, because §23.5 forbids telling it. What *could* honestly
   reach the Cell is the operator's eventual decision — which already wakes it (`WAKE_HUMAN_DECISION`,
   ADR-057). Check that path is enough before inventing a selection-specific wake.
+
+<!-- 2026-08-27, ADR-060 (§12's archive) -->
+- **The novelty distance is safe from §23.5 only while an operator writes genomes.** A Cell that
+  could choose its own niche would choose the emptiest one and be the elite of it by default — the
+  same argument that leaves `ExperimentSpec` with no rung field. Today genome content arrives through
+  `--mutation` and no Cell writes its own. **§14's automated mutation is what changes that**, and the
+  tell will be lineages that drift across many business fields at once for no economic reason. The
+  counter is §13.4's fourth flag (does the change introduce any capability or transaction structure),
+  which lives outside the kernel by ADR-058 — so automating §14 without wiring a judge would open the
+  surface before the defence exists.
+- **§12.3's Thompson-sampling posteriors are the missing half of the archive.** Per niche: `P(next
+  stage)`, expected net value if successful, expected time to conversion, probability of
+  reproducibility, probability of large loss. Every one of them needs stage-*conversion* events —
+  Cells moving between §25.1 rungs — and `promotion.allocate` only ever issues rung 7, so the colony
+  has produced no conversions at all. Build the ladder's next rung before the posteriors, not after.
+- **§9.4's niche-specific carrying capacity is now computable and unenforced.** `Niche.living_cells`
+  is the number that clause needs. What is missing is a *policy*: a per-niche cap interacts with
+  §9.2's colony-wide cap and with §9.3 displacement, and choosing which binds first is a decision,
+  not a lookup. Also unbuilt from §9.4's list: diversity bonuses, diminishing birth priority,
+  independent-replication requirements.
+- **§13.4's third flag ("the same mechanism is renamed") is the one that stayed unbuildable.**
+  Distinguishing a rename from a new mechanism means deciding two strings describe the same thing,
+  which is semantics — a model call, and §23.5 keeps those out of the kernel. It belongs with
+  ADR-058's `scripts/` tooling or with the Auditor path, and it is the natural companion to the
+  concreteness judge rather than a separate build.
+- **`novelty.archive` recomputes every descriptor on every call, O(n²) in genomes.** Correct and
+  irrelevant at four genomes; a colony with thousands would want the pairwise nearest-neighbour
+  search memoised. Do not reach for a cache table when that day comes — §12.2's point is that the
+  archive is derived, and a memo inside one call is not a second version of the record.

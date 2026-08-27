@@ -50,6 +50,7 @@ from . import (
     reconciliation,
     reservations,
     resource_metering,
+    novelty,
     rights,
     selection,
     artifacts as artifacts_module,
@@ -2047,6 +2048,30 @@ def cmd_allocations(args: argparse.Namespace) -> None:
     conn.close()
 
 
+def cmd_archive(args: argparse.Namespace) -> None:
+    """§12's MAP-Elites archive, derived on every read and stored nowhere.
+
+    Prints niches and their occupancy. A genome with no measured dimension is
+    listed as unbinned rather than pooled — a niche called "unknown" would go on
+    reporting itself as occupied long after the colony stopped measuring.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    result = novelty.archive(conn)
+    print(f"{result.occupied} niche(s) occupied")
+    print(f"  measured dimensions:   {', '.join(result.measured_dimensions) or 'none'}")
+    print(f"  unmeasured dimensions: {', '.join(result.unmeasured_dimensions) or 'none'}")
+    print()
+    for niche in result.niches:
+        print(f"  {niche.label:44s} {len(niche.genome_hashes):3d} genome(s), "
+              f"{niche.living_cells:3d} living cell(s)")
+    if result.unbinned_genome_hashes:
+        print(f"\n  {len(result.unbinned_genome_hashes)} genome(s) unbinned — nothing earlier "
+              "to be novel against, or no dimension measurable")
+    conn.close()
+
+
 def cmd_frontier(args: argparse.Namespace) -> None:
     """§13.2 over the grants waiting on the pool: gates, then a Pareto frontier.
 
@@ -3298,6 +3323,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="§13.2: gate the waiting grants, then show the Pareto frontier over them",
     )
     frontier_parser.set_defaults(func=cmd_frontier)
+
+    archive_parser = subparsers.add_parser(
+        "archive", help="§12's MAP-Elites archive: which niches the colony occupies"
+    )
+    archive_parser.set_defaults(func=cmd_archive)
 
     allocate_parser = subparsers.add_parser(
         "allocate", help="§25.1 rung 7: consume an approved grant and fund the Cell"

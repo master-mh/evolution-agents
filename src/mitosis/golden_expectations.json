@@ -1,5 +1,5 @@
 {
-  "expectation_version": 29,
+  "expectation_version": 30,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "b807a0ce615b5fc2528b60631481786cf92d0b1172dc83119be74d4ec87b1bce",
+  "semantic_hash": "e89d1df557a9e2c926aae1c88a1849ab3c84df42621c0a0a6a1a5c94d1bd71dd",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -973,6 +973,28 @@
         "status": "succeeded"
       }
     ],
+    "novelty_archive": {
+      "measured_dimensions": [
+        "novelty_distance"
+      ],
+      "niches": [
+        {
+          "genomes": 3,
+          "living_cells": 3,
+          "niche": "novelty_distance=adjacent"
+        },
+        {
+          "genomes": 1,
+          "living_cells": 1,
+          "niche": "novelty_distance=radical"
+        }
+      ],
+      "unbinned_genomes": 1,
+      "unmeasured_dimensions": [
+        "buyer_type",
+        "revenue_recurrence"
+      ]
+    },
     "predictions": [
       {
         "brier_score": 0.04,
@@ -1736,7 +1758,7 @@
             "economic_potential": null,
             "experiment_cost": 0.4,
             "information_gain": 0.734498,
-            "structural_novelty": null,
+            "structural_novelty": 0.0,
             "transfer_robustness": null
           },
           "cell": "cell#4",
@@ -1753,11 +1775,11 @@
       ],
       "measured_dimensions": [
         "experiment_cost",
-        "information_gain"
+        "information_gain",
+        "structural_novelty"
       ],
       "unmeasured_dimensions": [
         "economic_potential",
-        "structural_novelty",
         "transfer_robustness"
       ]
     },

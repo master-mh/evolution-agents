@@ -29,9 +29,10 @@ A dimension with no data reports `None` **with a reason**, never `0.0`. A zero
 is a claim ("this idea is not novel"); an abstention is the truth ("nothing here
 can tell you"). §2.6's report and ADR-042/043 both settled this shape already.
 
-- **`structural_novelty`** needs §31's `novelty_archive` — a prior to be novel
-  *against*. ADR-058 hit the same wall scoring §13.4 and scored one clause
-  instead of guessing four.
+(**`structural_novelty` was here until ADR-060.** It needed a prior to be novel
+*against*; the genome archive is that prior, and §12.1's adjacent/moderate/
+radical is now a live ordinal axis. It measures distance, not merit — see
+`_structural_novelty`.)
 - **`economic_potential`** is the dangerous one. A Cell would happily supply it,
   and §0.3 is the standing answer: "a Cell may *explain* a result; it may never
   *define* the canonical result". `proposal.FORBIDDEN_FIELD_SENSE` already
@@ -84,7 +85,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 
-from . import approval, experiments, prediction, promotion
+from . import approval, experiments, novelty, prediction, promotion
 from .models import CellStatus
 from .proposal import ProposalKind
 
@@ -145,7 +146,10 @@ GATE_DIMENSIONS: dict[str, str] = {
 #: §13.2's five frontier dimensions, transcribed verbatim. These never remove a
 #: candidate on their own; they only lose to something better everywhere.
 FRONTIER_DIMENSIONS: dict[str, str] = {
-    "structural_novelty": "needs §31's novelty_archive — a prior to be novel against",
+    "structural_novelty": (
+        "§12.1's novelty distance, ordinal: adjacent < moderate < radical. "
+        "Structural, from the genome archive — no model and no judgment"
+    ),
     "information_gain": (
         "mean normalised entropy of the forecasts registered with this proposal "
         "(§8.5). Safe to select on because Brier is a proper scoring rule"
@@ -168,6 +172,7 @@ FRONTIER_DIMENSIONS: dict[str, str] = {
 #: Explicit because a sign error in a domination test does not crash — it
 #: silently selects the opposite population, and every test still passes.
 HIGHER_IS_BETTER: dict[str, bool] = {
+    "structural_novelty": True,
     "information_gain": True,
     "experiment_cost": False,      # a smaller share of the stage tranche
     "transfer_robustness": False,  # a Brier delta: positive means it got worse
@@ -442,6 +447,42 @@ def _transfer_robustness(conn: sqlite3.Connection, cell_id: str) -> Axis:
                 f"Brier moved {value:+.3f} since the last promotion (a loss: lower is better)")
 
 
+#: §12.1's bins as a frontier ordinal. Positions, not scores — the gaps carry no
+#: meaning, which is why domination only ever compares them for order.
+_NOVELTY_ORDINAL: dict[str, float] = {"adjacent": 0.0, "moderate": 1.0, "radical": 2.0}
+
+
+def _structural_novelty(conn: sqlite3.Connection, cell_id: str) -> Axis:
+    """§12.1's novelty distance, read as §13.2's structural-novelty axis.
+
+    **What it is honest about.** This measures *distance* — how much of the
+    business hypothesis differs from everything the colony tried earlier. A
+    small distance is evidence of §13.4's first flag ("only the industry label
+    changed"). A large one is not proof of new structure: a genome whose every
+    field changed to nonsense scores `radical`, and catching that is §13.4's
+    fourth flag, which ADR-058 had to build outside the kernel.
+
+    **Being an axis rather than a score is what makes that acceptable.** Nothing
+    is funded for being radical; a radical candidate merely avoids being
+    dominated by an otherwise-identical adjacent one. §13.2's refusal of a
+    weighted scalar is doing real work here — added to anything, this number
+    would carry decisions it cannot support.
+
+    Abstains for the founder genome, which has nothing earlier to be novel
+    against (`Measurement.UNEVALUABLE`), rather than calling it radical.
+    """
+    row = conn.execute("SELECT genome_hash FROM cells WHERE cell_id = ?", (cell_id,)).fetchone()
+    if row is None:
+        return Axis("structural_novelty", None, "no such Cell")
+    found = next(
+        d for d in novelty.descriptors(conn, row["genome_hash"])
+        if d.dimension == "novelty_distance"
+    )
+    if found.measurement is not novelty.Measurement.MEASURED or found.bin is None:
+        return Axis("structural_novelty", None, found.reason)
+    return Axis("structural_novelty", _NOVELTY_ORDINAL[found.bin], f"{found.bin}: {found.reason}")
+
+
 def _unmeasurable_axis(dimension: str) -> Axis:
     return Axis(dimension, None, FRONTIER_DIMENSIONS[dimension])
 
@@ -539,7 +580,7 @@ def evaluate(conn: sqlite3.Connection, *, now: datetime | None = None) -> Fronti
                     _unmeasurable_gate("software_native_advantage"),
                 ),
                 axes=(
-                    _unmeasurable_axis("structural_novelty"),
+                    _structural_novelty(conn, grant.cell_id),
                     _information_gain(conn, grant.proposal_id),
                     _unmeasurable_axis("economic_potential"),
                     _experiment_cost(conn, grant.cell_id, estimated),

@@ -3363,3 +3363,118 @@ the first replay in which there are any to keep out.
   `behavioural_descriptors` of §31 (which also unblock §13.4's other three flags, ADR-058), §11.2's
   adoption record, and an Auditor path for content judgments. Three of nine axes is a real frontier
   and an honest one; it is not yet quality-diversity.
+
+## ADR-060: §31 lists two tables for the novelty archive, and §12.2 refuses both
+
+- **Status:** Accepted; new `novelty.py`, **no migration**, golden expectations 29 -> 30
+- **Spec ref:** §12, §12.1, §12.2, §12.3, §12.4, §13.2, §13.4, §16.1, §16.2, §16.3, §9.4, §10.2,
+  §10.3, §2.5, §23.5, §31; ADR-033, ADR-043, ADR-044, ADR-058, ADR-059
+- **Context:** ADR-059 shipped §13.2's selector with `structural_novelty` abstaining, and ADR-058
+  scored one of §13.4's four flags, both for the same reason: **there was nothing to be novel
+  against.** PRIORITIES named §31's `novelty_archive` and `behavioural_descriptors` as the next
+  thing. This builds the archive.
+
+### The decisive clause is one sentence, and it removes both tables
+
+> **§12.2** Store full raw behavioural descriptors **separately**; the archive is a **derived
+> view**, allowing later rebuilding with different dimensions and bins.
+
+Read as an instruction to create a table, that sentence says "store descriptors". Read for what it
+is *protecting*, it says the archive must not **be** the record, so that rebinning cannot destroy
+the measurements underneath. In this kernel those measurements already live separately and in
+better custody than a new table would give them: `cell_genomes` is content-addressed (§16.1) and
+append-only, the ledger and the prediction register are hash-chained. Copying them into a
+`behavioural_descriptors` table would create the second version §2.5 refuses, and §31 offers
+"suggested entities" rather than a build order — the same reading already refused
+`experiment_results` (ADR-043) and `resource_usage.experiment_id` (ADR-044). **This is the third and
+fourth §31 entity that §2.5 has removed, and the slice ships no migration** (ADR-033's shape).
+
+**What would justify a table is a descriptor nobody can recompute** — a human's or an Auditor's
+judgment, which is not derivable by definition. ADR-059 identified exactly that gap and left it
+unbuilt; when it lands it brings its own storage and this module reads it.
+
+### One of §12.1's three dimensions is live, and the other two are blocked on one specific thing
+
+| dimension | today |
+|---|---|
+| `novelty_distance` | **live** — structural, from the genome archive |
+| `buyer_type` | unmeasurable — revenue records **who paid as free text** |
+| `revenue_recurrence` | unmeasurable — needs the same key one step further on |
+
+**The missing thing is an inbound counterparty key, and the colony already has the outbound one.**
+`revenue.record_revenue` takes a `source` ("an invoice id, a customer reference, 'manual'"), so two
+payments from one buyer are indistinguishable from one payment each from two. §21.2's
+`external_action_registry` solved precisely this in the other direction with a **salted hash** of a
+counterparty — equality without identity, as §16.3 requires. Naming that asymmetry is more useful
+than either shrugging or guessing: counting payments *per Cell* instead would report a Cell with
+three one-off customers as `repeat`, the undercount-versus-abstain trap ADR-044 named.
+
+### The bins are §13.4's own language, not a threshold anyone picked
+
+- **adjacent** — the nearest earlier genome differs in exactly **one** business field. That is
+  §13.4's first flag ("only the industry label changed") stated as a distance.
+- **moderate** — more than one field differs, but some earlier genome shares its `market`.
+- **radical** — no earlier genome shares its `market`. §16.3 makes the market hypothesis the
+  inheritable thing that keeps a lineage *that* lineage, so an untried market is the one claim to
+  structural novelty this kernel can make without reading meaning.
+
+**Radical is decided before adjacent**, and the order is load-bearing: a genome whose only changed
+field *is* the market has a neighbour one step away and pursues a customer nobody has tried.
+Checking the neighbour first would file a new market as a relabel, inverting §13.4 rather than
+applying it. (The flag and the distance are then allowed to disagree about that same genome, because
+they answer different questions — one asks what changed, the other how far it moved.)
+
+**Zero is a real case and it is not a hole.** Two genomes can differ *only* outside the business
+fields — a different `risk_class` or `allowed_tools` gives a new content hash and the same
+hypothesis. That bins as `adjacent` with its own stated reason rather than earning a fourth bin
+§12.1 does not have. If it did not, a Cell could reach a further niche by asking for permissions
+instead of by having an idea, which is §23.5's shape exactly. `NOVELTY_FIELDS` /
+`NON_NOVELTY_SENSE` force every §16.2 field to carry a reason it is in or out.
+
+### This is a distance, not a merit, and it reads in one direction
+
+A small distance is evidence of §13.4's first flag. A large one proves nothing: a genome whose
+every field changed to nonsense scores `radical`, and catching *that* is §13.4's fourth flag, which
+ADR-058 had to build outside the kernel because it needs a model call. §13.2's refusal of a weighted
+scalar is what makes the axis safe to ship anyway — nothing is funded for being radical; a radical
+candidate merely avoids being dominated by an otherwise-identical adjacent one.
+
+**§13.4's third flag stays unbuildable here.** Deciding that two different strings describe one
+mechanism is semantics, and §23.5 keeps model calls out of the kernel. One of four flags became
+computable; the other two of the three ADR-058 deferred still need a judge.
+
+### What it displaced
+
+- **`market`/`revenue_model`/`acquisition_channel` as the axes**, which FUTURE_BUILD_HOOKS had
+  called "the obvious axes for quality-diversity search". They are free text and §12.1 names
+  *bins* — four, three and three of them. §12.4 explains why: high-dimensional archives stay nearly
+  empty at realistic population sizes, and an axis with as many values as there are genomes is the
+  limiting case of that.
+- **An elite per niche**, which is what MAP-Elites classically keeps. Picking one needs either a
+  scalar (§10.2 forbids) or a Pareto comparison between Cells — which §10.3 restricts to
+  near-duplicates, a *finer* grouping than a niche, because comparing an Explorer with a Commercial
+  on net contribution culls exactly the Cells whose value is exploratory. §12.3's Thompson-sampling
+  posteriors are the spec's own answer for ranking inside a niche and a beta-binomial over four
+  Cells is noise. `death.py` already answers domination where §10.3 permits the question.
+- **A catch-all niche for genomes with no measured dimension.** The founder has nothing earlier to
+  be novel against, and a niche labelled "unknown" would go on reporting itself occupied long after
+  the colony stopped measuring — §12.4's worry made concrete.
+- **Calling the founder `radical`.** It is the most tempting default in the module and it is a claim
+  about an archive with no other members.
+
+### Consequences
+
+- **§13.2's frontier has three measured axes of five**, up from two. `structural_novelty` is an
+  ordinal (adjacent 0 < moderate 1 < radical 2) whose gaps carry no meaning, so domination compares
+  it for order only.
+- **§9.4's niche-specific carrying capacity is now computable.** `Niche.living_cells` counts Cells
+  rather than genomes, because two Cells sharing a strategy are two competitors for one capacity.
+  Nothing enforces a per-niche cap; §9.4's other founder-effect measures remain unbuilt.
+- **The archive must not reach a Cell** (§23.5), enforced against `context.py` and `deliberation.py`.
+  Today the descriptor derives from genome content an operator writes, so there is nothing for a
+  Cell to move. **§14's automated mutation is what changes that**, and the tell will be lineages
+  drifting across many fields at once for no economic reason.
+- **The golden replay cannot catch one regression this module could have.** Both niches happen to
+  hold as many living Cells as genomes, so counting genomes instead of Cells would reproduce the
+  section exactly. A named unit test defends it instead — found by teeth-checking, which reported
+  that mutation as MISSED until the fixture was changed to make the two counts differ.

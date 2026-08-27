@@ -64,13 +64,14 @@ def _seed(conn):
     )
 
 
-def _cell(conn, tag):
+def _cell(conn, tag, genome_content=None):
     cell = lifecycle.create_cell(
         conn,
         cell_type=CellType.EXPLORER,
         budget_minor_units=200,
         book=Book.USD_SIM,
         idempotency_key=f"cell:{tag}",
+        genome_content=genome_content,
     )
     for book, currency, amount in (
         (Book.USD_REAL, "USD", 50),
@@ -241,10 +242,16 @@ def test_a_dimension_with_no_data_abstains_rather_than_scoring_zero(conn):
     frontier = selection.evaluate(conn)
     candidate = frontier.candidates[0]
 
-    for name in ("structural_novelty", "economic_potential"):
-        axis = candidate.axis(name)
-        assert axis.value is None, f"{name} scored {axis.value} with nothing to score it from"
-        assert axis.reason
+    axis = candidate.axis("economic_potential")
+    assert axis.value is None, f"economic_potential scored {axis.value} with no rule over it"
+    assert axis.reason
+
+    # `structural_novelty` is measurable in general (ADR-060) and abstains here
+    # for a *different* reason — this Cell carries the colony's first genome.
+    # Asserting only "is None" would have kept passing if the axis were deleted.
+    founder_axis = candidate.axis("structural_novelty")
+    assert founder_axis.value is None
+    assert "nothing earlier" in founder_axis.reason
 
     for name in ("reproducibility", "software_native_advantage"):
         gate = next(g for g in candidate.gates if g.dimension == name)
@@ -414,6 +421,33 @@ def test_information_gain_prefers_the_forecast_that_could_still_go_either_way(co
     assert lo < 0.1
     assert selection.dominates(_for(frontier, a), _for(frontier, b))
     assert not selection.dominates(_for(frontier, b), _for(frontier, a))
+
+
+def test_structural_novelty_is_an_ordinal_and_radical_dominates_adjacent(conn):
+    """ADR-060 turned §13.2's novelty axis from an abstention into a measurement.
+
+    §12.1's bins are ordinal — adjacent < moderate < radical — and the gaps carry
+    no meaning, so domination may compare them for order and nothing else. The
+    reverse direction is asserted too: a sign error here would select for the
+    Cells doing what the colony already does, and nothing would crash.
+    """
+    _seed(conn)
+    base = {"market": "independent bookshops", "problem": "stock is guesswork",
+            "product": "a weekly digest", "revenue_model": "monthly subscription",
+            "acquisition_channel": "trade newsletters", "workflow": "ingest, rank, publish"}
+    _cell(conn, "founder", base)
+    near = _cell(conn, "near", {**base, "product": "a daily digest"})
+    far = _cell(conn, "far", {**base, "market": "hospital procurement teams"})
+
+    a = _candidate(conn, far, "far", cost=30, forecasts=(0.5,))
+    b = _candidate(conn, near, "near", cost=30, forecasts=(0.5,))
+
+    frontier = selection.evaluate(conn)
+    assert _for(frontier, a).axis("structural_novelty").value == 2.0
+    assert _for(frontier, b).axis("structural_novelty").value == 0.0
+    assert selection.dominates(_for(frontier, a), _for(frontier, b))
+    assert not selection.dominates(_for(frontier, b), _for(frontier, a))
+    assert "structural_novelty" in frontier.measured_dimensions
 
 
 def test_a_proposal_with_no_forecast_abstains_on_information_gain(conn):

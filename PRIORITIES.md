@@ -188,12 +188,27 @@
   Cell's own upside). Live: evidence quality (§8.5, thresholded at `UNINFORMATIVE_BRIER`), policy
   compliance (§18 quarantine + §23.4's escalating signals), information gain, experiment cost
   (§13.1's first consumer) and transfer robustness.
-- [ ] **Phase 2's selector is honest but it is not yet quality-diversity.** Three measurable axes is
-  a real frontier and not an archive. What it needs, in the order §13.2 and §12 imply: §31's
-  `novelty_archive` and `behavioural_descriptors` (which also unblock §13.4's other three flags,
-  ADR-058), §11.2's independent-adoption record, and an **Auditor path for content judgments** —
-  ADR-059's finding is that concreteness cannot be a kernel computation (§23.5), so it enters as
-  `software_native_advantage`'s missing judge rather than as an axis.
+- [x] **The novelty archive — BUILT** (2026-08-27), ADR-060, golden 29 -> 30. **§31 lists
+  `novelty_archive` and `behavioural_descriptors` and §12.2 refuses both**: "the archive is a derived
+  view", and the raw material already lives separately in content-addressed `cell_genomes`. No
+  migration — the third and fourth §31 entity §2.5 has removed. One of §12.1's three dimensions is
+  live (`novelty_distance`, structural, bins taken from §13.4's own language); the other two are
+  blocked on **one specific missing thing — an inbound counterparty key**, which §21.2 already has
+  outbound as a salted hash. §13.2's `structural_novelty` axis is now measured, and §13.4's *first*
+  flag ("only the industry label changed") is computable.
+- [ ] **An inbound counterparty key.** `revenue.record_revenue` records who paid as free text, so two
+  payments from one buyer look like one each from two — which is what blocks §12.1's `buyer_type` and
+  `revenue_recurrence`, and with them a two- or three-dimensional archive (§12.1 says start with two
+  or three). The design already exists in this repo: §21.2's `external_action_registry` stores a
+  salted hash of a counterparty, equality without identity, exactly as §16.3 requires. Do the same
+  inbound rather than inventing a second scheme.
+  *Disproved by:* any counterparty column on a revenue transaction that stores the counterparty.
+- [ ] **Phase 2's selector is honest but it is not yet quality-diversity.** Three measurable axes of
+  five, a one-dimensional archive, and no elite per niche — §12.3's Thompson posteriors need
+  stage-conversion data that does not exist. Still needed: §11.2's independent-adoption record, and
+  an **Auditor path for content judgments** — ADR-059's finding is that concreteness cannot be a
+  kernel computation (§23.5), so it enters as `software_native_advantage`'s missing judge rather than
+  as an axis, and ADR-060 leaves §13.4's third flag needing the same judge.
   *Disproved by:* anything ranking Cells or proposals by a single scalar combining novelty with
   anything else.
 - [x] **Identical wake reason — TESTED, CONFIRMED, REMEDY REFUSED** (2026-08-27), ADR-055. Varying it

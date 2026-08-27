@@ -75,6 +75,7 @@ from . import (
     ledger,
     lifecycle,
     lineage,
+    novelty,
     outcome,
     selection,
     population,
@@ -947,7 +948,31 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #               a USD_REAL `reservation_reserve` and a matching
 #               `reservation_release`, which is a reservation opened and given
 #               back, not a spend.
-EXPECTATION_VERSION = 29
+#   29 -> 30 (§12's archive; §12.1, §12.2, §13.2, §13.4, §16.1; ADR-060).
+#           **Two sections: one new, one changed by a single value. Nothing else
+#           moves at all**, because the archive is derived and writes nothing —
+#           no migration, and `balances` is identical in every account in every
+#           book.
+#           (a) **New section `novelty_archive`.** Two niches occupied —
+#               `novelty_distance=adjacent` (3 genomes, 3 living cells) and
+#               `=radical` (1, 1) — plus **1 unbinned genome**, which is the
+#               colony's first: nothing earlier to be novel against, so it
+#               abstains rather than being called radical. `buyer_type` and
+#               `revenue_recurrence` are reported unmeasured, and that pair is
+#               the thing to watch: either of them becoming measured without a
+#               counterparty key means something started guessing.
+#           (b) **`selection.axes.structural_novelty` null -> 0.0**, and
+#               `measured_dimensions` gains it. §13.2's frontier had four of five
+#               axes; it now has three measured of five. 0.0 is `adjacent` on
+#               §12.1's ordinal — cell#4's genome differs from an earlier one in
+#               at most one business field — and the ordinal is positional, so
+#               only its order carries meaning.
+#           (c) **What this replay cannot catch.** Both niches happen to hold as
+#               many living Cells as genomes, so a regression that counted
+#               genomes instead of Cells would reproduce this section exactly.
+#               `test_a_niche_counts_living_cells_and_not_the_genomes_they_share`
+#               is what actually defends that, with two Cells sharing one genome.
+EXPECTATION_VERSION = 30
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -2848,6 +2873,20 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         for item in outcome.assess_all(conn)
     ]
 
+    # §12's archive. Named for §31's entity and **derived**, per §12.2 — genome
+    # hashes are excluded as digests, so a niche is pinned by its coordinate and
+    # its two occupancy counts. The counts differ from each other on purpose:
+    # one is strategies, the other is competitors for §9.4's capacity.
+    colony_archive = novelty.archive(conn)
+    novelty_archive_rows = [
+        {
+            "niche": niche.label,
+            "genomes": len(niche.genome_hashes),
+            "living_cells": niche.living_cells,
+        }
+        for niche in colony_archive.niches
+    ]
+
     # §13.2's frontier. Grant ids are volatile, so a candidate is identified by
     # its Cell and its estimate; `on_frontier` and `rejected_by` are what a
     # regression in the gates or the domination rule would move. Gate outcomes
@@ -2924,6 +2963,12 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "audits": audit_rows,
         "promotions": promotion_rows,
         "assessments": assessment_rows,
+        "novelty_archive": {
+            "niches": novelty_archive_rows,
+            "unbinned_genomes": len(colony_archive.unbinned_genome_hashes),
+            "measured_dimensions": list(colony_archive.measured_dimensions),
+            "unmeasured_dimensions": list(colony_archive.unmeasured_dimensions),
+        },
         "selection": {
             "candidates": selection_rows,
             "measured_dimensions": list(frontier.measured_dimensions),
