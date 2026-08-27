@@ -1349,3 +1349,14 @@ actually queued for building — this file is memory, not a backlog to work thro
   arm here saw.** This measurement covers `scheduled research cycle` + `human decision` only, so it
   does not close the question for a busier colony — it closes it for the one the scheduler currently
   produces.
+- **Debt surfaced but not paid, 2026-08-27.** Four items, each cheap and each with a reason it was
+  left: (a) `_recent_proposals_section` has **no structural test that it renders at all** — ADR-046's
+  `STRATEGY` mechanism is prose in a prompt, so deleting the section would break that subsystem with
+  every test still green; (b) other content-matching assertions may share
+  `test_context_never_loads_the_entire_history`'s failure mode, which went **silently vacuous twice**
+  because it matched on wording the system legitimately stopped emitting — worth a sweep for
+  assertions that grep output for content the kernel could stop producing; (c) the **concreteness
+  measure** (proportion of proposals naming a real deliverable) exists only in a scratch experiment
+  script, and it is the counterweight PRIORITIES now asks Phase 2 to select against; (d) **CI still
+  cannot see parse compliance** — `scripts/` is committed but wired to nothing automated, which is
+  the gap that let ADR-049's regression run for a month.

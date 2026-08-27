@@ -310,11 +310,15 @@
   measured), then a §14.2 twins run. **Not shipped on ADR-053 alone**: §14.2 already caught ADR-052
   reasoning instead of measuring.
   *Disproved by:* `_was_decided` returning False unconditionally, or being deleted.
-- [ ] **(answered) Test whether a Cell anchors to an *approved* summary too** — the one result that would put
-  ADR-046 and diversity back in genuine conflict. Needs an arm that approves proposals mid-run;
-  nothing measured so far exercises the decided branch at all.
-- [ ] **(superseded framing, kept for the reasoning) The remedy is what §15.1's section SAYS, not
-  whether it appears.**
+- [x] **Does a Cell anchor to an *approved* summary? — ANSWERED, YES** (2026-08-27), ADR-053. It put
+  ADR-046 and diversity in genuine conflict on the branch ADR-052 had shipped, and the conflict was
+  then dissolved by ADR-053's implementation (the proposal log shows no wording for any status) plus
+  the per-kind audit showing ADR-046's delivery never ran through that section.
+- [x] **(SUPERSEDED — kept for the reasoning, but note the recommendation was wrong) The remedy is
+  what §15.1's section SAYS, not whether it appears.** ADR-052 measured the cheapest candidate below
+  — naming the absent expectation in the heading — at **exactly zero** (1.054 vs control 1.089). The
+  Cell completes a visible pattern rather than disobeying an instruction, so the remedy turned out to
+  be removing the text, not rewording around it. The §14.2 reasoning stands; the prediction did not.
   Deleting the section is refused: **ADR-046 is built on it** (a `STRATEGY` has no consumer —
   approving it *is* the act, and the decision annotation in that section is how the act reaches the
   Cell; removing it breaks that subsystem with no test failing), and §15.2 requires episodic memory.
@@ -323,11 +327,13 @@
   ADR-049 made. §14.2 requires counterfactual twins, so this ships on a measured comparison, not on
   one arm.
   *Disproved by:* any change to `_recent_proposals_section`'s heading or body text.
-- [ ] **Two candidate causes remain, and can only explain the residue.** Anchoring does not account
-  for the suppressed arm scoring 1.96 rather than 3 on three proposals. Still untested: the genome
-  pinning market/problem/product so tightly that one idea is the honest answer, and the wake reason
-  being identical on every wake (`scheduled research cycle`), so nothing ever signals a changed
-  situation. Same method: vary one, hold the others, score with `scripts/diversity.py`.
+- [x] **Both remaining candidate causes — TESTED AND CLOSED** (2026-08-27). The wake reason measured
+  +15% *by rotation* (ADR-055) and **+1%, p = 0.73, once earned** (ADR-057's correction) — the gain
+  was the manipulation, and 3/38 proposals in the rotated arm responded to events that never
+  happened. The genome was **rejected** (ADR-056): no diversity gain, p = 0.207, and concreteness
+  collapsed 100% → 5%. **The residual ~1.8–2.0 effective ideas per run of 8 is the model's ceiling**;
+  context assembly is measured ground, so reopen from ADR-050's model question or §14's mutation
+  operators instead.
 - [ ] **`temperature` belongs in the genome, not the kernel — and the socket is already there.**
   §14.1 lists "temperature/sampling mutation" as a prompt-mutation operator, putting sampling in the
   *mutable Cell* column, so a provider constant would delete a mutation dimension the spec
@@ -336,7 +342,11 @@
   counterfactual-twin obligation ("same task, environment, seed where possible, and budget, differing
   by one prompt-level change"), and the first real decision is whether sampling is inherited,
   mutated, or both. **Report distinct parseable proposals per wake alongside parse rate**, or the
-  slice will optimise toward a mute colony.
+  slice will optimise toward a mute colony. **Note which half of this argument survived:** ADR-050's
+  third correction weakened the diversity half — the t=0.8 vs t=0 gap is **~5%, not the 3.6×**
+  distinct-summary-strings claimed — so **§14.1 conformance is the reason that stands**, together
+  with t=0 not reliably buying compliance (32/32 on one model, 0/32 on another). Do not re-argue this
+  slice on a diversity number.
   *Disproved by:* anything in `providers.py` or `deliberation.py` that sets a temperature.
 - [ ] **`risk_tier` on `abstain` — two models now independently refuse it.** `qwen2.5`'s only two
   failures in 16 were `abstain` replies carrying `kind` + `rationale` alone, dropping `summary`,

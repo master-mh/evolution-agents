@@ -10,8 +10,9 @@ store, the external-action registry, the §27.1 autonomy decisions, grant regene
 expiry sweep, establishable rights, scheduler liveness, the experiment, experiment attribution,
 proposed experiments, the strategy kind decided, the experiment_id foreign keys, §13.1's
 normalised cost, the reply format a model can follow, the temperature/diversity
-measurement, §15.1 anchoring, the twins that
-chose the fix, and the fix itself, 2026-07-21 through 2026-08-26):
+measurement, §15.1 anchoring and the twins that chose the fix, the proposal log that
+shows no wording, the §23.4 repeat, the wake reason, the genome, and the human-decision
+wake, 2026-07-21 through 2026-08-27):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
 ## 2026-08-27 — The +15% does not survive honesty
