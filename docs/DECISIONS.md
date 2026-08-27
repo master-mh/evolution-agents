@@ -2814,3 +2814,30 @@ control's 1.089, with every parsed proposal distinct in all four runs.
   - **Instrument checked before the numbers counted**: 13 and 14 approvals made against 0, run-0
     statuses all `approved` against all `pending`, and section medians of 64 / 35 / 21 tokens
     confirming summaries present, withheld, and withheld.
+
+### Implemented (2026-08-27) — with the per-kind audit that ADR-053 got wrong
+
+`_was_decided` is deleted; the proposal log renders `- [kind]\n    -> note` for every status. Golden
+expectation **26 -> 27**, the same three sections, token counts only; `balances` identical in every
+account in every book and `proposals` byte-identical. Confirmed live at **2.122 effective ideas per
+run**, against 1.833 under ADR-052's conditional rule and 1.089 before either.
+
+**The audit ADR-053 called for contradicted ADR-053's own inference on three of four kinds.** It
+assumed the other kinds' approvals reached the Cell the way `STRATEGY`'s did. Measured, with the
+summary hidden:
+
+| kind | does the approved substance still reach the Cell? |
+|---|---|
+| `strategy` | **yes, immediately** — `Your standing strategy`, ADR-046's real channel |
+| `experiment` | **yes, once the grant is started** — `Your current experiment` |
+| `tool_request` / `external_action` | **yes, on consumption** — the grant's result reaches the Cell |
+| **any kind, rejected** | **no.** The reason survives in the note; the subject does not |
+
+So the pattern is that approval's consequence arrives **when the grant is consumed**, not when it is
+granted — and `STRATEGY` looks immediate only because approving it *is* the act, so there is nothing
+to consume. That leaves one real cost rather than none: **a rejected proposal loses its subject.**
+The Cell learns *that* it was rejected and *why*, and not *what*. It is pinned by
+`test_a_rejected_proposal_loses_its_subject_and_that_is_recorded` rather than fixed, because the
+alternative — showing rejected summaries — reintroduces the anchoring this ADR measured, and
+choosing between them is a §23.4 question that deserves its own arm. §23.4's
+`repeat_after_rejection` detector is now the only thing watching for the repeat that invites.

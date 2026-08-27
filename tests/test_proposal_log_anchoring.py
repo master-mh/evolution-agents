@@ -122,14 +122,15 @@ def test_an_undecided_proposal_shows_no_summary_to_copy(conn):
     "decide, expected",
     [(approval.approve, "APPROVED"), (approval.reject, "REJECTED")],
 )
-def test_a_decided_proposal_keeps_its_summary(conn, decide, expected):
-    """ADR-046, preserved. A `STRATEGY` has no consumer and no regeneration —
-    approving it *is* the act, and this section is the only channel by which the
-    act reaches the Cell. "APPROVED" against an unnamed proposal tells it nothing.
+def test_a_decided_proposal_shows_no_summary_either(conn, decide, expected):
+    """ADR-053. ADR-052 kept the summary once a person had judged the proposal,
+    reasoning that "APPROVED" is meaningless if the Cell cannot tell what was
+    approved. Measured, that branch anchors exactly as hard as the pending one
+    (1.122 shown vs 1.764 hidden, approvals held constant) — **a decision
+    annotation is not a modifier on the text beside it.**
 
-    Rejection matters for the same reason from the other side: §23.4's
-    `repeat_after_rejection` detector is only meaningful if the Cell was told
-    what was rejected.
+    The decision itself still reaches the Cell, and for an approved proposal so
+    does the substance, through the channel that kind actually uses.
     """
     cell = _make_cell(conn)
     result = _propose(conn, cell)
@@ -139,49 +140,82 @@ def test_a_decided_proposal_keeps_its_summary(conn, decide, expected):
     )
 
     body = _proposal_log(conn, cell)
-    assert SUMMARY in body, f"a {expected.lower()} proposal must name what was decided"
-    assert expected in body
+    assert SUMMARY not in body, "a judged proposal must not show its wording either"
+    assert expected in body, "the decision still reaches the Cell"
+    assert "a stated reason" in body, "and so does the operator's reason"
 
 
-def test_an_expired_proposal_is_not_treated_as_decided(conn):
-    """`_decision_note` keeps "not yet reviewed" and "expired unreviewed"
-    distinct because "collapsing them would tell a Cell it was judged when
-    nobody judged it". The summary gate is drawn on the same line: the review
-    window closing is not a judgement, so an expired proposal shows no summary.
+def test_an_approved_strategy_still_reaches_the_cell_in_full(conn):
+    """The half ADR-052 was right to protect, delivered by the section that was
+    always doing it. ADR-046's `STRATEGY` mechanism does **not** run through the
+    proposal log — `Your standing strategy` is its own channel — which is why
+    hiding the summary here costs it nothing.
 
-    Getting this wrong would leak the anchoring text back in through the one
-    status that looks decided and is not.
+    This is the test that would fail if someone removed the standing-strategy
+    section believing the proposal log covered it.
     """
     cell = _make_cell(conn)
     result = _propose(conn, cell)
-    conn.execute(
-        "UPDATE approval_requests SET status = 'expired' WHERE request_id = ?",
-        (_request_for(conn, result.proposal_id),),
+    approval.approve(
+        conn, request_id=_request_for(conn, result.proposal_id),
+        decided_by="operator", reason="agreed",
     )
-    conn.commit()
 
-    body = _proposal_log(conn, cell)
-    assert SUMMARY not in body
-    assert "review window closed" in body
+    assembled = context.assemble(
+        conn, cell=lifecycle.get_cell(conn, cell.cell_id), canonical_genome=GENOME,
+        wake_reason="scheduled research cycle", budget_tokens=8_000,
+    )
+    carriers = [s.name for s in assembled.sections if SUMMARY in s.body]
+    assert carriers, "an approved strategy must still reach the Cell somewhere"
+    assert any(n.startswith("Your standing strategy") for n in carriers)
+    assert not any(n.startswith("Your recent proposals") for n in carriers)
 
 
-def test_the_gate_is_derived_from_the_decision_note_not_a_second_list(conn):
-    """A structural guarantee, not a behavioural one. `_was_decided` and
-    `_decision_note` must agree about which statuses are a judgement; two
-    separate lists would drift, and the drift would be invisible because both
-    render into prose.
+def test_a_rejected_proposal_loses_its_subject_and_that_is_recorded(conn):
+    """**The known cost of ADR-053, pinned so it cannot become a surprise.**
 
-    Checked by exercising every status the note handles and asserting the gate
-    agrees with whether the note reports a verdict.
+    A rejection has no grant to consume and no standing-strategy delivery, so
+    with the summary hidden the Cell learns *that* something was rejected and
+    *why*, but not *what*. Every other kind keeps a channel; this one does not.
+
+    Asserted rather than fixed because the alternative — showing rejected
+    summaries — reintroduces the anchoring ADR-053 measured, and choosing
+    between them is a §23.4 question that deserves its own measurement. If that
+    argument is ever had, this test is where the current answer is written down.
     """
-    for status, note_has_verdict in (
-        (None, False), ("pending", False), ("expired", False),
-        ("approved", True), ("rejected", True),
-    ):
-        row = {"status": status, "decision_reason": None}
-        note = context._decision_note(row)
-        says_verdict = "APPROVED" in note or "REJECTED" in note
-        assert says_verdict == note_has_verdict, f"note changed for {status}"
-        assert context._was_decided(row) == says_verdict, (
-            f"_was_decided disagrees with _decision_note for status {status!r}"
+    cell = _make_cell(conn)
+    result = _propose(conn, cell)
+    approval.reject(
+        conn, request_id=_request_for(conn, result.proposal_id),
+        decided_by="operator", reason="too expensive for now",
+    )
+
+    assembled = context.assemble(
+        conn, cell=lifecycle.get_cell(conn, cell.cell_id), canonical_genome=GENOME,
+        wake_reason="scheduled research cycle", budget_tokens=8_000,
+    )
+    assert not any(SUMMARY in s.body for s in assembled.sections), (
+        "if a channel for rejected content ever appears, this cost is gone and "
+        "this test should be deleted deliberately"
+    )
+    log = _proposal_log(conn, cell)
+    assert "REJECTED" in log and "too expensive for now" in log
+
+
+def test_no_status_shows_a_summary(conn):
+    """Structural: the rule is unconditional, so no status may reintroduce the
+    wording. Guards the shape ADR-052 shipped and ADR-053 removed — a
+    status-conditional branch — from being reintroduced by a later edit.
+    """
+    cell = _make_cell(conn)
+    result = _propose(conn, cell)
+    request_id = _request_for(conn, result.proposal_id)
+    for status in ("pending", "expired", "approved", "rejected"):
+        conn.execute(
+            "UPDATE approval_requests SET status = ? WHERE request_id = ?",
+            (status, request_id),
         )
+        conn.commit()
+        body = _proposal_log(conn, cell)
+        assert SUMMARY not in body, f"status {status!r} leaked the summary back"
+        assert "[strategy]" in body

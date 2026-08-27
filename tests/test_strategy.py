@@ -344,14 +344,17 @@ def test_the_cell_learns_what_a_person_decided(conn):
     _propose(conn, cell, wake_key="w3", summary="pending plan")
 
     log = _proposal_log(conn, cell)
-    assert "approved plan\n    -> APPROVED, saying: go ahead" in log
-    assert "rejected plan\n    -> REJECTED, saying: too expensive" in log
-    # The pending one keeps its note and loses its wording (ADR-052): the
-    # summary is what a Cell copies, and an undecided proposal has no decision
-    # to attach it to. The signal this test defends is the *decision*, which is
-    # still there.
-    assert "waiting on a person" in log
-    assert "pending plan" not in log
+    # Since ADR-053 the log carries no wording for any status — an approved
+    # summary was measured to anchor exactly as hard as a pending one. What this
+    # test defends is the *decision*, and all three still reach the Cell.
+    assert "-> APPROVED, saying: go ahead" in log
+    assert "-> REJECTED, saying: too expensive" in log
+    assert "-> waiting on a person" in log
+    for wording in ("approved plan", "rejected plan", "pending plan"):
+        assert wording not in log, f"{wording!r} leaked back into the proposal log"
+    # The approved one still reaches the Cell in full, through the section that
+    # was always ADR-046's actual channel.
+    assert "approved plan" in _standing(conn, cell)
 
 
 def test_an_unreviewed_proposal_is_distinguishable_from_an_expired_one(conn):

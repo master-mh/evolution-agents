@@ -14,57 +14,55 @@ measurement, §15.1 anchoring, the twins that
 chose the fix, and the fix itself, 2026-07-21 through 2026-08-26):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-27 — An approved summary anchors exactly as hard
+## 2026-08-27 — The proposal log shows no wording at all
 
-A measurement (ADR-053). **No code changed** — the remedy is the third design iteration on this
-section and needs its own twins run first.
+`context._was_decided` deleted, the section heading corrected, 6 tests, golden expectation
+**26 -> 27** (ADR-053). No migration.
 
-ADR-052 shipped `_was_decided` on a branch it had never measured: every arm behind it left every
-proposal `pending`, because an unattended colony queues and nobody reviews. Both the ADR and
-`_was_decided`'s docstring said so and named this as the result that would move the line. It does.
+§15.1's proposal log now renders `- [kind]\n    -> note` for every status. ADR-053 measured that an
+approved summary anchors exactly as hard as a pending one (1.122 shown vs 1.764 hidden, approvals
+held constant), so the status-conditional gate ADR-052 shipped was guarding the wrong thing.
 
-Approving does more than reveal a summary — it sets a standing strategy, issues grants, changes what
-§15 assembles. So three arms, `llama3.2` t=0.8, 4 runs × 8 wakes:
+**Confirmed live at 2.122 effective ideas per run** — against 1.833 under the conditional rule and
+1.089 before either — with every parsed proposal distinct in all four runs. Parse rate 17/32.
 
-| arm | approvals | section | parsed | **ideas/run** |
-|---|---|---|---|---|
-| `decided_shown` | every proposal | 64 tok, summaries **present** | 13/32 | **1.122** |
-| `decided_hidden` | every proposal | 35 tok, summaries withheld | 14/32 | **1.764** |
-| `pending` (shipped default) | none | 21 tok, summaries withheld | 18/32 | **2.195** |
+### The per-kind audit contradicted ADR-053's own inference
 
-`decided_shown` vs `decided_hidden` holds every approval side-effect constant and varies only whether
-the summary renders. **`decided_hidden` is higher in 100% of 16 pairwise comparisons.**
+ADR-053 assumed the other kinds' approvals reached the Cell the way `STRATEGY`'s did. Three of four
+were wrong. With the summary hidden:
 
-### Approval makes no difference to anchoring
+| kind | does the approved substance still reach the Cell? |
+|---|---|
+| `strategy` | **yes, immediately** — `Your standing strategy` |
+| `experiment` | **yes, once the grant is started** — `Your current experiment` |
+| `tool_request` / `external_action` | **yes, on consumption** |
+| **any kind, rejected** | **no** — the reason survives, the subject does not |
 
-`decided_shown` scores **1.122** — the original pre-ADR-052 control was **1.089**. The anchoring
-returns in full the moment the summary is visible, approved or not. **A Cell copies text it can see;
-the annotation beside that text is not what it is reading.** So ADR-046 and diversity are in genuine
-conflict on the branch that shipped, and the current rule is safe only in a colony nobody reviews.
+Approval's consequence arrives **when the grant is consumed**, not when it is granted; `STRATEGY`
+looked immediate only because approving it *is* the act, so there is nothing to consume.
 
-### ADR-052's reason for showing it was wrong, and that is the way out
+### One real cost, pinned rather than fixed
 
-The reasoning was "APPROVED is meaningless if the Cell cannot tell *what* was approved." An approved
-strategy in fact reaches the Cell through **two** sections — the proposal log and `Your standing
-strategy (your words, approved by a person — this is how you operate)`, a dedicated independent
-channel. **ADR-046's delivery for `STRATEGY` never ran through the proposal log**, so the summary
-there is redundant for the one kind ADR-046 is about. Likely the same for the others — an approved
-experiment reaches the Cell through the current-experiment section, a tool through its grant — but
-that is inferred, not measured.
+**A rejected proposal loses its subject.** The Cell learns that it was rejected and why, not what.
+`test_a_rejected_proposal_loses_its_subject_and_that_is_recorded` asserts it so it cannot become a
+surprise; fixing it means showing rejected summaries, which reintroduces the anchoring, and that
+trade is a §23.4 question deserving its own arm. §23.4's `repeat_after_rejection` detector is now the
+only thing watching for the repeat this invites.
 
 ### Verification
 
-- **Instrument checked before the numbers counted**: 13 and 14 approvals against 0, run-0 statuses
-  all `approved` against all `pending`, section medians **64 / 35 / 21 tokens** confirming summaries
-  present, withheld, withheld. (35 > 21 because an approved entry's decision note is longer.)
-- **The confounded comparison is reported and not used.** `pending` vs `decided_shown` shows the
-  right direction and attributes it wrongly; `decided_hidden` is the arm that isolates the summary.
-- **A second finding, separate:** `decided_hidden` (1.764) scores below `pending` (2.195), so
-  approval itself costs diversity through its other effects — a standing strategy is a strong
-  instruction and the Cell follows it. Not obviously a fault.
-- **1009 tests and the golden run green** — untouched, which is the point: this is a live-only
-  property and no replay can see it.
-- Next: verify each kind's approval still reaches the Cell with the proposal-log summary gone
-  (`STRATEGY` is confirmed; experiment, tool and external-action are inferred), then a twins run on
-  hiding it unconditionally. **Not shipped on this measurement alone** — §14.2 caught ADR-052
-  reasoning instead of measuring once already.
+- **Teeth-checked three ways**, all caught, including a regression back to **ADR-052's own gate** —
+  so the refuted design cannot quietly return.
+- **The history-bound test had gone silently vacuous a second time.** It matched on probe wording,
+  which no longer renders, so it passed while measuring nothing. It now **counts entries** in the
+  log — the thing §15.1's bound actually governs — and separately asserts no wording leaks anywhere
+  in the render, which catches a different section dumping history.
+- **Golden diff is eight deliberation rows of eleven**, `context_tokens` only; the three that do not
+  move are the wakes with no proposal log. `model_calls` and `resource_usage` follow;
+  `resource_usage.minor_units` moves on no row, so **`balances` is identical in every account in
+  every book** and `proposals` is byte-identical.
+- **The heading was corrected too** — it claimed to show "your own prior words", which stopped being
+  true. ADR-052 measured heading edits at zero behavioural effect, so it is carried as pure accuracy.
+- **1010 tests passing** (1 net new; up from 1009).
+- Next: whether to restore the summary **for rejections only**, measured rather than argued — the
+  one case with no other channel, against the anchoring it would reintroduce.

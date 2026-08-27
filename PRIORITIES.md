@@ -234,7 +234,20 @@
   100% of 16 pairwise comparisons — and 1.122 is the pre-ADR-052 control's 1.089. **Approval makes no
   difference to anchoring**; a Cell copies text it can see. So ADR-046 and diversity *are* in conflict
   on the branch ADR-052 shipped, and `_was_decided` is safe only while nobody reviews.
-- [ ] **Hide the proposal-log summary unconditionally — ADR-052's reason for keeping it was wrong.**
+- [x] **Proposal-log summary hidden unconditionally — DONE** (2026-08-27), `_was_decided` deleted,
+  golden 26 -> 27. **Live-confirmed at 2.122 ideas/run** vs 1.833 conditional and 1.089 original.
+  The per-kind audit contradicted ADR-053's inference on three of four kinds: approval's consequence
+  reaches the Cell **on grant consumption**, not at approval (`strategy` looked immediate only
+  because approving it *is* the act). Teeth-checked three ways including a regression to ADR-052's
+  gate.
+- [ ] **Restore the summary for rejections only? — the one case with no other channel.** A rejected
+  proposal now loses its subject: the Cell learns *that* it was rejected and *why*, not *what*.
+  Pinned by `test_a_rejected_proposal_loses_its_subject_and_that_is_recorded`, not fixed, because
+  showing rejected summaries reintroduces the measured anchoring. **Measure it rather than argue it**
+  — an arm that rejects mid-run, against the `pending` baseline of 2.122. §23.4's
+  `repeat_after_rejection` is currently the only thing watching for the repeat this invites.
+  *Disproved by:* any status-conditional branch reappearing in `_recent_proposals_section`.
+- [x] **(done) Hide the proposal-log summary unconditionally — ADR-052's reason for keeping it was wrong.**
   An approved strategy reaches the Cell through `Your standing strategy`, a dedicated independent
   section: **ADR-046's delivery never ran through the proposal log**, so the summary there is
   redundant for the kind ADR-046 is about. Before shipping: confirm the same for `experiment`,

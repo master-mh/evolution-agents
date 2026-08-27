@@ -1261,3 +1261,17 @@ actually queued for building — this file is memory, not a backlog to work thro
   instruction and the Cell follows it — arguably correct behaviour, but it means an attentive
   operator narrows the colony's search whether or not the anchoring bug is fixed. Worth knowing
   before Phase 2 tunes selection on proposal variety.
+- **Approval's consequence reaches a Cell on *consumption*, not on approval** — audited per kind
+  (2026-08-27). `strategy` is the exception only because approving it *is* the act, so there is no
+  grant to consume; `experiment` arrives when the grant is started, `tool_request` and
+  `external_action` when the grant is used. Anything that assumes a Cell knows what was approved
+  *between* approval and consumption is assuming a channel that does not exist.
+- **A rejected proposal now has no channel for its subject at all.** The Cell gets "REJECTED, saying:
+  <reason>" and nothing identifying what. Restoring it for rejections only is the obvious move and
+  reintroduces the anchoring — worth an arm that rejects mid-run before deciding, against the 2.122
+  baseline. Until then §23.4's `repeat_after_rejection` is the only guard.
+- **The same test went silently vacuous twice, for the same reason.**
+  `test_context_never_loads_the_entire_history` detected history-loading by matching proposal
+  *wording*; both times the wording stopped rendering, it passed while measuring nothing. It now
+  counts entries. **A test that detects something by matching content the system might legitimately
+  stop emitting will fail open, not closed** — prefer a structural signal.

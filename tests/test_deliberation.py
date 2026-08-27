@@ -536,14 +536,25 @@ def test_context_never_loads_the_entire_history(conn):
         wake_reason="scheduled research cycle",
     )
     rendered = assembled.render()
-    included = [i for i in range(8) if f"probe number {i}" in rendered]
+
+    # Counted, not matched on summaries: since ADR-053 the log shows no wording,
+    # so a probe-text search finds nothing and would pass vacuously — which it
+    # did, silently, when that rule shipped. The entry count is what the §15.1
+    # bound actually governs.
+    log = next(
+        s.body for s in assembled.sections if s.name.startswith("Your recent proposals")
+    )
+    entries = log.count("- [")
 
     # Bounds are absolute, not `<= context.RECENT_PROPOSALS`. Asserting against
     # the constant makes the test a tautology — raising the constant to 1000
     # would satisfy it while loading exactly the history §15.1 forbids. (Found
     # by the teeth check, which is the only reason this reads oddly.)
-    assert 1 <= len(included) <= 3, f"expected a bounded slice, got {included}"
-    assert included == [5, 6, 7], "and the most recent ones, in order"
+    assert 1 <= entries <= 3, f"expected a bounded slice, got {entries} entries"
+    # And nothing else may dump the history either: no probe wording anywhere.
+    assert not [i for i in range(8) if f"probe number {i}" in rendered], (
+        "a section is leaking proposal wording back into the context"
+    )
 
 
 def test_context_stays_within_its_token_budget(conn):

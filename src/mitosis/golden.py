@@ -849,7 +849,33 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #           at all (ADR-052) — no replay can see a prompt edit's real effect.
 #           **`balances` is identical in every account in every book**, and
 #           USD_REAL is untouched.
-EXPECTATION_VERSION = 26
+#   26 -> 27 (the proposal log shows no wording at all; §14.2, §15.1, §23.4;
+#           ADR-053).
+#           **The same three sections as 25 -> 26, and again only token counts** —
+#           but more rows, because the rule is now unconditional where it was
+#           status-conditional. 25 -> 26 hid the summary only while a proposal was
+#           undecided and moved two deliberation rows; this hides it for every
+#           status and moves eight.
+#           (a) `deliberations`: eight of eleven rows, `context_tokens` only
+#               (e.g. 1109 -> 1080, 637 -> 625). The three that do not move are
+#               the wakes with no proposal log to shorten. **A row moving here
+#               that has no proposal log would mean some other section changed**,
+#               which this slice does not touch.
+#           (b) `model_calls`: the nine matching rows, `input_tokens` only. The
+#               deltas are larger than `context_tokens`' for the reason noted at
+#               25 -> 26 — `providers._estimate_tokens` is the deliberate 2
+#               chars/token over-estimate (ADR-021) and `context` counts with its
+#               own — so the two shrinking by different amounts is the expected
+#               shape.
+#           (c) `resource_usage` tracks `model_calls` exactly, `quantity` only.
+#               **`minor_units` does not move on any row**: the shadow price
+#               rounds to the same figure, which is why no book moves.
+#           **`proposals` is byte-identical** and **`balances` is identical in
+#           every account in every book**; USD_REAL is untouched. The section
+#           *heading* also changed here — it claimed to show "your own prior
+#           words", which stopped being true — and ADR-052 measured heading edits
+#           at zero behavioural effect, so it is carried as pure accuracy.
+EXPECTATION_VERSION = 27
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
