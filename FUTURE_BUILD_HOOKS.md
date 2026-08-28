@@ -1500,3 +1500,16 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **`counterparty.py` is now two things: the key primitive, and the attestation store.** Still
   coherent — the module is "the counterparty, and what is recorded under it" — but a third
   responsibility should trigger a split rather than a third section.
+
+<!-- 2026-08-28, /wrap sweep -->
+- **A migration that adds a column the kernel writes unconditionally breaks every
+  pin-to-an-old-migration fixture.** Migration 0028 did exactly this and broke four tests in
+  `test_experiment_attribution_integrity.py`, whose fixture said "a colony at 0026" while meaning
+  "a colony without the foreign keys". Those coincided until they did not. Fixed by naming the
+  *excluded* migration rather than the last included one (`_migrate_all_except`). Any future fixture
+  that pins a schema version should name what it excludes — and migration 0030 will find the next
+  one that does not.
+- **Four CLI verbs now have no test**, up from two: `frontier`, `archive`, `set-buyer-type`,
+  `buyers`. The earlier note asked for a structural "every registered verb at least parses and
+  runs" test; with 68 verbs registered that is now clearly the right build rather than four more
+  bespoke tests.
