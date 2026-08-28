@@ -1440,3 +1440,14 @@ actually queued for building — this file is memory, not a backlog to work thro
   irrelevant at four genomes; a colony with thousands would want the pairwise nearest-neighbour
   search memoised. Do not reach for a cache table when that day comes — §12.2's point is that the
   archive is derived, and a memo inside one call is not a second version of the record.
+
+<!-- 2026-08-27, /wrap sweep -->
+- **`mitosis frontier` and `mitosis archive` have no test.** Both were smoke-tested by hand and
+  neither appears in `test_cli.py`'s 61 tests. The specific gap is wider than two verbs: there is no
+  "every registered verb at least parses and runs" test, so a new subparser can be added, wired to a
+  typo'd `func`, and ship green. That structural version is the one worth writing — it covers the
+  42+ verbs already there, not just these two.
+- **`concreteness.py --same-family-anyway` is implemented and has never been exercised.** The
+  *refusal* path is checked (exit 2, §24.3); the override is not — and the override is the half that
+  matters, because it stamps the report `** SELF-GRADED, §24.3 **`. A flag that silently stopped
+  stamping would leave a self-graded number reading like an independent one.
