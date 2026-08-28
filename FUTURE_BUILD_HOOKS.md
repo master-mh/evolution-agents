@@ -1513,3 +1513,31 @@ actually queued for building — this file is memory, not a backlog to work thro
   `buyers`. The earlier note asked for a structural "every registered verb at least parses and
   runs" test; with 68 verbs registered that is now clearly the right build rather than four more
   bespoke tests.
+
+<!-- 2026-08-28, ADR-063 (rung 8) -->
+- **The claim-drift shape has a new worst case: a wrong claim inside the docstring of the test that
+  enforces it.** `test_no_kernel_path_acts_on_an_assessment` stated the reason for its own guarantee
+  incorrectly ("rung 8 means removing one of the two humans") three lines above a forbidden-list
+  entry that stated it correctly ("a promotion that fires on a timer is rung 9, not rung 8"). The
+  test had teeth; only its *justification* was wrong, so nothing could ever fail to catch it. Worth
+  a sweep: any other test whose docstring asserts a spec reading no assertion checks.
+- **A guard in Python and a constraint in the schema are not the same test, and one can hide the
+  other.** Dropping migration 0030's unique index left the whole suite green, because
+  `_latest_promotion_at_rung_locked` declines to *find* an already-expanded predecessor. The fix was
+  a second test that inserts an otherwise fully valid row so nothing but the index can refuse it.
+  Generalises: wherever this repo has both an app-level query filter and a DB constraint expressing
+  one rule, the constraint is probably untested. `experiment_id`'s foreign keys (ADR-047) are the
+  obvious place to check next.
+- **`autopromotion.py` is the first module that acts on a §25.2 verdict**, which makes it the
+  permanent place to look when asking "can the kernel now do X unattended?". It composes only
+  existing refusals today. A future edit that adds a *new* guard there rather than composing one is
+  the signal that something has been reasoned about in the wrong place.
+- **§25.1 rung 9 has no producer and now has a clearly-shaped hole.** `decided_automatically` records
+  bounded autonomy on its own axis, but nothing computes a *bound* beyond the pool ceiling — §25.2
+  names liability and §23.3's metabolic alarm exists, and a real rung-9 argument would tie the
+  unattended engine's ceiling to one of them rather than to a static pool balance.
+- **`scheduler.tick()` now takes an injected `PromotionSweeper` that nothing in the shipped CLI
+  wires by default.** `cmd_tick` does not pass one, so the automation is reachable only through
+  `mitosis auto-promote`. That is deliberate for this slice (the golden run must stay still), but it
+  means the timer-driven path is **built and unexercised** — the sixteenth-socket shape, one layer
+  up. Wiring it is a one-line change plus an argued golden-run diff.

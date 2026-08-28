@@ -13,61 +13,66 @@ normalised cost, the reply format a model can follow, the temperature/diversity
 measurement, §15.1 anchoring and the twins that chose the fix, the proposal log that
 shows no wording, the §23.4 repeat, the wake reason, the genome, the human-decision wake,
 the +15% that did not survive honesty, §13.4's concreteness measure,
-§13.2's selector, §12's novelty archive, and the inbound counterparty key,
+§13.2's selector, §12's novelty archive, the inbound counterparty key, and
+§12.1's declared third dimension,
 2026-07-21 through 2026-08-28):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-28 — §12.1's third dimension is declared, and the mechanism already existed
+## 2026-08-28 — Rung 8 is a scale step, and the claim that it removed a human had spread to four files
 
-Migration 0029 + `counterparty.attest_buyer_type` + 15 tests + `set-buyer-type`/`buyers` + golden
-expectations **31 -> 32** (ADR-062). **§12.1's archive is three-dimensional; nothing abstains.**
+Migration 0030 + `autopromotion.py` + two injected seams + 18 tests + `auto-promote` +
+golden expectations **32 -> 33** (ADR-063). **§25.1's ladder issues rung 8, and §12.3's stage
+conversions are unblocked.**
 
-PRIORITIES said the next step was "a declared `buyer_type`, with its declarer recorded — **one
-build, three callers**". That entry was wrong twice, and both errors were worth finding before
-building anything.
+### The build began by disproving its own brief
 
-### The mechanism already existed
+`promotion.py`, `outcome.py`, migration 0016's comment and — worst — the docstring of the
+structural test enforcing the guarantee all said rung 8 "means removing one of the two humans".
+§25.1 reads `7. Tiny capped live experiment` -> `8. Expanded pilot` -> `9. Bounded autonomy`: the
+7 -> 8 delta is **scale**, and *autonomy* appears only at rung 9. `test_outcome.py` contradicted
+its own docstring three lines below it, and the forbidden list was the half that was right ("a
+promotion that fires on a timer is rung 9, not rung 8").
 
-ADR-041 built `rights_attestations`: a person establishes a fact the colony cannot derive — subject,
-claim, basis, who, when; append-only; latest wins; withdrawal is a row and not a flag; unreachable
-from any Cell, enforced by an AST walk. Every one of those decisions is right here for the same
-reasons, so this slice **copies an established shape** instead of inventing a judgment subsystem.
+Left uncorrected, rung 8 and the autonomy flag would have become the same number.
 
-### The three callers split two ways, and the split is principled
+### Two axes, kept apart by construction
 
-`buyer_type` is an **external fact** — who actually paid — which an operator holding the invoice can
-observe. §13.3's `software_native_advantage` and §13.4's third flag are **readings of the colony's
-own prose**, which is what §23.5 keeps out of the kernel and what ADR-032's scored Auditor exists
-for: §10.4 requires wrongful flags to be penalised, and prose cannot be penalised. An operator does
-not need a Brier score; an Auditor does. One generic judgments table would have scored nobody and
-constrained nothing — and could not have stated §12.1's four bins, which migration 0029's CHECK does.
+`rung` says how far up §25.1 the money climbed; `decided_automatically` says whether a person was
+in the loop. `ISSUABLE_RUNGS` is `(7, 8)` — rung 9 is excluded on purpose, because bounded autonomy
+is a different decider, not a bigger cheque.
 
-### Three dimensions, three routes
+### The constraint went in the schema (ADR-047)
 
-`novelty_distance` is **structural** (the kernel computes it), `revenue_recurrence` is **observed**
-(derived from the ledger), `buyer_type` is **declared** (no query can produce it). A Cell writes none
-of them, and for the declared one that is structural rather than promised.
+Migration 0030's trigger makes three things unrepresentable rather than refused: a rung above 7
+with no predecessor, a predecessor that is not the rung immediately below, and a predecessor
+belonging to **another Cell** — §29's reciprocal evidence farming as a foreign key pointing
+somewhere plausible. A unique partial index makes one success expandable exactly once (§23.4's
+splitting attack, run upward).
 
-### The refusals that carry the most
+### Two seams, because both directions were blocked
 
-- **Attesting a party who never paid is refused** — the check a foreign key would have been, since a
-  counterparty is a value on payments rather than a row. Without it a typo is a *silent no-op*: a
-  valid attestation, a success message, and no descriptor moves.
-- **Mixed is checked before incomplete.** Two segments among the attested buyers is monotone — no
-  further attestation can unmix them — so that abstention is permanent. Checking incompleteness first
-  would tell an operator to attest more buyers in the one case where it cannot help.
-- **A withdrawal is not "never asked."** A withdrawn party stays present with no position, because
-  somebody looking and declining to say is a different fact from nobody looking.
+`outcome` imports `promotion`, so the §25.2 gate is `promotion.PromotionEvidence` — and its
+signature takes a **`promotion_id`, never a `cell_id`**, so it cannot be asked "how is this Cell
+doing?" (§9.3's move applied to evidence). `promotion` imports `scheduler`, so the unattended
+engine reaches the tick as `scheduler.PromotionSweeper`, supplied by the *caller*.
+
+### The engine invents no new guard
+
+`autopromotion.py` composes §27.1's `auto_promotion` flag (ships false), §27.1's `real_spending`
+(still separately required for USD_REAL, so ADR-026's two confirmations stay two), §23.1's own
+`batchable` predicate, the §25.2 evidence gate and the `promotion_pool` ceiling. It **cannot kill**:
+§10.5 forbids culling on an estimate with no concurring Auditor, so `death`/`displacement`/`lineage`
+are closed structurally at the one module that acts on a verdict.
 
 ### Verification
 
-- **Teeth-checked twelve ways, all CAUGHT**, including a Cell-reachable module reaching the
-  attestation (§0.3) and a faithful mixed-collapse that returns a bin rather than only changing a
-  reason string.
-- **1092 tests and the golden run green.** `balances` identical in every account in every book — a
-  declaration is not a transaction. The replay **attests twice and supersedes**, because a single
-  attestation reports the same bin whether the read takes the latest row or the earliest.
-- Next: §12.3's Thompson posteriors are what turn this archive into quality-diversity, and they need
-  stage *conversions* — `promotion.allocate` only ever issues rung 7, so **the ladder's next rung is
-  the gating build**. The Auditor path for §13.3/§13.4's content judgments is now the clearly-scoped
-  other half, and ADR-032's machinery is already most of it.
+- **Teeth-checked twelve ways; eleven caught first time.** The twelfth was a test passing for the
+  wrong reason — dropping the unique index left every test green, because the Python query declines
+  to *find* an expanded predecessor. It now has a constraint-level test that reports `DID NOT RAISE`
+  when the index goes.
+- **1110 tests and the golden run green.** The golden diff is **one added key** —
+  `autonomy.auto_promotion: false` — with balances identical in every account in every book. The
+  scenario never turns it on; the mechanism ships complete and switched off.
+- Next: §12.3's beta-binomial stage-conversion posteriors are now buildable — rung-7 promotions that
+  converted to rung 8 are the binary they need. The Auditor path for §13.3/§13.4's content judgments
+  remains the clearly-scoped other half.

@@ -15,13 +15,34 @@ allocation" among its wake reasons, and `deliberation.WAKE_CAPITAL_ALLOCATION`
 has been defined and unemitted since the agent loop landed. A Cell woken
 *because* it has just been funded is precisely the event both were reserved for.
 
-**Why this is rung 7 and not rung 9.** §25.1's ladder puts "tiny capped live
-experiment" one step past "human-reviewed prototype". Two humans still stand in
-every allocation: one approved the request individually under §23.1, and one
-runs the allocation — nothing here fires on a schedule, and the scheduler does
-not call this module. What changed is only that an approval now *does*
-something. Rung 8 ("expanded pilot") and rung 9 ("bounded autonomy") each mean
-removing one of those humans, and each is its own argued step.
+**Why rung 7 is the floor here, and what rung 8 actually is (ADR-063).** §25.1's
+ladder puts "tiny capped live experiment" one step past "human-reviewed
+prototype". Two humans stand in a rung-7 allocation: one approved the request
+individually under §23.1, and one runs the allocation.
+
+This module used to claim that "rung 8 and rung 9 each mean removing one of
+those humans". **That was wrong**, and it had propagated to four places. §25.1
+reads `7. Tiny capped live experiment` -> `8. Expanded pilot` -> `9. Bounded
+autonomy`: the 7 -> 8 delta is **scale**, and the word *autonomy* appears only at
+rung 9. A *pilot* is supervised by definition. Who acts without a human is
+governed by §27.1's `autonomy:` flags and §0.4's "tool by tool, phase by phase",
+never by a ladder rung — and `test_outcome.py` said so correctly three lines
+below the docstring that said otherwise: "a promotion that fires on a timer is
+rung 9, not rung 8".
+
+So the two axes are independent, and this module keeps them independent:
+
+    rung             how far up §25.1 the money has climbed. 7 = tiny capped,
+                     8 = expanded. Requires a predecessor at the rung below,
+                     enforced by migration 0030's trigger rather than here,
+                     because a constraint has no layer (ADR-047).
+    decided_by_whom  whether a person was in the loop. Recorded in
+                     `decided_automatically`; bounded by §27.1's
+                     `auto_promotion` flag, which ships false.
+
+An unattended allocation is rung 9's bounded autonomy applied to the *decision*,
+which is why it is a column and not an inference — a later reader must be able
+to tell which promotions a person made.
 
 **What the Cell does not get to decide.** The amount allocated is the amount
 frozen into the grant at approval — the figure §23.2 actually showed the
@@ -43,20 +64,77 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Protocol
 
 from . import approval, audit, deliberation, ids, ledger, lifecycle, prediction, scheduler
 from .accounts import cell_cash
 from .models import Book, CellStatus, EntrySpec
 from .proposal import ProposalKind
 
-#: §25.1's rung this module issues. Stored on every promotion rather than
-#: assumed, so a later slice that starts issuing rung-8 promotions is
-#: distinguishable in the record from this one.
+#: §25.1 rung 7, "tiny capped live experiment". The floor of the live ladder:
+#: nothing precedes it, so a rung-7 promotion supersedes nothing.
 LADDER_RUNG_CAPPED_LIVE_EXPERIMENT = 7
+
+#: §25.1 rung 8, "expanded pilot". Same two humans, a larger cap, and a
+#: predecessor whose §25.2 evidence supports the expansion.
+LADDER_RUNG_EXPANDED_PILOT = 8
+
+#: The rungs this module will issue. Rung 9 ("bounded autonomy") is deliberately
+#: absent: it is not a bigger allocation but a different *decider*, and this
+#: module already records that on the `decided_automatically` axis. Adding 9
+#: here would conflate the two axes the docstring above separates.
+ISSUABLE_RUNGS = (LADDER_RUNG_CAPPED_LIVE_EXPERIMENT, LADDER_RUNG_EXPANDED_PILOT)
+
+#: §27.1's flag for issuing a promotion with no operator in the loop. Ships
+#: false (§0.4: "Nothing begins at real-money autonomy"). Distinct from
+#: `real_spending`, which is still separately required for a USD_REAL book —
+#: keeping ADR-026's two independent confirmations from collapsing into one.
+AUTO_PROMOTION_FLAG = "auto_promotion"
 
 #: Where allocations draw from. §31 reserved this account for §25 promotion and
 #: nothing has ever moved through it.
 PROMOTION_POOL = "promotion_pool"
+
+
+# --- §25.2 evidence, as an injected seam (ADR-063) ---------------------------
+#
+# `outcome.py` computes §25.2's read-back and **imports this module** to do it.
+# So this module cannot import it back; the dependency is inverted with a seam,
+# exactly as `sweeper.ExternalOperationChecker` is implemented by
+# `gateway.GatewayOperationChecker` and `population.Displacer` by
+# `displacement.ObjectiveDisplacer`.
+#
+# **The signature is the safety property, not the implementation.** It takes a
+# `promotion_id` and never a `cell_id`, so it cannot be asked the open question
+# "how is this Cell doing?" — only the closed one "did *this specific*
+# predecessor work?". That is the §9.3 move applied to evidence: a signature
+# that cannot see a Cell's general record cannot promote on a general
+# impression, and no implementation can widen it without changing this file.
+
+
+@dataclass(frozen=True)
+class EvidenceReading:
+    """What the kernel is allowed to learn about a predecessor promotion.
+
+    Deliberately narrow. `outcome.Assessment` carries twenty fields across
+    §25.2's full evidence list; this carries the four a *gate* needs. Passing
+    the whole assessment would let a later edit gate on revenue, and §10.3 is
+    explicit that "Explorers need no immediate revenue" — the one dimension
+    most likely to look reasonable and select exactly the wrong Cells.
+    """
+
+    verdict: str
+    supports_promotion: bool
+    mean_brier: float | None
+    resolved_predictions: int
+
+
+class PromotionEvidence(Protocol):
+    """Reads §25.2's verdict for one promotion. Implemented by `outcome.py`."""
+
+    def read(
+        self, conn: sqlite3.Connection, promotion_id: str
+    ) -> EvidenceReading: ...
 
 #: The transaction type an allocation posts. Exempt from real-spend
 #: registration: `promotion_pool -> cell cash` is an internal capital transfer
@@ -94,6 +172,18 @@ class Promotion:
     allocated_by: str
     reason: str
     created_at_utc: datetime
+    #: The rung-7 promotion this one expands. None at rung 7, which supersedes
+    #: nothing; NOT NULL above it, enforced by migration 0030's trigger.
+    supersedes_promotion_id: str | None = None
+    #: Whether a person was in the loop. Recorded rather than inferred — the
+    #: rung says how far up §25.1 the money climbed, this says who decided.
+    decided_automatically: bool = False
+    #: §25.2's verdict on the predecessor, frozen at the moment it was consumed.
+    #: None at rung 7, which is decided on the §23 payload rather than on an
+    #: earlier outcome.
+    evidence_verdict: str | None = None
+    evidence_mean_brier: float | None = None
+    evidence_resolved_predictions: int | None = None
     #: The wake this allocation enqueued (§17.2 "capital allocation"). None only
     #: if the Cell was already queued for one.
     wake_key: str | None = None
@@ -153,6 +243,9 @@ def allocate(
     grant_id: str,
     allocated_by: str,
     reason: str,
+    rung: int = LADDER_RUNG_CAPPED_LIVE_EXPERIMENT,
+    evidence: PromotionEvidence | None = None,
+    decided_automatically: bool = False,
     now: datetime | None = None,
 ) -> Promotion:
     """Consume an approved grant: allocate its capital and wake the Cell.
@@ -161,6 +254,10 @@ def allocate(
     being marked consumed, the §25.2 evidence, and the §17.2 wake. A crash that
     left any subset applied would mean either a Cell funded by a grant that
     could be spent again, or a grant consumed with no money moved.
+
+    `rung` defaults to 7 so that every existing caller keeps its exact meaning.
+    Rung 8 additionally requires `evidence`: the predecessor is found here, but
+    judging it is `outcome.py`'s job and reaches this module through the seam.
     """
     reason = (reason or "").strip()
     if not reason:
@@ -169,12 +266,27 @@ def allocate(
             "promotion recorded at every rung"
         )
 
+    if rung not in ISSUABLE_RUNGS:
+        raise PromotionError(
+            f"rung {rung} is not issuable here (this module issues "
+            f"{list(ISSUABLE_RUNGS)}). Rung 9 is bounded autonomy — a different "
+            "decider, not a bigger allocation, and it is recorded on "
+            "`decided_automatically` rather than as a rung."
+        )
+
     now = now or datetime.now(timezone.utc)
 
     conn.execute("BEGIN IMMEDIATE")
     try:
         promotion = _allocate_locked(
-            conn, grant_id=grant_id, allocated_by=allocated_by, reason=reason, now=now
+            conn,
+            grant_id=grant_id,
+            allocated_by=allocated_by,
+            reason=reason,
+            rung=rung,
+            evidence=evidence,
+            decided_automatically=decided_automatically,
+            now=now,
         )
         conn.execute("COMMIT")
     except Exception:
@@ -189,6 +301,9 @@ def _allocate_locked(
     grant_id: str,
     allocated_by: str,
     reason: str,
+    rung: int = LADDER_RUNG_CAPPED_LIVE_EXPERIMENT,
+    evidence: PromotionEvidence | None = None,
+    decided_automatically: bool = False,
     now: datetime,
 ) -> Promotion:
     """Caller holds the write lock. Every check below is made *inside* it.
@@ -272,6 +387,47 @@ def _allocate_locked(
             "--yes-spend-real-money` if that is genuinely intended"
         )
 
+    # --- §25.1's ladder, and §27.1's decider -------------------------------
+    #
+    # Both checks are here, inside the write lock, rather than in the wrapper.
+    # Between a check and the write a predecessor can be superseded by a
+    # concurrent allocation and an autonomy flag can be switched off; a gate
+    # read before the lock would be answering about a world that has moved.
+    if decided_automatically and not _auto_promotion_enabled(conn):
+        raise PromotionError(
+            f"autonomy.{AUTO_PROMOTION_FLAG} is disabled (§27.1 ships it false) — "
+            "an unattended promotion is rung 9's bounded autonomy and needs the "
+            "operator's standing decision. Run `mitosis set-autonomy "
+            "--auto-promotion on`."
+        )
+
+    supersedes_id: str | None = None
+    reading: EvidenceReading | None = None
+    if rung > LADDER_RUNG_CAPPED_LIVE_EXPERIMENT:
+        if evidence is None:
+            raise PromotionError(
+                f"rung {rung} requires §25.2 evidence: an expansion stands on a "
+                "predecessor's observed outcome, and this call supplied no reader"
+            )
+        predecessor = _latest_promotion_at_rung_locked(
+            conn, cell_id=cell.cell_id, rung=rung - 1
+        )
+        if predecessor is None:
+            raise PromotionError(
+                f"cell {cell.cell_id} has no rung-{rung - 1} promotion to expand — "
+                "§25.1 forbids skipping a rung ('no strategy moves directly from "
+                "synthetic success to autonomous commerce')"
+            )
+        reading = evidence.read(conn, predecessor)
+        if not reading.supports_promotion:
+            raise PromotionError(
+                f"§25.2 evidence for promotion {predecessor} reads "
+                f"'{reading.verdict}' — an expanded pilot is earned by an "
+                "observed outcome, not requested. Resolve the outstanding "
+                "forecasts (`mitosis assess`) or wait for them to resolve."
+            )
+        supersedes_id = predecessor
+
     available = pool_balance(conn, cell.book)
     if available < amount:
         raise PromotionError(
@@ -286,7 +442,7 @@ def _allocate_locked(
         currency="USD" if cell.book != Book.RESOURCE else "RESOURCE",
         transaction_type=ALLOCATION_TRANSACTION_TYPE,
         idempotency_key=f"{ALLOCATION_TRANSACTION_TYPE}:{grant_id}",
-        description=f"§25.1 rung 7 allocation against grant {grant_id}",
+        description=f"§25.1 rung {rung} allocation against grant {grant_id}",
         entries=[
             EntrySpec(
                 account_id=PROMOTION_POOL,
@@ -314,8 +470,10 @@ def _allocate_locked(
             promotion_id, grant_id, request_id, proposal_id, cell_id, rung, book,
             allocated_minor_units, reality_gap_mean_brier, resolved_predictions,
             unresolved_predictions, liability_minor_units, transfer_degradation,
-            approved_by, allocated_by, reason, created_at_utc
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+            approved_by, allocated_by, reason, created_at_utc,
+            supersedes_promotion_id, decided_automatically,
+            evidence_verdict, evidence_mean_brier, evidence_resolved_predictions
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             promotion_id,
@@ -323,7 +481,7 @@ def _allocate_locked(
             grant.request_id,
             grant.proposal_id,
             cell.cell_id,
-            LADDER_RUNG_CAPPED_LIVE_EXPERIMENT,
+            rung,
             cell.book.value,
             amount,
             scores.get("mean_brier"),
@@ -334,6 +492,11 @@ def _allocate_locked(
             allocated_by,
             reason,
             now.isoformat(),
+            supersedes_id,
+            1 if decided_automatically else 0,
+            reading.verdict if reading is not None else None,
+            reading.mean_brier if reading is not None else None,
+            reading.resolved_predictions if reading is not None else None,
         ),
     )
 
@@ -357,7 +520,8 @@ def _allocate_locked(
         metadata={
             "promotion_id": promotion_id,
             "grant_id": grant_id,
-            "rung": LADDER_RUNG_CAPPED_LIVE_EXPERIMENT,
+            "rung": rung,
+            "decided_automatically": decided_automatically,
             "book": cell.book.value,
             "allocated_minor_units": amount,
             "approved_by": request.decided_by,
@@ -381,6 +545,48 @@ def _real_spending_enabled(conn: sqlite3.Connection) -> bool:
         "SELECT real_spending_enabled FROM operator_state WHERE id = 1"
     ).fetchone()
     return bool(row["real_spending_enabled"]) if row is not None else False
+
+
+def _auto_promotion_enabled(conn: sqlite3.Connection) -> bool:
+    """§27.1's `auto_promotion`, read straight from the operator row.
+
+    Read directly rather than through `tool_registry.autonomy_enabled` for the
+    same reason `_real_spending_enabled` is: `tool_registry` sits *above* this
+    module, and a gate that imported upward to ask whether it may run would put
+    the safety check on the wrong side of the dependency arrow.
+    """
+    row = conn.execute(
+        "SELECT auto_promotion_enabled FROM operator_state WHERE id = 1"
+    ).fetchone()
+    return bool(row["auto_promotion_enabled"]) if row is not None else False
+
+
+def _latest_promotion_at_rung_locked(
+    conn: sqlite3.Connection, *, cell_id: str, rung: int
+) -> str | None:
+    """This Cell's most recent promotion at `rung` that nothing has expanded yet.
+
+    The `supersedes_promotion_id IS NULL` half is what stops one successful
+    experiment being expanded repeatedly — §23.4's splitting attack run upward,
+    many "expansions" of a single piece of evidence rather than one. Migration
+    0030's unique index is the real enforcement; this makes the common case
+    pick an unused predecessor instead of failing on the write.
+    """
+    row = conn.execute(
+        """
+        SELECT p.promotion_id
+        FROM promotions p
+        WHERE p.cell_id = ? AND p.rung = ?
+          AND NOT EXISTS (
+              SELECT 1 FROM promotions c
+              WHERE c.supersedes_promotion_id = p.promotion_id
+          )
+        ORDER BY p.created_at_utc DESC, p.promotion_id DESC
+        LIMIT 1
+        """,
+        (cell_id, rung),
+    ).fetchone()
+    return row["promotion_id"] if row is not None else None
 
 
 def transfer_degradation(conn: sqlite3.Connection, cell_id: str) -> float | None:
@@ -448,6 +654,15 @@ def _row_to_promotion(row: sqlite3.Row) -> Promotion:
         allocated_by=row["allocated_by"],
         reason=row["reason"],
         created_at_utc=datetime.fromisoformat(row["created_at_utc"]),
+        supersedes_promotion_id=row["supersedes_promotion_id"],
+        decided_automatically=bool(row["decided_automatically"]),
+        evidence_verdict=row["evidence_verdict"],
+        evidence_mean_brier=row["evidence_mean_brier"],
+        evidence_resolved_predictions=(
+            None
+            if row["evidence_resolved_predictions"] is None
+            else int(row["evidence_resolved_predictions"])
+        ),
     )
 
 

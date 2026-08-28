@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from typing import Protocol
 from datetime import datetime, timedelta, timezone
 
 from . import (
@@ -146,6 +147,24 @@ class TickResult:
 
 
 # --- epochs ------------------------------------------------------------------
+
+
+class PromotionSweeper(Protocol):
+    """Climbs §25.1's ladder unattended. Implemented by
+    `autopromotion.EvidencePromoter` (ADR-063).
+
+    Inverted rather than imported: `promotion` imports *this* module, and
+    `outcome` imports `promotion`, so an engine that needs both sits strictly
+    above the scheduler. Same shape as `sweeper.ExternalOperationChecker`.
+
+    Returns a detail string when it did something, `None` when it did nothing —
+    so a tick that swept and found no work reads identically to one with no
+    sweeper wired, which is what keeps the golden run stable.
+    """
+
+    def sweep(
+        self, conn: sqlite3.Connection, *, now: datetime | None = None
+    ) -> str | None: ...
 
 
 def _record_epoch_start_locked(conn: sqlite3.Connection, epoch_number: int) -> datetime:
@@ -455,6 +474,7 @@ def tick(
     provider: providers.ModelProvider,
     model: str,
     max_cells: int | None = None,
+    promoter: "PromotionSweeper | None" = None,
 ) -> TickResult:
     """Run one epoch's scheduled wakes, if the guards allow it.
 
@@ -491,6 +511,7 @@ def tick(
         return _run_tick(
             conn, tick_id=tick_id, epoch_number=epoch_number, started=started,
             provider=provider, model=model, max_cells=max_cells,
+            promoter=promoter,
         )
     except Exception as exc:
         _mark_crashed(conn, tick_id=tick_id, exc=exc)
@@ -506,6 +527,7 @@ def _run_tick(
     provider: providers.ModelProvider,
     model: str,
     max_cells: int | None,
+    promoter: "PromotionSweeper | None" = None,
 ) -> TickResult:
     """The body of a tick, with its record already open."""
     # §23.3's two expiry clocks, and **the placement is the decision** (ADR-040).
@@ -585,6 +607,22 @@ def _run_tick(
         conn, provider=provider, model=model, proposal_sink=approval.QueueSink()
     )
 
+    # §25.1 unattended, and **the placement is the mirror of the expiry sweep
+    # above** (ADR-063). That one runs *before* `_guard` because it only ever
+    # removes permission. This one *grants* it — capital moves and a Cell is
+    # woken — so it must sit behind every guard the halt path controls. A
+    # promotion that survived a halt would be the exact inversion the expiry
+    # comment warns about, run the other way.
+    #
+    # After the wakes rather than before, so a proposal made this tick can be
+    # approved and funded in the same one. That is the whole point of an
+    # unattended engine, and it costs nothing in safety: §23.1's `batchable`
+    # predicate and the §25.2 evidence gate are what bound it, and neither
+    # cares how recently the proposal appeared.
+    promoted_detail: str | None = None
+    if promoter is not None:
+        promoted_detail = promoter.sweep(conn)
+
     spend_after = real_spend_breaker._settled_spend_since(conn, datetime(1970, 1, 1, tzinfo=timezone.utc))
 
     # Checked *after* the wakes, not before: the alarm's job is to stop the
@@ -601,7 +639,10 @@ def _run_tick(
             conn.execute("ROLLBACK")
             raise
 
-    ran_detail = f"{len(results)} deliberation(s){swept}"
+    # Appended rather than replacing, so a tick that promoted still reports the
+    # deliberations that produced the proposals it promoted.
+    promoted = f"; {promoted_detail}" if promoted_detail else ""
+    ran_detail = f"{len(results)} deliberation(s){swept}{promoted}"
     _finish_tick(
         conn, tick_id=tick_id, outcome=TickOutcome.RAN, detail=ran_detail,
         cells_woken=len(results), spend_before=spend_before, spend_after=spend_after,

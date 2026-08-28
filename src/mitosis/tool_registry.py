@@ -308,6 +308,14 @@ _AUTONOMY_COLUMNS = {
     "external_message": "external_message_enabled",
     "real_commerce": "real_commerce_enabled",
     "real_spending": "real_spending_enabled",
+    # Not a tool or a channel — this one gates a *decider* rather than a
+    # capability: whether the colony may issue a §25 promotion with no operator
+    # in the loop (§25.1 rung 9, "bounded autonomy"). It sits in this map so
+    # `set-autonomy` stays the single place §27.1's block is edited, which is
+    # what stopped `real_spending` and the rest drifting apart. It is absent
+    # from both REGISTRYs, so `test_no_autonomy_flag_gates_more_than_one_
+    # capability` neither sees it nor should.
+    "auto_promotion": "auto_promotion_enabled",
 }
 
 

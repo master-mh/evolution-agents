@@ -21,6 +21,7 @@ from pathlib import Path
 from . import (
     approval,
     auditor,
+    autopromotion,
     channel_registry,
     clock,
     context,
@@ -1067,6 +1068,7 @@ def cmd_set_autonomy(args: argparse.Namespace) -> None:
         "external_publish",
         "external_message",
         "real_commerce",
+        "auto_promotion",
     ):
         value = getattr(args, flag)
         if value is None:
@@ -1077,7 +1079,7 @@ def cmd_set_autonomy(args: argparse.Namespace) -> None:
     if all(
         getattr(args, f) is None
         for f in (
-            "real_spending", "public_web_read", "browser_control",
+            "real_spending", "auto_promotion", "public_web_read", "browser_control",
             "external_publish", "external_message", "real_commerce",
         )
     ):
@@ -2194,9 +2196,24 @@ def cmd_allocate(args: argparse.Namespace) -> None:
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
 
-    result = promotion.allocate(
-        conn, grant_id=args.grant_id, allocated_by=args.by, reason=args.reason
+    # The rung is *derived*, never typed. §23.5 warns the review path "will be
+    # optimised against", and an operator flag naming a rung would be the one
+    # place a person could hand a Cell an expansion its evidence had not earned
+    # — the same reasoning that keeps `ExperimentSpec` rung-free.
+    rung, why = autopromotion.entitled_rung_for(
+        conn,
+        cell_id=promotion_cell_of(conn, args.grant_id),
+        evidence=outcome.AssessmentEvidence(),
     )
+    result = promotion.allocate(
+        conn,
+        grant_id=args.grant_id,
+        allocated_by=args.by,
+        reason=args.reason,
+        rung=rung,
+        evidence=outcome.AssessmentEvidence(),
+    )
+    print(f"§25.1 rung {rung}: {why}")
     print(f"Allocated {result.allocated_minor_units} {result.book.value} to {result.cell_id}")
     print(f"  promotion: {result.promotion_id}  (§25.1 rung {result.rung})")
     print(f"  approved by {result.approved_by}, allocated by {result.allocated_by}")
@@ -2225,6 +2242,47 @@ def cmd_allocate(args: argparse.Namespace) -> None:
         print()
         print(f"  Cell woken: {deliberation.WAKE_CAPITAL_ALLOCATION} ({result.wake_key})")
         print("  Run `mitosis run-wakes` to let it deliberate on its new balance.")
+    conn.close()
+
+
+def promotion_cell_of(conn, grant_id: str) -> str:
+    """The Cell a grant belongs to, for deriving the rung before allocating."""
+    grant = approval.get_grant(conn, grant_id)
+    if grant is None:
+        raise CliError(f"no such grant: {grant_id}")
+    return grant.cell_id
+
+
+def cmd_auto_promote(args: argparse.Namespace) -> None:
+    """§25.1 climbed unattended (ADR-063). Bounded by §27.1's `auto_promotion`
+    flag, §23.1's `batchable` predicate and the `promotion_pool` ceiling."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    result = autopromotion.sweep(
+        conn, approve_batchable=not args.no_approve, limit=args.limit
+    )
+    if not result.ran:
+        print(result.detail)
+        print()
+        print("  Turn it on with: mitosis set-autonomy --auto-promotion on")
+        conn.close()
+        return
+
+    print(result.detail)
+    if result.approved:
+        print()
+        print(f"  §23.1 batch {result.batch_id}: approved {len(result.approved)} "
+              "low-tier reversible request(s)")
+    for item in result.promotions:
+        marker = "rung 8 EXPANDED PILOT" if item.rung == 8 else "rung 7"
+        print(f"    {item.cell_id}: {item.allocated_minor_units} "
+              f"{item.book.value} — §25.1 {marker}")
+        if item.evidence_verdict:
+            print(f"      evidence: {item.evidence_verdict} "
+                  f"(supersedes {item.supersedes_promotion_id})")
+    for grant_id, why in result.skipped:
+        print(f"    skipped {grant_id}: {why}")
     conn.close()
 
 
@@ -3070,6 +3128,7 @@ def build_parser() -> argparse.ArgumentParser:
         "external-publish",
         "external-message",
         "real-commerce",
+        "auto-promotion",
     ):
         autonomy_parser.add_argument(
             f"--{flag}", default=None, choices=["on", "off"],
@@ -3080,6 +3139,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="required to turn real_spending on — this removes the human from the loop",
     )
     autonomy_parser.set_defaults(func=cmd_set_autonomy)
+
+    auto_promote_parser = subparsers.add_parser(
+        "auto-promote",
+        help="climb §25.1 unattended: batch-approve and allocate (§27.1 gated)",
+    )
+    auto_promote_parser.add_argument(
+        "--no-approve", action="store_true",
+        help="allocate already-approved grants only; do not batch-approve (§23.1)",
+    )
+    auto_promote_parser.add_argument(
+        "--limit", type=int, default=None,
+        help="stop after this many allocations",
+    )
+    auto_promote_parser.set_defaults(func=cmd_auto_promote)
 
     start_exp_parser = subparsers.add_parser(
         "start-experiment", help="begin an experiment (SPEC.md §9.2, §25.1)"

@@ -41,15 +41,35 @@ been resolved. Note what this verdict does and does not accuse: resolution is
 the operator's job, so a withheld outcome is a defect in the *evidence*, not a
 finding against the Cell.
 
-**Nothing here promotes anything, and nothing here kills anything.** The verdict
-is a sentence for a human to read. §25.1 rung 8 ("expanded pilot") means removing
-one of the two humans standing in every allocation, and that is its own argued
-step — `test_no_kernel_path_acts_on_an_assessment` costs an explicit edit to
-whoever takes it. The kill direction is closed harder: §10.5 requires that
+**This module judges; it never acts (ADR-063).** The two directions are no
+longer symmetric, and the asymmetry is the point.
+
+**Upward, this is now consumed.** `promotion.py` gates a rung-8 "expanded pilot"
+on a `SUPPORTS_PROMOTION` verdict for the predecessor. It reaches that verdict
+through `PromotionEvidence` — a seam this module implements, because `outcome`
+imports `promotion` and the dependency cannot run both ways. What crosses the
+seam is `EvidenceReading`, four fields wide, and not `Assessment`'s twenty: a
+gate handed the full evidence list is a gate a later edit can quietly re-point
+at revenue, and §10.3 ("Explorers need no immediate revenue") makes that the one
+dimension most likely to look reasonable and select exactly the wrong Cells.
+
+This module still cannot *start* anything. It answers a closed question about a
+named promotion; it never scans for candidates, and it does not know whether the
+caller is a person or a timer.
+
+**Downward, nothing has changed and nothing may.** §10.5 requires that
 "estimated negative EV alone must not kill a Cell" without strong evidence *and*
 an independent Auditor concurring, and no Auditor Cell exists (§23.2's standing
-hole), so a `DOES_NOT_SUPPORT_PROMOTION` verdict is structurally unreachable from
-`death.py`.
+hole), so a `DOES_NOT_SUPPORT_PROMOTION` verdict must stay structurally
+unreachable from `death.py`. `test_no_kernel_path_acts_on_an_assessment` still
+enforces exactly that, and opening the upward direction did not loosen it —
+`death.py` is named in it individually.
+
+**The correction this slice carried.** The paragraph replaced here claimed rung 8
+"means removing one of the two humans standing in every allocation". §25.1 reads
+`7. Tiny capped live experiment` -> `8. Expanded pilot` -> `9. Bounded autonomy`:
+the 7 -> 8 delta is *scale*, and *autonomy* appears only at rung 9. Whether a
+person is in the loop is §27.1's `auto_promotion` flag, on its own axis.
 
 **Derived, never stored.** There is no `assessments` table and no migration.
 Every number below is recomputed from the hash-chained prediction register, the
@@ -62,7 +82,9 @@ then what was known at decision time is itself a fact. Nothing consumes one yet.
 
 Deliberately out of scope, and logged rather than dropped:
 
-    rung 8 itself             a human decides; nothing here promotes.
+    scanning for candidates   this answers about one named promotion. Finding
+                              which Cells are due is `autopromotion.py`'s job,
+                              which sits above this module.
     liability                 §13's reserve is Phase 6+, so §25.2's liability
                               figure reports unmodelled, exactly as the
                               promotion record does. A fabricated 0 would read
@@ -521,3 +543,33 @@ def _names_promotion(metadata_json: str, promotion_id: str) -> bool:
 def _mean(values) -> float | None:
     present = [float(v) for v in values if v is not None]
     return sum(present) / len(present) if present else None
+
+
+# --- the §25.2 gate, as `promotion.PromotionEvidence` (ADR-063) --------------
+
+
+class AssessmentEvidence:
+    """`promotion.PromotionEvidence`, implemented over `assess`.
+
+    The inversion `sweeper.ExternalOperationChecker` /
+    `gateway.GatewayOperationChecker` established, applied to evidence: the
+    lower module (`promotion`) declares the shape it needs, the higher one
+    (`outcome`, which imports it) supplies the behaviour, and no back-edge is
+    created.
+
+    Stateless and cheap to construct. It holds no connection, because the one
+    it must read is the connection *inside the caller's write lock* — an
+    implementation that captured its own would assess a promotion against a
+    snapshot taken before the transaction that is about to consume it.
+    """
+
+    def read(
+        self, conn: sqlite3.Connection, promotion_id: str
+    ) -> "promotion.EvidenceReading":
+        assessment = assess(conn, promotion_id)
+        return promotion.EvidenceReading(
+            verdict=str(assessment.verdict),
+            supports_promotion=assessment.verdict is Verdict.SUPPORTS_PROMOTION,
+            mean_brier=assessment.observed_mean_brier,
+            resolved_predictions=assessment.forecasts_resolved_since,
+        )

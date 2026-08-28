@@ -569,30 +569,36 @@ def test_transfer_degradation_is_the_realised_reality_gap(conn):
 # --- the ladder stays where it is (§25.1, §10.5) -----------------------------
 
 
-def test_no_kernel_path_acts_on_an_assessment():
-    """§25.1 rung 8 and §10.5's death bar, both enforced structurally.
+def test_only_the_argued_consumer_acts_on_an_assessment():
+    """§25.1's ladder and §10.5's death bar, both still enforced structurally.
 
-    Two directions have to stay closed, and neither is closed by anything in
-    `outcome.py` itself — only by nothing else reaching it.
+    This test used to close *both* directions absolutely, and its docstring gave
+    the wrong reason for the upward one: it said rung 8 "means removing one of
+    the two humans standing in every allocation". §25.1 reads `7. Tiny capped
+    live experiment` -> `8. Expanded pilot` -> `9. Bounded autonomy` — the 7 -> 8
+    delta is *scale*, and *autonomy* appears only at rung 9. The forbidden list
+    below said so correctly all along ("a promotion that fires on a timer is
+    rung 9, not rung 8"), three lines under a docstring that said otherwise.
 
-    **Upward:** rung 8 ("expanded pilot") means removing one of the two humans
-    standing in every allocation. A verdict of `supports_promotion` that some
-    module read and acted on would take that step without anyone arguing for
-    it. This is the successor to ADR-027's rung-6 guarantee and ADR-029's rung-7
-    one, and like them it is meant to make the next step cost an explicit edit
-    to a named test rather than slip in as a plausible commit.
+    **Upward is now open, to exactly one named module** (ADR-063).
+    `autopromotion.py` consumes a verdict to issue a rung-8 expansion. That is
+    an argued step, and the argument is bounded: §27.1's `auto_promotion` flag,
+    §23.1's own `batchable` predicate, and the `promotion_pool` ceiling. What
+    this test now defends is that the list stays *one* module long — a second
+    consumer appearing without an ADR is the drift this was built to catch.
 
-    **Downward, and harder:** §10.5 requires that "estimated negative EV alone
-    must not kill a Cell" without strong evidence *and* an independent Auditor
-    concurring. No Auditor Cell exists (§23.2's standing hole), so
-    `death.py` must not be able to see a `does_not_support_promotion` verdict at
-    all — a kernel that culls on this would be culling on exactly the estimate
-    §10.5 names.
+    **Downward is unchanged and must stay so.** §10.5 requires that "estimated
+    negative EV alone must not kill a Cell" without strong evidence *and* an
+    independent Auditor concurring, and no Auditor Cell exists (§23.2's
+    standing hole). So no path may reach a `does_not_support_promotion` verdict
+    and a kill in the same module — including, now, the new consumer, which is
+    the first code in the kernel that acts on a verdict at all and therefore
+    the first place that inversion could appear.
     """
     source_dir = Path(__file__).resolve().parents[1] / "src" / "mitosis"
-    # The CLI reports assessments to a human, and the golden run replays one.
-    # Neither acts on a verdict.
-    allowed = {"outcome.py", "cli.py", "golden.py"}
+    # The CLI reports assessments to a human and the golden run replays one;
+    # neither acts. `autopromotion` acts, and is the one module argued for.
+    allowed = {"outcome.py", "cli.py", "golden.py", "autopromotion.py"}
 
     consumers = sorted(
         path.name
@@ -602,18 +608,48 @@ def test_no_kernel_path_acts_on_an_assessment():
     assert not consumers, (
         f"{consumers} imports the §25.2 read-back. Acting on a verdict is a step up "
         "§25.1's ladder (upward) or a §10.5 violation (downward); either way it "
-        "needs an argument, not an import"
+        "needs an argument and an ADR, not an import"
     )
 
     # Named individually, because these three are the ones where the step would
     # look most reasonable at the moment someone took it.
     for forbidden, why in (
         ("death.py", "§10.5 forbids killing on an estimate without a concurring Auditor"),
-        ("scheduler.py", "a promotion that fires on a timer is rung 9, not rung 8"),
+        (
+            "scheduler.py",
+            "a timer that read a verdict directly would be rung 9 wired in by "
+            "import; it takes an injected PromotionSweeper instead",
+        ),
         ("promotion.py", "an allocation that reads its own verdict is a self-promoting loop"),
     ):
         assert "outcome" not in _imported_modules(source_dir / forbidden), (
             f"{forbidden} must never reach the assessment: {why}"
+        )
+
+
+def test_the_unattended_engine_cannot_kill():
+    """§10.5, closed at the one module that acts on a verdict (ADR-063).
+
+    `autopromotion.py` is the first code in the kernel to read a §25.2 verdict
+    and *do* something. A verdict has two poles, and the engine is only argued
+    for one of them: `supports_promotion` funds an expanded pilot, and
+    `does_not_support_promotion` must remain inert. An engine that promoted on
+    one and culled on the other would be culling on exactly the "estimated
+    negative EV" §10.5 names, with no Auditor anywhere in the loop.
+
+    Structural, because the behavioural version of this test can only observe
+    that a kill did not happen on the inputs it happened to try.
+    """
+    source_dir = Path(__file__).resolve().parents[1] / "src" / "mitosis"
+    reached = _imported_modules(source_dir / "autopromotion.py")
+
+    for forbidden, why in (
+        ("death", "§10.5 forbids culling on an estimate without a concurring Auditor"),
+        ("displacement", "displacing on a verdict is the same kill by another route"),
+        ("lineage", "and so is refusing a lineage on one"),
+    ):
+        assert forbidden not in reached, (
+            f"autopromotion.py must not reach {forbidden}: {why}"
         )
 
 

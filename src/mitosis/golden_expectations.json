@@ -1,5 +1,5 @@
 {
-  "expectation_version": 32,
+  "expectation_version": 33,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "f23d9ad4f5f07a233fff3c82c1a72db85f83bc879055a3afdbf503305b4c3c4b",
+  "semantic_hash": "482ab8a828c70568ae37fdd88c930a960c786a5b724a658f0226b70166e82212",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -239,6 +239,7 @@
       }
     ],
     "autonomy": {
+      "auto_promotion": false,
       "browser_control": false,
       "external_message": true,
       "external_publish": true,

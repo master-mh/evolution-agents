@@ -3694,3 +3694,119 @@ number in the module is §13.4's own "exactly one".
   the read takes the latest row or the earliest, so the replay attests twice and supersedes. This is
   the third slice running where the replay was deliberately made non-degenerate; ADR-060's missed
   niche-occupancy bug is why.
+
+---
+
+## ADR-063: rung 8 is a scale step, not an autonomy step — and the claim that it was one had propagated to four files
+
+- **Status:** Accepted; migration 0030, `autopromotion.py`, `promotion.PromotionEvidence`,
+  `scheduler.PromotionSweeper`, golden expectations 32 -> 33
+- **Spec ref:** §25.1, §25.2, §25.3, §0.4, §23.1, §23.4, §23.6, §27.1, §10.3, §10.5, §12.3, §2.6,
+  §9.3, §29; ADR-026, ADR-027, ADR-029, ADR-040, ADR-041, ADR-047
+- **Context:** `promotion.allocate` only ever issued rung 7, which blocked §12.3's beta-binomial
+  **stage-conversion** posteriors — the spec's own answer for ranking inside a MAP-Elites niche, and
+  the largest remaining gap between Phase 2's selector and quality-diversity. A stage conversion
+  needs a stage to convert *to*.
+
+### The claim that had to be checked first
+
+Four places said rung 8 means removing a human: `promotion.py`, `outcome.py`, migration 0016's
+comment, and — worst — the docstring of the structural test that enforced the guarantee
+(`test_no_kernel_path_acts_on_an_assessment`). §25.1's ladder actually reads:
+
+```
+7. Tiny capped live experiment
+8. Expanded pilot
+9. Bounded autonomy
+```
+
+The 7 -> 8 delta is **scale**; the word *autonomy* appears only at rung 9, and a *pilot* is
+supervised by definition. Who acts without a human is §27.1's `autonomy:` block and §0.4's "tool by
+tool, phase by phase" — never a ladder rung. ADR-026 requires two independent confirmations for real
+money, and a human-removing rung 8 would have collapsed them into one.
+
+**The test contradicted its own docstring three lines below it**, and the forbidden list was the half
+that was right: `("scheduler.py", "a promotion that fires on a timer is rung 9, not rung 8")`. This
+is the claim-drift shape the repo keeps producing — right about direction, wrong about every
+specific, propagated unchallenged because each copy cited the others.
+
+### So the slice ships two things on two axes, and keeps them apart
+
+| axis | column | what moves it |
+|---|---|---|
+| how far up §25.1 | `rung` | a predecessor at the rung below, whose §25.2 evidence supports the expansion |
+| who decided | `decided_automatically` | §27.1's `auto_promotion` flag |
+
+`ISSUABLE_RUNGS` is `(7, 8)` and deliberately excludes 9: bounded autonomy is not a bigger cheque,
+and writing it as a rung would re-conflate exactly what this ADR separates.
+
+### The constraint went in the schema, not the module
+
+ADR-047's lesson applied directly: **a constraint has no layer.** A check in `promotion.py` binds
+callers that go through `promotion.py`, and this repo has escape hatches that do not
+(`start-experiment --rung 7` is one). Migration 0030's trigger makes three things unrepresentable
+rather than merely refused — a rung above 7 with no predecessor, a predecessor that is not the rung
+immediately below, and a predecessor belonging to **another Cell** (§29's reciprocal evidence
+farming, expressed as a foreign key pointing somewhere plausible). A unique partial index makes one
+success expandable exactly once, which is §23.4's action-splitting attack run upward.
+
+**Teeth-checking found the index untested.** `test_one_success_supports_only_one_expansion` passed
+with the index dropped, because the Python query declines to *find* an already-expanded predecessor.
+That is a good guard and not a guarantee, so it now has a second test that inserts an otherwise
+fully valid row — its own real grant, request and proposal — so nothing but the index can refuse it.
+With the index dropped that test reports `DID NOT RAISE`. Eleven of twelve mutations were caught
+first time; this was the twelfth, and it was a test passing for the wrong reason.
+
+### The seam, and why its signature is the safety property
+
+`outcome.py` computes §25.2's verdict and **imports `promotion.py`**, so the gate could not be an
+import. `promotion.PromotionEvidence` is the inversion — the same shape as
+`sweeper.ExternalOperationChecker` / `gateway.GatewayOperationChecker`. Two deliberate narrowings:
+
+- It takes a **`promotion_id`, never a `cell_id`**, so it cannot be asked the open question "how is
+  this Cell doing?", only the closed "did *this* predecessor work?". That is §9.3's move applied to
+  evidence: a signature that cannot see a general record cannot promote on a general impression.
+- What crosses is `EvidenceReading` (four fields), not `Assessment` (twenty). A gate handed the full
+  §25.2 list is one a later edit can re-point at revenue — and §10.3 ("Explorers need no immediate
+  revenue") makes that the single dimension most likely to look reasonable and select exactly the
+  wrong Cells.
+
+The scheduler needed the same treatment for the opposite reason: `promotion` imports `scheduler`, so
+an engine needing both sits strictly above it. `tick()` takes a `PromotionSweeper`; the *caller*
+supplies `autopromotion.EvidencePromoter`. The authority to allocate therefore lives with whoever
+wired the tick, not inside the timer.
+
+### The unattended engine invents no new guard
+
+`autopromotion.py` composes refusals that already existed: §27.1's `auto_promotion` flag (ships
+false), §27.1's `real_spending` (still separately required for USD_REAL, so ADR-026's two
+confirmations stay two), §23.1's own `batchable` predicate — which already interlocks with §23.4 by
+folding in cumulative lineage exposure and disqualifying on any gaming signal — the §25.2 evidence
+gate, and the `promotion_pool` ceiling no Cell can raise. An engine that runs unattended is the worst
+possible place to debut a hand-rolled guard.
+
+Its placement in the tick is the **mirror of ADR-040's expiry sweep**: that one runs *before*
+`_guard` because it only ever removes permission; this one grants it, so it sits behind every guard
+the halt path controls. It runs *after* the wakes so a proposal made this tick can be funded in it.
+
+**It cannot kill.** §10.5 forbids culling on estimated negative EV without strong evidence *and* a
+concurring Auditor, and no Auditor Cell exists. A verdict has two poles and the engine is argued for
+only one, so `test_the_unattended_engine_cannot_kill` closes `death`, `displacement` and `lineage`
+structurally at the one module that acts on a verdict at all.
+
+### What it displaced
+
+- **Rung 8 as a delegated approval policy** (the shipped reading, §23.6's own hook). Rejected: it
+  contradicts §25.1's wording, and it would have made the ladder rung and the autonomy flag the same
+  number — after which no reader could tell a bigger pilot from a smaller human.
+- **A generic `assessments` table.** Rejected on §2.5's standing grounds, and `outcome.py` had
+  already written the condition for adding one: "a table becomes worth adding when a *decision*
+  consumes an assessment". A decision now does — so the verdict is snapshotted **onto the promotion
+  that consumed it**, leaving every unconsumed assessment derived. A table would have invited storing
+  all of them and then disagreeing with the canonical derivation.
+- **A `cell_id`-keyed evidence lookup**, which reads more naturally and is the whole hazard.
+- **Auto-promotion implying real spending.** Rejected: one flag, one capability (migration 0022).
+- **Enforcing the ladder in `promotion.py` alone.** Displaced by the trigger, per ADR-047.
+- **A substring test for "promotion" in `scheduler.py`.** It tripped on the seam's own name, and was
+  loose where it mattered (`from . import promotion as p` passed it) and tight where it did not.
+  Replaced with an AST import check.

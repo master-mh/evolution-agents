@@ -1070,7 +1070,34 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #               touching the ledger, which is exactly what a declaration should
 #               look like — and `test_no_cell_reachable_module_declares_a_buyer_type`
 #               is what keeps it a *person's* declaration.
-EXPECTATION_VERSION = 32
+#
+#   32 -> 33 (§25.1's rung 8 exists, and the golden run deliberately does not
+#             reach it — ADR-063). **The entire diff is one added key**, plus the
+#             version and hash lines:
+#           (a) **`autonomy` gains `auto_promotion: false`.** §27.1's block gains
+#               its seventh flag, shipping off like every other (§0.4: "Nothing
+#               begins at real-money autonomy"). It gates a *decider* rather than
+#               a capability — whether the colony may issue a §25 promotion with
+#               no operator in the loop, which is §25.1 rung 9's bounded
+#               autonomy. It is deliberately absent from both tool and channel
+#               registries, so `test_no_autonomy_flag_gates_more_than_one_
+#               capability` neither sees it nor should.
+#           (b) **Nothing else moved, and that is the assertion.** No balance in
+#               any account in any book, no transaction, no promotion, no
+#               approval, no audit event. The scenario never turns the flag on,
+#               so `autopromotion.sweep` refuses at its first gate and the tick
+#               takes no sweeper at all. A slice that added an unattended
+#               allocation path and moved *any* money in the replay would have
+#               opened exactly the failure this file exists to catch — the
+#               golden run must never move USD_REAL, and an engine that could
+#               allocate unattended is the most plausible way it ever would.
+#           (c) **The watch this leaves.** If `promotions` ever appears in a
+#               replay with `decided_automatically: true`, or if the `autonomy`
+#               section shows `auto_promotion: true`, the scenario has begun
+#               exercising rung 9 and that must be an argued change to this file
+#               rather than a drift. The negative is the point: the mechanism
+#               ships complete and switched off.
+EXPECTATION_VERSION = 33
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

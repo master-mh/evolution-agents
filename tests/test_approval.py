@@ -12,6 +12,7 @@ import dataclasses
 import inspect
 import json
 from datetime import datetime, timedelta, timezone
+import ast
 from pathlib import Path
 
 import pytest
@@ -725,10 +726,20 @@ def test_only_the_promotion_module_consumes_a_grant():
     still listed here rather than exempted: the list is the record of who may,
     not a judgement about who is dangerous.
 
+    **The fifth loosening is ADR-063's `autopromotion.py`, and it is the first
+    that really does climb.** The other four each kept a person in the loop.
+    This one issues allocations unattended, which is rung 9's bounded autonomy
+    by §25.1's own wording — so it does not appear in `allowed` below at all.
+    It writes neither `consumed_at_utc` nor a `promotions` row; it *calls*
+    `promotion.py`, which still owns that authority exclusively. The list below
+    is therefore still four modules long, and the new capability is bounded
+    somewhere this test can point at: §27.1's `auto_promotion` flag, §23.1's
+    `batchable` predicate, and the `promotion_pool` ceiling.
+
     What it still forbids is the *next* unargued step. Only these four may write
-    a grant's `consumed_at_utc`, and nothing scheduled may reach any of them —
-    the scheduler must not import them, or "a human runs each execution" quietly
-    becomes rung 9's bounded autonomy.
+    a grant's `consumed_at_utc`, and nothing scheduled may **import** any of them
+    — an unattended path must come in through an injected seam the tick's caller
+    supplies, so that turning it on stays a decision someone made in the open.
     """
     source_dir = Path(__file__).resolve().parents[1] / "src" / "mitosis"
     allowed = {"promotion.py", "tools.py", "external_actions.py", "experiment_grants.py"}
@@ -748,11 +759,30 @@ def test_only_the_promotion_module_consumes_a_grant():
 
     # The scheduler is the specific module that must never gain it: it is the
     # one that runs while nobody is watching.
+    #
+    # **Loosened a fifth time, and narrowly** (ADR-063). This was a substring
+    # test for "promotion" anywhere in the source, which the injected
+    # `PromotionSweeper` seam trips on its own name. Two reasons it is now an
+    # import check instead, and the second is why the old form had to go rather
+    # than be worked around: a substring test fails on the word appearing in a
+    # comment, and *passes* on `from . import promotion as p`. It was loose in
+    # the direction that matters and tight in the direction that does not.
+    #
+    # What must stay true is unchanged: the scheduler holds no path to the
+    # promotion modules. `tick()` takes a `PromotionSweeper` and calls it; the
+    # *caller* supplies `autopromotion.EvidencePromoter`, so the authority to
+    # allocate lives with whoever wired the tick, not inside the timer. That is
+    # the same inversion as `sweeper.ExternalOperationChecker`, and it is what
+    # keeps §27.1's `auto_promotion` flag the thing that decides — a flag the
+    # scheduler cannot read and cannot set.
     scheduler_source = (source_dir / "scheduler.py").read_text()
-    assert "promotion" not in scheduler_source, (
-        "scheduler.py must not reach the promotion path — an allocation that fires "
-        "on a timer is rung 9 (bounded autonomy), not rung 7"
-    )
+    scheduler_imports = _imports_of(source_dir / "scheduler.py")
+    for forbidden in ("promotion", "autopromotion", "outcome"):
+        assert forbidden not in scheduler_imports, (
+            f"scheduler.py must not import {forbidden} — an allocation that fires "
+            "on a timer is rung 9 (bounded autonomy), and it may only reach one "
+            "through an injected PromotionSweeper the caller supplies"
+        )
     # Same reasoning for the tool executor, and one degree sharper: a fetch that
     # fires on a timer is an unattended process reaching the public internet.
     # (`tools` imports `scheduler`, not the reverse — this pins that direction.)
@@ -1157,3 +1187,22 @@ def test_a_grant_expiry_moves_no_money(conn):
         for account in accounts
     }
     assert after == before
+
+
+def _imports_of(path: Path) -> set[str]:
+    """Module names `path` imports, including inside functions.
+
+    An AST walk rather than a substring search, for the reason the fifth
+    loosening above spells out: a substring test cries wolf on prose and stays
+    silent on an aliased import.
+    """
+    imported: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[-1] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imported.update(node.module.split("."))
+            if node.level:
+                imported.update(alias.name for alias in node.names)
+    return imported

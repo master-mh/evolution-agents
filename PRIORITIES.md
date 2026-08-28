@@ -220,12 +220,22 @@
   `approval_request`, and these are about a **genome** and a **genome pair**.
   *Disproved by:* any §13.3 or §13.4 judgment recorded without a probability, or phrased by the Cell
   it is about.
-- [ ] **Phase 2's selector is honest but it is not yet quality-diversity.** Three measurable axes of
-  five, a **three**-dimensional archive (ADR-062), and **no elite per niche** — which is now the
-  largest remaining gap between this and MAP-Elites. §12.3's Thompson posteriors are the spec's own
-  answer for ranking inside a niche and they need stage *conversions*; `promotion.allocate` only ever
-  issues rung 7, so **the ladder's next rung is the gating build**, not the posteriors. Also still
-  needed: §11.2's independent-adoption record, and the Auditor path above.
+- [x] **§25.1's rung 8 — DONE** (2026-08-28), ADR-063, migration 0030, golden 32 -> 33. **The
+  gating build is cleared: `promotion.allocate` issues rung 8, so §12.3's stage conversions exist.**
+  The slice began by disproving its own brief — four files (including the docstring of the test
+  enforcing the guarantee) said rung 8 "means removing a human"; §25.1's 7 -> 8 delta is *scale*, and
+  *autonomy* appears only at rung 9. Two axes now: `rung` and `decided_automatically`. The ladder is
+  enforced by migration 0030's trigger rather than by `promotion.py` (ADR-047), including a
+  same-Cell check that is §29's reciprocal evidence farming as a plausible-looking foreign key.
+  Teeth-checked twelve ways; the twelfth found a test passing for the wrong reason.
+- [ ] **§12.3's beta-binomial stage-conversion posteriors — now unblocked and the front of Phase 2.**
+  Rung-7 promotions that converted to rung 8 are the binary the posteriors need, and ADR-063 made
+  that conversion recordable and distinguishable (`supersedes_promotion_id`,
+  `decided_automatically`). §12.3 also names expected net value if successful, expected time to
+  conversion, probability of reproducibility and probability of large loss — and the spec permits
+  starting with the beta-binomial alone, provided the schema allows hierarchical/non-stationary
+  models later. Still needed alongside: **no elite per niche**, and §11.2's independent-adoption
+  record.
   *Disproved by:* anything ranking Cells or proposals by a single scalar combining novelty with
   anything else.
 - [x] **Identical wake reason — TESTED, CONFIRMED, REMEDY REFUSED** (2026-08-27), ADR-055. Varying it
