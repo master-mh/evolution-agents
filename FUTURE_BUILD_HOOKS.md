@@ -1476,3 +1476,27 @@ actually queued for building — this file is memory, not a backlog to work thro
   without bins on one, so they are different niches and a genome *moves* when its first payment
   arrives. That is §12.2's rebinning working as specified, but it means niche occupancy is not
   stable over time — worth remembering before anything caches it or reads a trend from it.
+
+<!-- 2026-08-28, ADR-062 (the declared buyer type) -->
+- **A dominant-segment rule for `buyer_type` needs a threshold nobody has chosen.** A genome whose
+  buyers span two segments abstains, permanently and by design. In a real colony most businesses have
+  a dominant segment, and "80% of buyers" or "most payments by value" would both be defensible — and
+  both are numbers invented here rather than taken from a clause. `novelty.py` currently contains
+  exactly one number, §13.4's "exactly one". Keep it that way until a clause or a measurement says
+  otherwise.
+- **`buyer_type` could be guessed from the channel a party was contacted on, and must not be.**
+  §21.2's registry shares the salt with the inbound key, so the join genuinely exists: a party
+  contacted through `email` versus a machine endpoint looks like evidence. It is a guess wearing a
+  measurement's clothes, and no structural test prevents it — only the abstention reasons and
+  ADR-062 stand against it.
+- **The attestation has no expiry, and a buyer's type can change.** A small business acquired by an
+  enterprise is a real event, and the record will keep saying `small_business` until somebody
+  re-attests. Latest-wins handles the correction once someone notices; nothing prompts them. §17.2's
+  wake reasons have no "attestation is stale" and inventing one would be a timer nobody asked for.
+- **Attestations are not shown to Cells, and nobody has decided whether they should be.** §15.1's
+  context does not carry "your buyers are enterprises". It plausibly should — it is a fact about the
+  Cell's own market — but the digest must never reach a Cell (ADR-061), so the *aggregate* would have
+  to be passed without the parties. Worth a decision, not a default.
+- **`counterparty.py` is now two things: the key primitive, and the attestation store.** Still
+  coherent — the module is "the counterparty, and what is recorded under it" — but a third
+  responsibility should trigger a split rather than a third section.

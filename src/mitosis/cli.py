@@ -24,6 +24,7 @@ from . import (
     channel_registry,
     clock,
     context,
+    counterparty,
     db,
     death,
     deliberation,
@@ -1425,6 +1426,74 @@ def cmd_set_rights(args: argparse.Namespace) -> None:
     print()
     print("  Nothing was rewritten. Artifacts keep the rights they were born with;")
     print("  the export gate reads the position in force (`mitosis artifact <id>`).")
+    conn.close()
+
+
+def cmd_set_buyer_type(args: argparse.Namespace) -> None:
+    """Classify a buyer. Operator-only (§12.1, §0.3; ADR-062).
+
+    The counterparty is named here and **stored only as a salted hash** (§16.3),
+    the same digest `record-revenue --counterparty` writes. Nothing about the
+    party survives this command except the ability to recognise them again.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    try:
+        attestation = counterparty.attest_buyer_type(
+            conn,
+            counterparty=args.counterparty,
+            # `--withdraw` asserts no position, carrying its own basis (ADR-041).
+            buyer_type=None if args.withdraw else args.type,
+            basis=args.basis,
+            attested_by=args.by,
+        )
+    except counterparty.CounterpartyError as exc:
+        raise CliError(str(exc)) from exc
+
+    if attestation.buyer_type is None:
+        print("Withdrew the buyer type for that counterparty.")
+        print("  The party is now unclassified — §12.1's dimension abstains for")
+        print("  any genome they paid, rather than falling back to a default bin.")
+    else:
+        print(f"Attested buyer type: {attestation.buyer_type}")
+    print(f"  by:    {attestation.attested_by}")
+    print(f"  basis: {attestation.basis}")
+    print("  the counterparty itself was not stored (§16.3)")
+    conn.close()
+
+
+def cmd_buyers(args: argparse.Namespace) -> None:
+    """Buyer types in force, and the record of how they changed."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    if args.history:
+        rows = counterparty.buyer_history(conn)
+        if not rows:
+            print("No buyer attestations. §12.1's `buyer_type` abstains everywhere.")
+            conn.close()
+            return
+        print(f"Every attestation, newest first ({len(rows)}). Nothing is removed (§3.6).")
+        for a in rows:
+            shown = a.buyer_type or "(withdrawn)"
+            print(f"  {a.attested_at_utc}  {a.counterparty_hash[:12]}…  {shown}")
+            print(f"      by {a.attested_by} — {a.basis}")
+        conn.close()
+        return
+
+    positions = counterparty.current_buyer_types(conn)
+    if not positions:
+        print("No buyer types established.")
+        print("§12.1's `buyer_type` cannot be derived — a digest gives equality, never")
+        print("identity (§16.3). `mitosis set-buyer-type --counterparty <who> ...` to")
+        print("declare one; the party is hashed, never stored.")
+        conn.close()
+        return
+    named = {d: b for d, b in positions.items() if b is not None}
+    print(f"Buyer types in force ({len(named)} of {len(positions)} party/parties) — §12.1")
+    for digest, bin_ in sorted(positions.items()):
+        print(f"  {digest[:12]}…  {bin_ or '(withdrawn)'}")
     conn.close()
 
 
@@ -3130,6 +3199,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     set_rights_parser.add_argument("--by", default="operator", help="who is attesting")
     set_rights_parser.set_defaults(func=cmd_set_rights)
+
+    set_buyer_parser = subparsers.add_parser(
+        "set-buyer-type",
+        help="classify a buyer for §12.1's archive (operator-only; ADR-062)",
+    )
+    set_buyer_parser.add_argument(
+        "--counterparty", required=True,
+        help="who paid, as you know them. Stored only as a salted hash (§16.3) — "
+             "the same digest record-revenue writes.",
+    )
+    buyer_position = set_buyer_parser.add_mutually_exclusive_group(required=True)
+    buyer_position.add_argument(
+        "--type", choices=list(counterparty.BUYER_TYPES),
+        help="§12.1's four segments",
+    )
+    buyer_position.add_argument(
+        "--withdraw", action="store_true",
+        help="assert no position, superseding an earlier one. Still needs a basis: "
+             "a retraction leaves *why* in the record where a flag leaves an absence.",
+    )
+    set_buyer_parser.add_argument(
+        "--basis", required=True,
+        help="how you know — the invoice, the contract, the conversation. A buyer "
+             "type is a selection input, and an unexplained one fabricates fitness.",
+    )
+    set_buyer_parser.add_argument("--by", default="operator", help="who is attesting")
+    set_buyer_parser.set_defaults(func=cmd_set_buyer_type)
+
+    buyers_parser = subparsers.add_parser(
+        "buyers", help="buyer types in force, and the record of how they changed"
+    )
+    buyers_parser.add_argument(
+        "--history", action="store_true", help="every attestation, including superseded ones"
+    )
+    buyers_parser.set_defaults(func=cmd_buyers)
 
     rights_parser = subparsers.add_parser(
         "rights", help="rights positions in force, and the record of how they changed"

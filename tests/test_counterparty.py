@@ -14,6 +14,7 @@ Every test is named for the property it defends. Three themes:
   because a missing key could be the second payment.
 """
 
+import ast
 import hashlib
 import json
 import re
@@ -497,4 +498,326 @@ def test_the_archive_gains_a_dimension_when_a_buyer_is_keyed(conn):
     assert novelty.archive(conn).measured_dimensions == (
         "novelty_distance",
         "revenue_recurrence",
+    )
+
+
+# --- §12.1's third dimension: declared, with its declarer (ADR-062) -----------
+
+SRC = Path(novelty.__file__).parent
+
+#: The only modules that may declare a buyer type: the operator's CLI, the
+#: golden run (which drives an operator's actions in a replay), and the module
+#: that owns the table. Mirrors `test_rights.ATTESTATION_WRITERS`.
+BUYER_TYPE_WRITERS = {"cli.py", "golden.py", "counterparty.py"}
+
+
+def _attest(conn, party, buyer_type, basis="their signed contract", by="operator"):
+    return counterparty.attest_buyer_type(
+        conn, counterparty=party, buyer_type=buyer_type, basis=basis, attested_by=by
+    )
+
+
+def _buyer_type_of(conn, cell):
+    return next(
+        d for d in novelty.descriptors(conn, _genome_of(conn, cell))
+        if d.dimension == "buyer_type"
+    )
+
+
+def test_no_cell_reachable_module_declares_a_buyer_type():
+    """§0.3, structurally: a Cell may explain a result, never define one.
+
+    A buyer type decides which §12.1 niche a genome occupies, so it is a
+    selection input — precisely the kind of canonical fact §23.5 warns a Cell
+    will optimise if it can reach it. An AST walk over *every* module rather
+    than a hand-picked list of Cell-reachable ones, so the next module cannot
+    quietly fall outside the claim. Same shape as
+    `test_no_cell_reachable_module_writes_an_attestation`.
+    """
+    offenders = []
+    for path in sorted(SRC.glob("*.py")):
+        if path.name in BUYER_TYPE_WRITERS:
+            continue
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "attest_buyer_type"
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                sql = " ".join(node.value.upper().split())
+                if "BUYER_ATTESTATIONS" in sql and "INSERT" in sql:
+                    offenders.append(f"{path.name}:{node.lineno} (raw INSERT)")
+    assert not offenders, (
+        "only a person may declare a buyer type (§0.3); found: " + ", ".join(offenders)
+    )
+
+
+def test_no_module_updates_or_deletes_a_buyer_attestation():
+    """§3.6 — the record is append-only, and a withdrawal is a new row.
+
+    Walks `counterparty.py` too: the guarantee is about the table, so the module
+    that owns it is the one most worth checking.
+    """
+    offenders = []
+    for path in sorted(SRC.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            sql = " ".join(node.value.upper().split())
+            if "UPDATE BUYER_ATTESTATIONS" in sql or "DELETE FROM BUYER_ATTESTATIONS" in sql:
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert not offenders, (
+        "buyer_attestations is append-only (§3.6); found: " + ", ".join(offenders)
+    )
+
+
+def test_the_buyer_type_bins_are_one_rule(conn):
+    """§12.1's four bins, stated in Python and in the schema, pinned together.
+
+    The generic `dimension`/`value` judgments table this displaced could not
+    state this constraint at all, which is most of the reason it was refused.
+    Built from the migration's own text so a change to either side that is not
+    made to the other fails here.
+    """
+    text = (SRC / "migrations" / "0029_buyer_attestation.sql").read_text()
+    match = re.search(r"buyer_type\s+TEXT (CHECK \(buyer_type IS NULL.*?\n *\)\))", text, re.S)
+    assert match, "migration 0029 no longer declares a CHECK on buyer_type"
+
+    probe = db.connect()
+    probe.execute(f"CREATE TABLE probe (buyer_type TEXT {match.group(1)})")
+    for candidate in [None, *counterparty.BUYER_TYPES, "consumer", "ENTERPRISE", "", "startup"]:
+        try:
+            probe.execute("INSERT INTO probe VALUES (?)", (candidate,))
+            accepted = True
+        except sqlite3.IntegrityError:
+            accepted = False
+        expected = candidate is None or candidate in counterparty.BUYER_TYPES
+        assert accepted is expected, f"{candidate!r}: schema {accepted}, BUYER_TYPES {expected}"
+    probe.close()
+
+
+def test_attesting_a_party_who_never_paid_is_refused(conn):
+    """The check a foreign key would have been, and the failure it prevents.
+
+    A counterparty is a value on payments, not a row, so nothing can be
+    referenced. Without this check a mistyped party produces a *silent no-op*: a
+    valid attestation matching no payment, moving no descriptor, and reporting
+    success — the hardest kind of mistake to notice.
+    """
+    with pytest.raises(counterparty.CounterpartyError, match="no payment has been recorded"):
+        _attest(conn, "stranger@example.com", "enterprise")
+
+
+def test_a_buyer_type_needs_a_basis_and_a_declarer(conn):
+    """An unexplained selection input is a fabricated fitness signal.
+
+    `revenue.record_revenue` refuses an unattributed payment in the same words
+    and for the same reason. The declarer is §0.3's half: a person, not a Cell.
+    """
+    cell = _cell(conn, "a")
+    _earn(conn, cell, "invoice-1", PARTY)
+    with pytest.raises(counterparty.CounterpartyError, match="basis"):
+        _attest(conn, PARTY, "enterprise", basis="   ")
+    with pytest.raises(counterparty.CounterpartyError, match="who made it"):
+        _attest(conn, PARTY, "enterprise", by="  ")
+    with pytest.raises(counterparty.CounterpartyError, match="§12.1"):
+        _attest(conn, PARTY, "startup")
+
+
+def test_an_attestation_does_not_store_the_party(conn):
+    """§16.3 again, on the second path that now takes a counterparty by name.
+
+    ADR-061 proved this for `record_revenue`. A new operator-facing entry point
+    that takes the party as a string is exactly where that guarantee would be
+    lost, so the whole-database scan is repeated rather than assumed.
+    """
+    cell = _cell(conn, "a")
+    _earn(conn, cell, "invoice-1", PARTY)
+    _attest(conn, PARTY, "enterprise", basis="the invoice header")
+
+    needles = {PARTY, PARTY.casefold(), "example.com"}
+    tables = [
+        r["name"] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    ]
+    for table in tables:
+        for row in conn.execute(f"SELECT * FROM {table}").fetchall():  # noqa: S608
+            for value in tuple(row):
+                if isinstance(value, str):
+                    for needle in needles:
+                        assert needle not in value, f"{needle!r} leaked into {table}"
+
+
+def test_the_latest_attestation_wins_and_the_earlier_one_survives(conn):
+    """ADR-041's supersession, by insertion order rather than wall clock.
+
+    Two attestations inside one second must still have one answer, and a replay
+    must reach the same one — which `attested_at_utc` cannot promise and `rowid`
+    can.
+    """
+    cell = _cell(conn, "a")
+    _earn(conn, cell, "invoice-1", PARTY)
+    _attest(conn, PARTY, "small_business", basis="first impression")
+    _attest(conn, PARTY, "enterprise", basis="their signed MSA")
+
+    digest = counterparty.hash_of(conn, PARTY)
+    assert counterparty.current_buyer_types(conn) == {digest: "enterprise"}
+    assert [a.buyer_type for a in counterparty.buyer_history(conn)] == [
+        "enterprise", "small_business",
+    ]
+    assert _buyer_type_of(conn, cell).bin == "enterprise"
+
+
+def test_a_withdrawal_leaves_why_in_the_record(conn):
+    """§3.6: a retraction is a row, not a flag.
+
+    A `revoked` column would leave an absence where the reason should be. It
+    also has to be distinguishable from *never attested* — somebody looking and
+    declining to say is a different fact from nobody looking — and the two
+    abstain with different reasons.
+    """
+    cell = _cell(conn, "a")
+    _earn(conn, cell, "invoice-1", PARTY)
+    _attest(conn, PARTY, "enterprise")
+    _attest(conn, PARTY, None, basis="the MSA turned out to be a reseller's")
+
+    digest = counterparty.hash_of(conn, PARTY)
+    assert counterparty.current_buyer_types(conn) == {digest: None}
+    assert counterparty.buyer_history(conn)[0].basis.startswith("the MSA turned out")
+
+    found = _buyer_type_of(conn, cell)
+    assert found.bin is None
+    assert "withdrawn" in found.reason
+
+
+def test_one_segment_across_every_buyer_is_measured(conn):
+    """The measured case: every buyer keyed, attested, and of one segment."""
+    cell = _cell(conn, "a")
+    _earn(conn, cell, "invoice-1", "alice@example.com")
+    _earn(conn, cell, "invoice-2", "bob@example.com")
+    _attest(conn, "alice@example.com", "enterprise")
+    _attest(conn, "bob@example.com", "enterprise")
+
+    found = _buyer_type_of(conn, cell)
+    assert found.bin == "enterprise"
+    assert found.measurement is novelty.Measurement.MEASURED
+
+
+def test_an_unattested_buyer_abstains_rather_than_defaulting(conn):
+    """§12.1's bin is a claim about every buyer, not the ones on record.
+
+    Taking the attested majority would be a threshold nobody chose, and a wrong
+    bin is worse than a stated absence because only the absence is visible.
+    """
+    cell = _cell(conn, "a")
+    _earn(conn, cell, "invoice-1", "alice@example.com")
+    _earn(conn, cell, "invoice-2", "bob@example.com")
+    _attest(conn, "alice@example.com", "enterprise")
+
+    found = _buyer_type_of(conn, cell)
+    assert found.bin is None
+    assert found.measurement is novelty.Measurement.UNMEASURABLE
+    assert "1 of 2 buyer(s) have no attestation" in found.reason
+
+
+def test_an_unkeyed_payment_abstains_even_when_every_known_buyer_is_attested(conn):
+    """The ADR-061 gap reaching this dimension too.
+
+    A payment recorded without a counterparty could be from a buyer in a second
+    segment, so a complete set of attestations over the *keyed* buyers still does
+    not settle the bin.
+    """
+    cell = _cell(conn, "a")
+    _earn(conn, cell, "invoice-1", PARTY)
+    _earn(conn, cell, "invoice-2", None)
+    _attest(conn, PARTY, "enterprise")
+
+    found = _buyer_type_of(conn, cell)
+    assert found.bin is None
+    assert "no counterparty key" in found.reason
+
+
+def test_two_segments_abstain_and_say_it_is_permanent(conn):
+    """§12.1 has no bin for a genome selling into two segments, and none is invented.
+
+    A dominant-segment rule needs a threshold nobody has chosen — the same
+    refusal `_novelty_distance` makes, where the only number in the module is
+    §13.4's own "exactly one".
+    """
+    cell = _cell(conn, "a")
+    _earn(conn, cell, "invoice-1", "alice@example.com")
+    _earn(conn, cell, "invoice-2", "bob@example.com")
+    _attest(conn, "alice@example.com", "enterprise")
+    _attest(conn, "bob@example.com", "human_consumer")
+
+    found = _buyer_type_of(conn, cell)
+    assert found.bin is None
+    assert "spans 2 segments" in found.reason.replace("its buyers span", "spans")
+    assert "no further attestation can unmix them" in found.reason
+
+
+def test_mixed_is_decided_before_incomplete(conn):
+    """The ordering is load-bearing, and this is the test that holds it.
+
+    Two segments among the attested buyers is **monotone**: no further
+    attestation can unmix them, so that abstention is permanent. Every other
+    abstention here is a gap somebody can close. Checking incompleteness first
+    would tell an operator to go and attest the remaining buyers in the one case
+    where doing so cannot possibly help.
+    """
+    cell = _cell(conn, "a")
+    _earn(conn, cell, "invoice-1", "alice@example.com")
+    _earn(conn, cell, "invoice-2", "bob@example.com")
+    _earn(conn, cell, "invoice-3", "carol@example.com")
+    _attest(conn, "alice@example.com", "enterprise")
+    _attest(conn, "bob@example.com", "machine")
+
+    found = _buyer_type_of(conn, cell)
+    assert "no further attestation can unmix them" in found.reason
+    assert "no attestation" not in found.reason
+
+
+def test_a_genome_with_no_revenue_is_unevaluable_for_buyer_type(conn):
+    """Nobody has paid, so there is no buyer to have a type (§12.1).
+
+    `UNEVALUABLE`, not `UNMEASURABLE`: this subject has no record yet, which is
+    a different fact from a dimension nothing could produce, and only one of the
+    two is something a build can fix.
+    """
+    cell = _cell(conn, "a")
+    found = _buyer_type_of(conn, cell)
+    assert found.bin is None
+    assert found.measurement is novelty.Measurement.UNEVALUABLE
+
+
+def test_the_archive_reaches_three_dimensions(conn):
+    """§12.1 asked for two or three. ADR-060 shipped one, ADR-061 two, this three.
+
+    The three arrive by three different routes — structural, observed, declared —
+    and the coordinate names only what was measured, so this is the visible proof
+    that all three routes work at once.
+    """
+    _cell(conn, "a")
+    # Shares its market and differs in one business field, so the distance is
+    # `adjacent` rather than `radical` — a genome in a market nobody has tried
+    # would bin radical and prove the same point less specifically.
+    cell = _cell(conn, "b", product="a monthly stock digest")
+    _earn(conn, cell, "invoice-1", PARTY)
+    _earn(conn, cell, "invoice-2", PARTY)
+    _attest(conn, PARTY, "enterprise")
+
+    found = novelty.archive(conn)
+    assert found.measured_dimensions == ("buyer_type", "novelty_distance", "revenue_recurrence")
+    assert found.unmeasured_dimensions == ()
+    assert any(
+        dict(niche.coordinate) == {
+            "buyer_type": "enterprise",
+            "revenue_recurrence": "repeat",
+            "novelty_distance": "adjacent",
+        }
+        for niche in found.niches
     )

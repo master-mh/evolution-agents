@@ -3597,3 +3597,100 @@ of those is a statement about the colony.
   same buyer, spelled differently**, because `repeat` is the only bin whose value depends on two
   digests being equal. This is ADR-060's own lesson: its niche-occupancy bug was uncatchable in the
   replay because the fixture could not distinguish the two behaviours.
+
+---
+
+## ADR-062: §12.1's third dimension is declared, and the mechanism for declaring it already existed
+
+- **Status:** Accepted; migration 0029, `counterparty.attest_buyer_type`, golden expectations 31 -> 32
+- **Spec ref:** §12.1, §12.2, §0.3, §16.3, §3.6, §23.5, §10.4, §13.3, §13.4, §20.3; ADR-032,
+  ADR-041, ADR-059, ADR-060, ADR-061
+- **Context:** ADR-061 established that no query can produce `buyer_type` — a salted digest gives
+  equality, never identity, and §16.3 keeps customer identity permanently outside the colony. What
+  was left was a declaration. PRIORITIES recorded the next step as "a declared `buyer_type`, with its
+  declarer recorded... **one build, three callers**; do not build a fourth bespoke declaration
+  mechanism", naming ADR-059's `software_native_advantage` and ADR-060's §13.4 third flag as the
+  other two.
+
+### That entry was wrong twice, and both errors were worth finding before building
+
+**First: the mechanism already existed.** ADR-041 built `rights_attestations` — a person establishes
+a fact the colony cannot derive, recorded as subject, claim, basis, who, when; append-only; latest
+wins; withdrawal is a row rather than a flag; unreachable from any Cell, enforced by an AST walk over
+every module. Every one of those decisions is right for a buyer type, for the same reasons. So this
+slice **copies an established shape rather than inventing a judgment subsystem**, and the ADR that
+matters most here is one that was already written.
+
+**Second: the three callers do not want the same mechanism, and the split is principled.**
+
+| caller | what is being judged | who can judge it |
+|---|---|---|
+| `buyer_type` | an **external fact** — who actually paid | an operator holding the invoice |
+| `software_native_advantage` (§13.3) | the **colony's own text** — does this idea rely on machine-native levers | a scored Auditor (§10.4) |
+| §13.4's third flag | the **colony's own text** — do two descriptions name one mechanism | a scored Auditor (§10.4) |
+
+The first is an observation somebody makes about the world. The other two are readings of a Cell's
+own prose, which is precisely what §23.5 keeps out of the kernel and what ADR-032's Auditor exists
+for — with a probability and a registered prediction, because §10.4 requires wrongful flags to be
+penalised and prose cannot be penalised. **An operator does not need a Brier score; an Auditor does.**
+Forcing all three through one generic `dimension`/`value` judgments table would have produced a
+mechanism that scores nobody and constrains nothing.
+
+### What the generic table would have cost
+
+A `judgments(subject_kind, subject, dimension, value, ...)` table cannot state that `buyer_type` is
+one of exactly four values. Migration 0029's CHECK can, and does — so §12.1's bins are enforced by
+the schema rather than by whoever writes the next caller. That is ADR-047's lesson for the third
+time: a seam binds callers that know about it, a constraint binds callers that do not exist yet.
+`test_the_buyer_type_bins_are_one_rule` builds a probe table from the migration's own text so the
+Python list and the SQL list cannot drift apart.
+
+### The subject is the counterparty digest
+
+Not the payment (which would re-ask the same question per invoice) and not the genome (which would
+make it a claim about an *idea* rather than an observation of who actually paid — and a MAP-Elites
+descriptor describes behaviour, not intent). The operator names the party; the kernel hashes it and
+stores only the digest, so the colony learns that some buyer is an enterprise and still cannot say
+who any buyer is. `test_an_attestation_does_not_store_the_party` re-runs ADR-061's whole-database
+scan, because a new operator-facing entry point taking a party by name is exactly where that
+guarantee would be lost.
+
+### Attesting a party who never paid is refused, and that is the foreign key
+
+A counterparty is a value appearing on payments, not a row, so there is nothing to reference. Without
+the check, a mistyped party produces a **silent no-op**: a valid attestation, a success message, and
+no descriptor moves. §12.1's dimension is about who *paid*, so a party who has not is out of scope by
+definition rather than merely unverified.
+
+### The abstention rules, and the ordering that is load-bearing
+
+`buyer_type` abstains unless every payment is keyed, every buyer attested, and every attestation
+names one segment. Two rules deserve stating:
+
+- **Mixed is checked before incomplete.** Two segments among the attested buyers is monotone — no
+  further attestation can unmix them — so that abstention is *permanent* and says so. Every other
+  abstention is a gap somebody can close. Checking incompleteness first would tell an operator to go
+  and attest the remaining buyers in the one case where doing so cannot help.
+- **A withdrawal is not the same as never having been asked.** `current_buyer_types` keeps a
+  withdrawn party present with `None`, because "somebody looked and declined to say" and "nobody has
+  looked" are different facts, and they abstain with different reasons.
+
+§12.1 has no bin for a genome selling into two segments and none is invented. A dominant-segment rule
+needs a threshold nobody has chosen — the same refusal `_novelty_distance` makes, where the only
+number in the module is §13.4's own "exactly one".
+
+### What it displaced
+
+- **A generic judgments table serving three callers.** Refused above: it cannot state §12.1's bins,
+  and two of its three callers need ADR-032's scored Auditor rather than a human declaration.
+- **Deriving `buyer_type` from the channel a party was contacted on.** Available — §21.2's registry
+  shares the salt, so the join exists — and it is a guess wearing a measurement's clothes.
+  `test_no_cell_reachable_module_declares_a_buyer_type` does not prevent this one; the abstention
+  reasons and this paragraph are what stand against it.
+- **A dominant-segment rule.** Needs a threshold; parked in FUTURE_BUILD_HOOKS rather than invented.
+- **A `revoked` flag instead of a withdrawal row.** ADR-041's argument, unchanged: a flag leaves an
+  absence where the reason should be.
+- **Pinning the golden run on a single attestation.** One attestation reports the same bin whether
+  the read takes the latest row or the earliest, so the replay attests twice and supersedes. This is
+  the third slice running where the replay was deliberately made non-degenerate; ADR-060's missed
+  niche-occupancy bug is why.

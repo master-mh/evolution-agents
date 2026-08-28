@@ -1,5 +1,5 @@
 {
-  "expectation_version": 31,
+  "expectation_version": 32,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "dc1808bb9546c33f67aaacfe6b573c1333dda0fdf7877aa0128d70849c38fc59",
+  "semantic_hash": "f23d9ad4f5f07a233fff3c82c1a72db85f83bc879055a3afdbf503305b4c3c4b",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -199,6 +199,7 @@
       "artifact_created": 1,
       "artifact_exported": 1,
       "autonomy_flag_changed": 3,
+      "buyer_type_attested": 2,
       "capital_allocated": 1,
       "cell_deliberated": 12,
       "cell_estate_reclaimed": 1,
@@ -275,6 +276,18 @@
       "USD_SIM::revenue": -55,
       "USD_SIM::seed_bank": 92300
     },
+    "buyer_attestations": [
+      {
+        "attested_by": "golden-operator",
+        "basis": "fixed scenario: first impression from the invoice address",
+        "buyer_type": "human_consumer"
+      },
+      {
+        "attested_by": "golden-operator",
+        "basis": "fixed scenario: the purchase order names a trading company",
+        "buyer_type": "small_business"
+      }
+    ],
     "cells": [
       {
         "alias": "cell#0",
@@ -975,10 +988,16 @@
     ],
     "novelty_archive": {
       "measured_dimensions": [
+        "buyer_type",
         "novelty_distance",
         "revenue_recurrence"
       ],
       "niches": [
+        {
+          "genomes": 1,
+          "living_cells": 1,
+          "niche": "buyer_type=small_business/revenue_recurrence=repeat/novelty_distance=adjacent"
+        },
         {
           "genomes": 2,
           "living_cells": 2,
@@ -988,17 +1007,10 @@
           "genomes": 1,
           "living_cells": 1,
           "niche": "novelty_distance=radical"
-        },
-        {
-          "genomes": 1,
-          "living_cells": 1,
-          "niche": "revenue_recurrence=repeat/novelty_distance=adjacent"
         }
       ],
       "unbinned_genomes": 1,
-      "unmeasured_dimensions": [
-        "buyer_type"
-      ]
+      "unmeasured_dimensions": []
     },
     "predictions": [
       {

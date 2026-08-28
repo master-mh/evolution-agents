@@ -1,5 +1,6 @@
-"""§12's MAP-Elites archive, derived and stored nowhere (SPEC.md §12, §13.2,
-§13.4, §16.1, §16.3, §9.4, §10.2, §10.3, §23.5, §31; ADR-043, ADR-058, ADR-059).
+"""§12's MAP-Elites archive, derived from records it does not own (SPEC.md §12,
+§13.2, §13.4, §16.1, §16.3, §0.3, §9.4, §10.2, §10.3, §23.5, §31; ADR-043,
+ADR-058, ADR-059, ADR-061, ADR-062).
 
     §12.2 Raw descriptors. Store full raw behavioural descriptors **separately**;
     the archive is a **derived view**, allowing later rebuilding with different
@@ -14,12 +15,15 @@ content-addressed and append-only, and in the hash-chained ledger and register.
 Copying them into a descriptors table would create the second version §2.5
 refuses ("balances are derived"), and §31 offers "suggested entities" rather
 than a build order: the same reading refused `experiment_results` (ADR-043) and
-`resource_usage.experiment_id` (ADR-044). **This slice ships no migration.**
+`resource_usage.experiment_id` (ADR-044). **This module still owns no table.**
 
-The one thing that would justify a table is a descriptor nobody can recompute —
-an Auditor's or a human's *judgment*, which is not derivable by definition.
-ADR-059 identified exactly that gap and left it unbuilt; when it is built, it
-brings its own storage and this module reads it.
+ADR-060 predicted the one exception: "a descriptor nobody can recompute — an
+Auditor's or a human's *judgment*, which is not derivable by definition ... when
+it is built, it brings its own storage and this module reads it." **That has now
+happened** (ADR-062). `buyer_attestations` is a person's judgment about a buyer,
+it is owned by `counterparty.py`, and this module only reads it — which is the
+prediction working as stated rather than an exception to §12.2. The archive is
+still derived on every read and still stores nothing.
 
 ## §12.1's three dimensions, and what this colony can measure
 
@@ -27,17 +31,24 @@ brings its own storage and this module reads it.
     revenue recurrence:  one-off / repeat / subscription
     novelty distance:    adjacent / moderate / radical
 
-**Two of the three are live** (ADR-061). `novelty_distance` is structural: it
-compares a genome's §16.2 content against every genome created before it.
-`revenue_recurrence` reads the salted counterparty key now recorded on a revenue
-transaction — equality without identity, §16.3's form, the same digest §21.2
-already used outbound.
+**All three are live** (ADR-060, ADR-061, ADR-062), and they reach the archive
+by three different routes, which is the interesting part:
 
-**`buyer_type` is not blocked on that key and never was**, which ADR-060 got
-wrong and this module now says out loud. A digest answers "same party?" and
-nothing else; human consumer / small business / enterprise / machine is a claim
-about who the buyer *is*, and §16.3 puts customer identity permanently outside
-this colony. It needs a declarer, not a better query — see `_buyer_type`.
+- `novelty_distance` is **structural** — a genome's §16.2 content against every
+  genome created before it. The kernel computes it.
+- `revenue_recurrence` is **observed** — the salted counterparty key on a revenue
+  transaction, equality without identity, the same digest §21.2 uses outbound.
+  The kernel derives it from the ledger.
+- `buyer_type` is **declared** — a person who can see the buyer says so, and the
+  record keeps who said it. No query can produce it: a digest answers "same
+  party?" and nothing else, while human consumer / small business / enterprise /
+  machine is a claim about who the buyer *is*, which §16.3 puts permanently
+  outside this colony. §0.3 names the route ("external evaluators"), ADR-041
+  built the mechanism, and ADR-062 wired this dimension to it.
+
+**A Cell writes none of the three**, and for `buyer_type` that is structural
+rather than promised: nothing Cell-reachable can call `attest_buyer_type`, and an
+AST walk over every module says so.
 
 ## Why the bins are §13.4's language and not a threshold someone picked
 
@@ -90,7 +101,7 @@ import sqlite3
 from dataclasses import dataclass
 from enum import StrEnum
 
-from . import genome
+from . import counterparty, genome
 from .revenue import REVENUE_TRANSACTION_TYPE
 
 #: §12.1's dimensions, transcribed with their bins. The archive is rebuildable
@@ -321,29 +332,77 @@ def _novelty_distance(record: GenomeRecord, earlier: list[GenomeRecord]) -> Desc
     )
 
 
-def _buyer_type() -> Descriptor:
-    """Still unmeasurable **after** the counterparty key, and the reason changed.
+def _buyer_type(
+    payments: tuple[str | None, ...],
+    attested: dict[str, str | None],
+) -> Descriptor:
+    """§12.1's segment, read off what a person declared about the buyers.
 
-    ADR-060 said this dimension was blocked on an inbound counterparty key.
-    ADR-061 built that key and it does not unblock this one, which is worth
-    stating rather than quietly leaving the old reason in place. A salted digest
-    gives *equality without identity* — the one question it answers is "is this
-    the same party as that one?", which is exactly what `_revenue_recurrence`
-    needs and exactly what a **type** does not. human consumer / small business /
-    enterprise / machine is a claim about who the buyer *is*, and §16.3 puts
-    customer identity permanently outside this colony, so there is nothing here
-    to classify from and never will be.
+    **No query can produce this** (ADR-061). A salted digest gives equality,
+    never identity, and human consumer / small business / enterprise / machine is
+    a claim about who the buyer *is* — which §16.3 keeps outside this colony
+    permanently. So it arrives declared, with its declarer recorded
+    (`counterparty.attest_buyer_type`), which is §0.3's own answer: canonical
+    metrics come from independent systems and external evaluators, and an
+    operator reading an invoice is one.
 
-    That leaves one honest route: somebody who can see the buyer *declares* the
-    type. Which is ADR-059's finding again — a content judgment the kernel
-    cannot compute (§23.5) enters as a judgment, with a judge attached, not as a
-    derived axis. Deriving it from the channel a party was contacted on would be
-    a guess wearing a measurement's clothes.
+    `attested` maps a counterparty digest to the position in force, with `None`
+    where a position was **withdrawn** — a party somebody looked at and declined
+    to classify, which is a different fact from one nobody has looked at, and
+    they abstain with different reasons.
+
+    **Mixed is checked before incomplete, and the order is load-bearing.** Two
+    different types among the attested buyers is monotone: no further attestation
+    can unmix them, so that abstention is *permanent* and says so. Every other
+    abstention here is a gap somebody can close. Reporting both the same way
+    would tell an operator to go and attest more buyers in the one case where it
+    cannot help.
+
+    §12.1 has no bin for a genome selling into two segments, and none is
+    invented. A dominant-segment rule would need a threshold nobody has chosen —
+    the same refusal `_novelty_distance` makes, where the only number is
+    §13.4's own "exactly one".
     """
+    if not payments:
+        return Descriptor(
+            "buyer_type", None, Measurement.UNEVALUABLE,
+            "no revenue has been recorded for this genome; a buyer type "
+            "describes who paid",
+        )
+
+    keyed = [digest for digest in payments if digest is not None]
+    buyers = set(keyed)
+    positions = {digest: attested.get(digest) for digest in buyers if digest in attested}
+    named = {bin_ for bin_ in positions.values() if bin_ is not None}
+
+    if len(named) > 1:
+        return Descriptor(
+            "buyer_type", None, Measurement.UNMEASURABLE,
+            f"its buyers span {len(named)} segments ({', '.join(sorted(named))}); "
+            "§12.1 has no bin for that and no further attestation can unmix them",
+        )
+
+    unkeyed = len(payments) - len(keyed)
+    unattested = len(buyers - set(positions))
+    withdrawn = sum(1 for bin_ in positions.values() if bin_ is None)
+    if unkeyed or unattested or withdrawn:
+        missing = []
+        if unkeyed:
+            missing.append(f"{unkeyed} of {len(payments)} payment(s) carry no counterparty key")
+        if unattested:
+            missing.append(f"{unattested} of {len(buyers)} buyer(s) have no attestation")
+        if withdrawn:
+            missing.append(f"{withdrawn} attestation(s) were withdrawn")
+        return Descriptor(
+            "buyer_type", None, Measurement.UNMEASURABLE,
+            "; ".join(missing) + " — any of them could be a second segment, and "
+            "§12.1's bin is a claim about every buyer, not the ones on record",
+        )
+
     return Descriptor(
-        "buyer_type", None, Measurement.UNMEASURABLE,
-        "the counterparty key gives equality, not identity (§16.3); a buyer "
-        "*type* is a declaration and needs a declarer, not a better query",
+        "buyer_type", named.pop(), Measurement.MEASURED,
+        f"all {len(buyers)} buyer(s) across {len(payments)} payment(s) were "
+        "attested to one segment by a person (§0.3)",
     )
 
 
@@ -439,9 +498,11 @@ def descriptors(conn: sqlite3.Connection, genome_hash: str) -> tuple[Descriptor,
     index = next((i for i, r in enumerate(records) if r.genome_hash == genome_hash), None)
     if index is None:
         raise KeyError(genome_hash)
+    payments = revenue_counterparties(conn).get(genome_hash, ())
+    attested = counterparty.current_buyer_types(conn)
     return (
-        _buyer_type(),
-        _revenue_recurrence(revenue_counterparties(conn).get(genome_hash, ())),
+        _buyer_type(payments, attested),
+        _revenue_recurrence(payments),
         _novelty_distance(records[index], records[:index]),
     )
 
@@ -495,13 +556,14 @@ def archive(conn: sqlite3.Connection) -> Archive:
     }
 
     payments = revenue_counterparties(conn)
+    attested = counterparty.current_buyer_types(conn)
 
     grouped: dict[tuple[tuple[str, str], ...], list[str]] = {}
     unbinned: list[str] = []
     measured: set[str] = set()
     for index, record in enumerate(records):
         found = (
-            _buyer_type(),
+            _buyer_type(payments.get(record.genome_hash, ()), attested),
             _revenue_recurrence(payments.get(record.genome_hash, ())),
             _novelty_distance(record, records[:index]),
         )

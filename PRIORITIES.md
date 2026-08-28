@@ -205,23 +205,27 @@
   `novelty._revenue_recurrence` and BUILD_RECORD all said it was. A digest gives *equality*, never
   *identity*, and human consumer / small business / enterprise / machine is a claim about who the
   buyer is, which §16.3 keeps outside this colony permanently. It needs a **declarer**, not a key.
-- [ ] **A declared `buyer_type`, with its declarer recorded.** The third §12.1 dimension, and the
-  only remaining one. ADR-061 established that no query can produce it: a buyer type is a judgment,
-  and the operator recording revenue is the one person who can see the buyer. Admissible — no Cell
-  can record revenue, so §23.5's "a field a Cell can fill is a field it will optimise" does not bite
-  — but it must arrive **as a judgment with a judge attached**, the same path ADR-059 left unbuilt
-  for `software_native_advantage` and ADR-060 needs for §13.4's third flag. **One build, three
-  callers**; do not build a fourth bespoke declaration mechanism.
-  *Disproved by:* any `buyer_type` derived from the channel, the amount, or anything else that is
-  not somebody saying so.
+- [x] **A declared `buyer_type` — DONE, and "one build, three callers" was wrong twice**
+  (2026-08-28), ADR-062, migration 0029, golden 31 -> 32. **§12.1's archive is three-dimensional and
+  nothing abstains.** (1) The mechanism already existed — ADR-041's attestation shape, copied rather
+  than reinvented. (2) The three callers split two ways: `buyer_type` is an *external fact* an
+  operator observes; §13.3's `software_native_advantage` and §13.4's third flag are *readings of the
+  colony's own prose*, which need ADR-032's **scored** Auditor because §10.4 penalises wrongful
+  flags. An operator does not need a Brier score; an Auditor does.
+- [ ] **The Auditor path for §13.3 and §13.4's content judgments.** The other half, now clearly
+  scoped by what ADR-062 did *not* do. Both are readings of a Cell's own prose, so both need a
+  probability and a registered prediction (ADR-032), not an operator's word. `auditor.py` already
+  has the machinery — independence checks, a kernel-composed claim, precision-weighting through
+  §8.5's register — and what is missing is a second *subject*: today an audit is about an
+  `approval_request`, and these are about a **genome** and a **genome pair**.
+  *Disproved by:* any §13.3 or §13.4 judgment recorded without a probability, or phrased by the Cell
+  it is about.
 - [ ] **Phase 2's selector is honest but it is not yet quality-diversity.** Three measurable axes of
-  five, a **two**-dimensional archive (ADR-061), and no elite per niche — §12.3's Thompson posteriors
-  need stage-conversion data that does not exist, and `promotion.allocate` only ever issues rung 7,
-  so the ladder's next rung comes before the posteriors. Still needed: §11.2's independent-adoption
-  record, and an **Auditor path for content judgments** — ADR-059's finding is that concreteness
-  cannot be a kernel computation (§23.5), so it enters as `software_native_advantage`'s missing judge
-  rather than as an axis; ADR-060 leaves §13.4's third flag needing the same judge, and ADR-061 adds
-  `buyer_type` as its third caller.
+  five, a **three**-dimensional archive (ADR-062), and **no elite per niche** — which is now the
+  largest remaining gap between this and MAP-Elites. §12.3's Thompson posteriors are the spec's own
+  answer for ranking inside a niche and they need stage *conversions*; `promotion.allocate` only ever
+  issues rung 7, so **the ladder's next rung is the gating build**, not the posteriors. Also still
+  needed: §11.2's independent-adoption record, and the Auditor path above.
   *Disproved by:* anything ranking Cells or proposals by a single scalar combining novelty with
   anything else.
 - [x] **Identical wake reason — TESTED, CONFIRMED, REMEDY REFUSED** (2026-08-27), ADR-055. Varying it

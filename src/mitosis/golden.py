@@ -64,6 +64,7 @@ from . import (
     channel_registry,
     auditor,
     clock,
+    counterparty,
     deliberation,
     db,
     events,
@@ -1025,7 +1026,51 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #               colony's entire ledger as tampered with.
 #               `test_a_transaction_without_a_counterparty_hashes_as_it_always_did`
 #               pins the pre-0028 formula directly.
-EXPECTATION_VERSION = 31
+#   31 -> 32 (§12.1's declared dimension; §0.3, §16.3, §3.6; ADR-041, ADR-062).
+#           **Three sections, no money moves at all.** The scenario gained two
+#           buyer-type attestations and nothing else; `balances` is identical in
+#           every account in every book, because a declaration is not a
+#           transaction.
+#           (a) **`novelty_archive`: `unmeasured_dimensions` is now empty.** All
+#               three of §12.1's dimensions are live, and they arrive by three
+#               different routes — `novelty_distance` structural, computed by the
+#               kernel; `revenue_recurrence` observed, derived from the ledger;
+#               `buyer_type` **declared**, because no query can produce it. The
+#               earning genome moves from
+#               `revenue_recurrence=repeat/novelty_distance=adjacent` to
+#               `buyer_type=small_business/revenue_recurrence=repeat/novelty_distance=adjacent`.
+#               Version 30's note said to watch for either revenue dimension
+#               "becoming measured without a counterparty key", and version 31's
+#               said to watch for `buyer_type` becoming measured "without a
+#               declarer". Both watches now have a positive form: the
+#               `buyer_attestations` section below must be non-empty whenever
+#               `buyer_type` appears in `measured_dimensions`.
+#           (b) **New section `buyer_attestations`, listing both rows.** The
+#               first is `human_consumer`, superseded by `small_business`, and
+#               **the scenario attests twice on purpose**: one attestation would
+#               report the same bin whether the read took the latest row or the
+#               earliest, so latest-wins-by-`rowid` would be untested in a
+#               replay. Wall clock cannot order two attestations inside one
+#               second; insertion order can, and §6.3 keeps the two clocks
+#               unmixed. Both rows surviving is §3.6's append-only guarantee
+#               visible as a count — a withdrawal or a correction never removes
+#               what was said before.
+#               **`counterparty_hash` is absent**, as it is from
+#               `external_actions`, and for the same reason: the salt is
+#               generated per run, so a digest in the snapshot would make the
+#               replay non-deterministic. What is pinned is the claim, its basis
+#               and its declarer.
+#           (c) **`audit_event_types`** gains `buyer_type_attested: 2`. The event
+#               records the *type* and who declared it, never the digest — a
+#               digest is a linkable key and audit events are read by paths a
+#               Cell can reach (ADR-061).
+#           (d) **What did not move, and is worth stating.** No balance, no
+#               transaction, no prediction, no approval. A dimension that decides
+#               which §12.1 niche a genome occupies entered the archive without
+#               touching the ledger, which is exactly what a declaration should
+#               look like — and `test_no_cell_reachable_module_declares_a_buyer_type`
+#               is what keeps it a *person's* declaration.
+EXPECTATION_VERSION = 32
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -2033,6 +2078,36 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         idempotency_key="golden:revenue:artifact:second",
     )
 
+    #     **§12.1's buyer type is declared, and declared twice** (ADR-062). No
+    #     query can produce it — a digest gives equality, never identity, and
+    #     §16.3 keeps customer identity out of this colony permanently — so it
+    #     arrives the only honest way left: a person who can see the buyer says
+    #     so, and the record keeps who said it. This is ADR-041's mechanism, not
+    #     a new one.
+    #
+    #     **The first attestation is superseded on purpose.** One attestation
+    #     would report `small_business` whether the read took the latest row or
+    #     the earliest, and latest-wins by `rowid` is the part that has to hold
+    #     in a replay: wall clock cannot order two attestations inside one
+    #     second and insertion order can. The snapshot lists both rows, so §3.6's
+    #     append-only guarantee is visible as well as the winner.
+    counterparty.attest_buyer_type(
+        conn,
+        counterparty="golden-buyer@golden.test",
+        buyer_type="human_consumer",
+        basis="fixed scenario: first impression from the invoice address",
+        attested_by="golden-operator",
+        now=SCENARIO_EPOCH,
+    )
+    counterparty.attest_buyer_type(
+        conn,
+        counterparty="golden-buyer@golden.test",
+        buyer_type="small_business",
+        basis="fixed scenario: the purchase order names a trading company",
+        attested_by="golden-operator",
+        now=SCENARIO_EPOCH,
+    )
+
     # 19. The external-action registry (§21, §28 Phase 8; ADR-036). The Cell
     #     proposes a channel and a purpose — never a person — a human approves
     #     it, and a human claims the channel, does the thing, and records what
@@ -2753,6 +2828,21 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         for row in conn.execute("SELECT * FROM rights_attestations ORDER BY rowid").fetchall()
     ]
 
+    # §12.1's declared dimension (ADR-062). **`counterparty_hash` is deliberately
+    # absent**, for the reason §21.2's registry gives: the salt is generated per
+    # run, so a digest in the snapshot would make the replay non-deterministic.
+    # Every attestation is listed in insertion order, superseded ones included —
+    # that is what makes latest-wins visible here rather than only in a unit
+    # test, and §3.6's append-only guarantee checkable as a count.
+    buyer_attestation_rows = [
+        {
+            "buyer_type": row["buyer_type"],
+            "basis": row["basis"],
+            "attested_by": row["attested_by"],
+        }
+        for row in conn.execute("SELECT * FROM buyer_attestations ORDER BY rowid").fetchall()
+    ]
+
     # §11.4's contribution graph. Source ids are volatile, so what is pinned is
     # the *shape*: how many edges, and of which kind.
     artifact_lineage_shape = {
@@ -3035,6 +3125,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "artifacts": artifact_rows,
         "experiments": experiment_rows,
         "rights_attestations": rights_attestation_rows,
+        "buyer_attestations": buyer_attestation_rows,
         "artifact_lineage": artifact_lineage_shape,
         "external_actions": external_action_rows,
         "channel_frozen": channel_freeze_state,
