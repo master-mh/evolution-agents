@@ -60,6 +60,7 @@ def _compute_hash(
     description: str,
     previous_transaction_hash: str | None,
     entries: list[dict],
+    counterparty_hash: str | None = None,
 ) -> str:
     canonical = {
         "transaction_id": transaction_id,
@@ -74,6 +75,18 @@ def _compute_hash(
         "previous_transaction_hash": previous_transaction_hash,
         "entries": entries,
     }
+    # **Omitted when absent, unlike `event_id` which is included as null.** The
+    # inconsistency is the point: adding `"counterparty_hash": None` to every
+    # preimage would change the hash of every transaction ever written, so
+    # `verify_chain` would report the whole ledger of every existing colony as
+    # tampered with — which is exactly the alarm this chain exists to raise, and
+    # exactly the wrong reason to raise it. A key that appears only when there
+    # is a counterparty leaves pre-0028 rows byte-identical and is still
+    # unambiguous, because the field is never written as null when present.
+    # `test_ledger.py::test_a_transaction_without_a_counterparty_hashes_as_it_always_did`
+    # pins the old formula against the new function.
+    if counterparty_hash is not None:
+        canonical["counterparty_hash"] = counterparty_hash
     return hashlib.sha256(_canonical_json(canonical).encode("utf-8")).hexdigest()
 
 
@@ -89,9 +102,17 @@ def _write_transaction(
     event_id: str | None = None,
     effective_at_utc: datetime | None = None,
     metadata: dict | None = None,
+    counterparty_hash: str | None = None,
 ) -> Transaction:
     """Insert a balanced transaction. Caller must already hold a write
-    transaction (BEGIN IMMEDIATE) and be responsible for COMMIT/ROLLBACK."""
+    transaction (BEGIN IMMEDIATE) and be responsible for COMMIT/ROLLBACK.
+
+    `counterparty_hash` is opaque here: the ledger stores who paid without
+    knowing how a party is turned into a digest (`counterparty.hash_of` does
+    that, one module over, under §16.3's per-colony salt). The column's CHECK
+    constraint refuses anything that is not 64 lowercase hex characters, so a
+    caller that forgets to hash gets an IntegrityError rather than a customer
+    identity in the ledger."""
     if not entries:
         raise UnbalancedTransactionError("a transaction must have at least one entry")
     total = sum(e.amount_minor_units for e in entries)
@@ -151,6 +172,7 @@ def _write_transaction(
         description=description,
         previous_transaction_hash=previous_hash,
         entries=canonical_entries,
+        counterparty_hash=counterparty_hash,
     )
 
     conn.execute(
@@ -158,8 +180,9 @@ def _write_transaction(
         INSERT INTO ledger_transactions (
             transaction_id, book, currency, created_at_utc, effective_at_utc,
             idempotency_key, event_id, transaction_type, description,
-            previous_transaction_hash, transaction_hash, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            previous_transaction_hash, transaction_hash, metadata_json,
+            counterparty_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             transaction_id,
@@ -174,6 +197,7 @@ def _write_transaction(
             previous_hash,
             transaction_hash,
             _canonical_json(metadata or {}),
+            counterparty_hash,
         ),
     )
     try:
@@ -215,6 +239,7 @@ def _post_transaction_locked(
     event_id: str | None = None,
     effective_at_utc: datetime | None = None,
     metadata: dict | None = None,
+    counterparty_hash: str | None = None,
 ) -> Transaction:
     """`post_transaction` minus the transaction boundary: the caller must
     already hold a write transaction (BEGIN IMMEDIATE) and is responsible for
@@ -239,6 +264,7 @@ def _post_transaction_locked(
         event_id=event_id,
         effective_at_utc=effective_at_utc,
         metadata=metadata,
+        counterparty_hash=counterparty_hash,
     )
 
 
@@ -254,6 +280,7 @@ def post_transaction(
     event_id: str | None = None,
     effective_at_utc: datetime | None = None,
     metadata: dict | None = None,
+    counterparty_hash: str | None = None,
 ) -> Transaction:
     """Post a balanced, single-book transaction as a standalone operation.
 
@@ -277,6 +304,7 @@ def post_transaction(
             event_id=event_id,
             effective_at_utc=effective_at_utc,
             metadata=metadata,
+            counterparty_hash=counterparty_hash,
         )
         conn.execute("COMMIT")
     except sqlite3.IntegrityError as exc:
@@ -319,6 +347,7 @@ def _row_to_transaction(row: sqlite3.Row, entry_rows: list[sqlite3.Row]) -> Tran
         description=row["description"],
         previous_transaction_hash=row["previous_transaction_hash"],
         transaction_hash=row["transaction_hash"],
+        counterparty_hash=row["counterparty_hash"],
         metadata=json.loads(row["metadata_json"]),
         entries=entries,
     )
@@ -477,6 +506,7 @@ def verify_chain(conn: sqlite3.Connection) -> bool:
             description=row["description"],
             previous_transaction_hash=row["previous_transaction_hash"],
             entries=canonical_entries,
+            counterparty_hash=row["counterparty_hash"],
         )
         if expected != row["transaction_hash"]:
             return False

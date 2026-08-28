@@ -44,6 +44,8 @@ from datetime import datetime, timezone
 
 from . import audit, ledger, lifecycle
 from .accounts import cell_cash
+from .counterparty import CounterpartyError
+from .counterparty import hash_of as counterparty_digest
 from .models import Book, EntrySpec, Transaction
 
 REVENUE_ACCOUNT = "revenue"
@@ -72,6 +74,9 @@ def record_revenue(
     #: Which experiment earned it (§2.6). Amendment A3 gave `artifact_id` the
     #: same job for *what* produced the money; this says under which test.
     experiment_id: str | None = None,
+    #: Who paid, hashed on the way in and never stored as themselves (§16.3).
+    #: This is §12.1's missing inbound key — see the docstring.
+    counterparty: str | None = None,
     idempotency_key: str | None = None,
 ) -> Transaction:
     """Credit a Cell with money it earned.
@@ -94,7 +99,29 @@ def record_revenue(
 
     `idempotency_key` defaults to one derived from the source, so posting the
     same attributed payment twice is refused by the ledger's own idempotency
-    rather than silently doubling a Cell's apparent fitness.
+    rather than silently doubling a Cell's apparent fitness. **A repeat customer
+    therefore needs a distinct `source` or an explicit key**, which is correct —
+    two invoices from one buyer are two payments, and one invoice recorded twice
+    is not.
+
+    `counterparty` is **who paid**, and it is hashed before it is stored
+    (`counterparty.hash_of`, §16.3's per-colony salt) — the colony keeps the
+    ability to ask "is this the same buyer as that one?" and no ability
+    whatever to say who they are. It is the same digest §21.2 uses outbound, so
+    a party the colony contacted and who then pays produces the same key on both
+    sides without either side holding an identity.
+
+    **`source` is not a place to put the counterparty.** It is free text and it
+    is interpolated into the transaction description, which *is* covered by the
+    hash chain — an email address typed there is in the ledger permanently and
+    §3.6 forbids editing it out. Put the invoice reference in `source` and the
+    party in `counterparty`.
+
+    Optional for the same reason `artifact_id` is: revenue recorded before this
+    key existed genuinely has no counterparty, and backfilling one from `source`
+    would fabricate the attribution this module exists to prevent.
+    `novelty._revenue_recurrence` abstains on a partial record rather than
+    reading `one_off` out of it.
     """
     if amount_minor_units <= 0:
         raise RevenueError(
@@ -110,6 +137,12 @@ def record_revenue(
         raise RevenueError(
             "source is required — unattributed revenue is how a fitness signal "
             "gets fabricated"
+        )
+    if counterparty is not None and not counterparty.strip():
+        raise RevenueError(
+            "counterparty was supplied but is blank — a payment from nobody in "
+            "particular is what `counterparty=None` already says, and saying it "
+            "twice in different ways would put an empty digest in the ledger"
         )
 
     conn.execute("BEGIN IMMEDIATE")
@@ -133,6 +166,18 @@ def record_revenue(
                     "to something the colony never made"
                 )
 
+        # Hashed inside the lock, because the salt row is created lazily on
+        # first use: doing it before BEGIN IMMEDIATE would autocommit that write
+        # separately from the payment it belongs to.
+        try:
+            digest = (
+                counterparty_digest(conn, counterparty)
+                if counterparty is not None
+                else None
+            )
+        except CounterpartyError as exc:  # pragma: no cover - guarded above
+            raise RevenueError(str(exc)) from exc
+
         key = idempotency_key or f"{REVENUE_TRANSACTION_TYPE}:{cell_id}:{source.strip()}"
         transaction = ledger._post_transaction_locked(
             conn,
@@ -140,6 +185,7 @@ def record_revenue(
             currency="USD" if book is Book.USD_REAL else book.value,
             transaction_type=REVENUE_TRANSACTION_TYPE,
             idempotency_key=key,
+            counterparty_hash=digest,
             description=f"revenue for cell {cell_id} from {source.strip()}"
             + (f": {note}" if note else ""),
             entries=[
@@ -170,6 +216,10 @@ def record_revenue(
                 "artifact_id": artifact_id,
                 "book": book.value,
                 "source": source.strip(),
+                # Whether, never who — the same rule §21.2's registry follows.
+                # The digest is not an identity, but it is a *linkable key*, and
+                # audit events are read by paths a Cell can reach.
+                "counterparty_recorded": digest is not None,
                 "note": note,
                 "cell_status": cell.status.value,
                 "transaction_id": transaction.transaction_id,

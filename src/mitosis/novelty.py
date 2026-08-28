@@ -27,11 +27,17 @@ brings its own storage and this module reads it.
     revenue recurrence:  one-off / repeat / subscription
     novelty distance:    adjacent / moderate / radical
 
-**One of the three is live.** `novelty_distance` is structural: it compares a
-genome's §16.2 content against every genome created before it. The other two
-need a customer, and this colony has had one payment recorded by free-text
-`source` — see `_buyer_type` and `_revenue_recurrence` for what specifically is
-missing rather than a shrug.
+**Two of the three are live** (ADR-061). `novelty_distance` is structural: it
+compares a genome's §16.2 content against every genome created before it.
+`revenue_recurrence` reads the salted counterparty key now recorded on a revenue
+transaction — equality without identity, §16.3's form, the same digest §21.2
+already used outbound.
+
+**`buyer_type` is not blocked on that key and never was**, which ADR-060 got
+wrong and this module now says out loud. A digest answers "same party?" and
+nothing else; human consumer / small business / enterprise / machine is a claim
+about who the buyer *is*, and §16.3 puts customer identity permanently outside
+this colony. It needs a declarer, not a better query — see `_buyer_type`.
 
 ## Why the bins are §13.4's language and not a threshold someone picked
 
@@ -85,6 +91,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from . import genome
+from .revenue import REVENUE_TRANSACTION_TYPE
 
 #: §12.1's dimensions, transcribed with their bins. The archive is rebuildable
 #: with different ones (§12.2) — this dict is the current choice, not a law.
@@ -92,6 +99,20 @@ DESCRIPTOR_SENSE: dict[str, tuple[str, ...]] = {
     "buyer_type": ("human_consumer", "small_business", "enterprise", "machine"),
     "revenue_recurrence": ("one_off", "repeat", "subscription"),
     "novelty_distance": ("adjacent", "moderate", "radical"),
+}
+
+#: Bins §12.1 names that nothing in this kernel can produce, and why. Written
+#: down rather than left as an empty branch, because a bin that never appears
+#: looks identical to a bin that never happens — and only one of those is a
+#: statement about the colony.
+UNREACHABLE_BINS: dict[str, str] = {
+    "subscription": (
+        "a subscription is a *contract*, not a payment pattern: three payments "
+        "under one agreement and three separate invoices from a loyal buyer are "
+        "the same rows here. Telling them apart needs the service-obligation "
+        "record §16.3 calls liability-linked, and this colony has none, so a "
+        "subscription lands in `repeat` and is described honestly there"
+    ),
 }
 
 #: The genome fields a novelty distance is measured over: §16.2's *business
@@ -301,39 +322,115 @@ def _novelty_distance(record: GenomeRecord, earlier: list[GenomeRecord]) -> Desc
 
 
 def _buyer_type() -> Descriptor:
-    """Unmeasurable, and the missing piece is specific.
+    """Still unmeasurable **after** the counterparty key, and the reason changed.
 
-    §12.1's bins are about *who paid*. `revenue.record_revenue` takes a `source`
-    — "an invoice id, a customer reference, 'manual'" — which is free text, so
-    two payments from one buyer are indistinguishable from one payment each from
-    two. The outbound direction already solved this: §21.2's
-    `external_action_registry` stores a **salted hash** of a counterparty,
-    equality without identity, exactly as §16.3 requires. Revenue has no such
-    key, and inventing a buyer classification from free text would be a
-    judgment, which §0.3 puts outside the kernel.
+    ADR-060 said this dimension was blocked on an inbound counterparty key.
+    ADR-061 built that key and it does not unblock this one, which is worth
+    stating rather than quietly leaving the old reason in place. A salted digest
+    gives *equality without identity* — the one question it answers is "is this
+    the same party as that one?", which is exactly what `_revenue_recurrence`
+    needs and exactly what a **type** does not. human consumer / small business /
+    enterprise / machine is a claim about who the buyer *is*, and §16.3 puts
+    customer identity permanently outside this colony, so there is nothing here
+    to classify from and never will be.
+
+    That leaves one honest route: somebody who can see the buyer *declares* the
+    type. Which is ADR-059's finding again — a content judgment the kernel
+    cannot compute (§23.5) enters as a judgment, with a judge attached, not as a
+    derived axis. Deriving it from the channel a party was contacted on would be
+    a guess wearing a measurement's clothes.
     """
     return Descriptor(
         "buyer_type", None, Measurement.UNMEASURABLE,
-        "revenue records who paid as free text; there is no counterparty key "
-        "inbound, though §21.2 has one outbound",
+        "the counterparty key gives equality, not identity (§16.3); a buyer "
+        "*type* is a declaration and needs a declarer, not a better query",
     )
 
 
-def _revenue_recurrence() -> Descriptor:
-    """Unmeasurable for the same missing key, one step further along.
+def _revenue_recurrence(payments: tuple[str | None, ...]) -> Descriptor:
+    """§12.1's cadence, read off the counterparty keys on a genome's revenue.
 
-    one-off / repeat / subscription is a statement about *the same buyer paying
-    again*, so it needs what `_buyer_type` needs before a cadence means anything.
-    Counting payments per Cell instead would report a Cell with three one-off
-    customers as `repeat`, which is the undercount-versus-abstain trap ADR-044
-    named — a wrong number is worse than a stated absence, because only the
-    absence is visible.
+    `payments` is one entry per revenue transaction credited to a Cell carrying
+    this genome, holding that payment's counterparty digest or `None` where the
+    payment was recorded without one.
+
+    **The rule is deliberately monotone, and abstains asymmetrically.** More
+    data can add a repeat and can never remove one, so:
+
+    - a digest seen twice is `repeat` **even if other payments are unkeyed** —
+      the conclusion cannot be overturned by the missing rows;
+    - all payments keyed and all distinct is `one_off`;
+    - all distinct *but some payments unkeyed* abstains, because the unkeyed
+      ones could be the second payment that makes it `repeat`, and reporting
+      `one_off` there is precisely ADR-044's undercount trap: a wrong number is
+      worse than a stated absence, because only the absence is visible.
+
+    **Aggregated across the genome's Cells, not per Cell.** One buyer paying two
+    siblings is a buyer coming back to the same business idea, and the archive
+    bins genomes. The trap ADR-060 named runs the other way — counting *payments*
+    per Cell, which would call three one-off customers `repeat` — and keying on
+    the buyer is what closes it.
+
+    `subscription` is never returned; see `UNREACHABLE_BINS`.
     """
+    if not payments:
+        return Descriptor(
+            "revenue_recurrence", None, Measurement.UNEVALUABLE,
+            "no revenue has been recorded for this genome; a cadence needs a "
+            "payment before it means anything",
+        )
+    keyed = [digest for digest in payments if digest is not None]
+    distinct = set(keyed)
+    if len(distinct) < len(keyed):
+        return Descriptor(
+            "revenue_recurrence", "repeat", Measurement.MEASURED,
+            f"one counterparty paid more than once across {len(payments)} "
+            "payment(s). A subscription would land here too: this colony has no "
+            "service-obligation record to tell a contract from a loyal buyer",
+        )
+    unkeyed = len(payments) - len(keyed)
+    if unkeyed:
+        return Descriptor(
+            "revenue_recurrence", None, Measurement.UNMEASURABLE,
+            f"{unkeyed} of {len(payments)} payment(s) carry no counterparty key, "
+            "and any one of them could be the second payment from a buyer "
+            "already counted; `one_off` cannot be read from a partial record",
+        )
     return Descriptor(
-        "revenue_recurrence", None, Measurement.UNMEASURABLE,
-        "needs the same inbound counterparty key: recurrence is one buyer "
-        "paying twice, not one Cell being paid twice",
+        "revenue_recurrence", "one_off", Measurement.MEASURED,
+        f"{len(distinct)} counterparties across {len(payments)} payment(s), each "
+        "paying exactly once, and every payment carries a key",
     )
+
+
+def revenue_counterparties(conn: sqlite3.Connection) -> dict[str, tuple[str | None, ...]]:
+    """Every genome's revenue payments, as counterparty digests (§12.1's raw material).
+
+    One query for the whole colony rather than one per genome, because `archive`
+    asks for every genome at once. The join runs through the *cash* leg: a
+    revenue transaction has two entries and only the credit to the Cell carries
+    a `cell_id`, so this yields exactly one row per payment.
+
+    `None` means the payment was recorded without a counterparty — revenue that
+    predates migration 0028, or an operator who did not have the buyer to hand.
+    It is kept rather than dropped, because the *count* of unkeyed payments is
+    what `_revenue_recurrence` needs in order to know it must abstain.
+    """
+    rows = conn.execute(
+        """
+        SELECT c.genome_hash AS genome_hash, t.counterparty_hash AS counterparty_hash
+        FROM ledger_transactions t
+        JOIN ledger_entries e ON e.transaction_id = t.transaction_id
+        JOIN cells c ON c.cell_id = e.cell_id
+        WHERE t.transaction_type = ?
+        ORDER BY t.rowid
+        """,
+        (REVENUE_TRANSACTION_TYPE,),
+    ).fetchall()
+    payments: dict[str, list[str | None]] = {}
+    for row in rows:
+        payments.setdefault(row["genome_hash"], []).append(row["counterparty_hash"])
+    return {genome_hash: tuple(v) for genome_hash, v in payments.items()}
 
 
 def descriptors(conn: sqlite3.Connection, genome_hash: str) -> tuple[Descriptor, ...]:
@@ -344,7 +441,7 @@ def descriptors(conn: sqlite3.Connection, genome_hash: str) -> tuple[Descriptor,
         raise KeyError(genome_hash)
     return (
         _buyer_type(),
-        _revenue_recurrence(),
+        _revenue_recurrence(revenue_counterparties(conn).get(genome_hash, ())),
         _novelty_distance(records[index], records[:index]),
     )
 
@@ -397,13 +494,15 @@ def archive(conn: sqlite3.Connection) -> Archive:
         )
     }
 
+    payments = revenue_counterparties(conn)
+
     grouped: dict[tuple[tuple[str, str], ...], list[str]] = {}
     unbinned: list[str] = []
     measured: set[str] = set()
     for index, record in enumerate(records):
         found = (
             _buyer_type(),
-            _revenue_recurrence(),
+            _revenue_recurrence(payments.get(record.genome_hash, ())),
             _novelty_distance(record, records[:index]),
         )
         coordinate = tuple(

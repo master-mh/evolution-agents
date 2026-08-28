@@ -196,19 +196,32 @@
   blocked on **one specific missing thing — an inbound counterparty key**, which §21.2 already has
   outbound as a salted hash. §13.2's `structural_novelty` axis is now measured, and §13.4's *first*
   flag ("only the industry label changed") is computable.
-- [ ] **An inbound counterparty key.** `revenue.record_revenue` records who paid as free text, so two
-  payments from one buyer look like one each from two — which is what blocks §12.1's `buyer_type` and
-  `revenue_recurrence`, and with them a two- or three-dimensional archive (§12.1 says start with two
-  or three). The design already exists in this repo: §21.2's `external_action_registry` stores a
-  salted hash of a counterparty, equality without identity, exactly as §16.3 requires. Do the same
-  inbound rather than inventing a second scheme.
-  *Disproved by:* any counterparty column on a revenue transaction that stores the counterparty.
+- [x] **An inbound counterparty key — DONE, and it disproved half of this entry** (2026-08-28),
+  ADR-061, migration 0028, golden 30 -> 31. `ledger_transactions.counterparty_hash` carries the
+  digest inside §3.4's hash chain, under the same salt §21.2 uses outbound, and the column's CHECK
+  makes a raw identity unrepresentable rather than merely refused. **`revenue_recurrence` is
+  measured and the archive is two-dimensional.**
+  **`buyer_type` was never blocked on this key** — this entry, `novelty._buyer_type`,
+  `novelty._revenue_recurrence` and BUILD_RECORD all said it was. A digest gives *equality*, never
+  *identity*, and human consumer / small business / enterprise / machine is a claim about who the
+  buyer is, which §16.3 keeps outside this colony permanently. It needs a **declarer**, not a key.
+- [ ] **A declared `buyer_type`, with its declarer recorded.** The third §12.1 dimension, and the
+  only remaining one. ADR-061 established that no query can produce it: a buyer type is a judgment,
+  and the operator recording revenue is the one person who can see the buyer. Admissible — no Cell
+  can record revenue, so §23.5's "a field a Cell can fill is a field it will optimise" does not bite
+  — but it must arrive **as a judgment with a judge attached**, the same path ADR-059 left unbuilt
+  for `software_native_advantage` and ADR-060 needs for §13.4's third flag. **One build, three
+  callers**; do not build a fourth bespoke declaration mechanism.
+  *Disproved by:* any `buyer_type` derived from the channel, the amount, or anything else that is
+  not somebody saying so.
 - [ ] **Phase 2's selector is honest but it is not yet quality-diversity.** Three measurable axes of
-  five, a one-dimensional archive, and no elite per niche — §12.3's Thompson posteriors need
-  stage-conversion data that does not exist. Still needed: §11.2's independent-adoption record, and
-  an **Auditor path for content judgments** — ADR-059's finding is that concreteness cannot be a
-  kernel computation (§23.5), so it enters as `software_native_advantage`'s missing judge rather than
-  as an axis, and ADR-060 leaves §13.4's third flag needing the same judge.
+  five, a **two**-dimensional archive (ADR-061), and no elite per niche — §12.3's Thompson posteriors
+  need stage-conversion data that does not exist, and `promotion.allocate` only ever issues rung 7,
+  so the ladder's next rung comes before the posteriors. Still needed: §11.2's independent-adoption
+  record, and an **Auditor path for content judgments** — ADR-059's finding is that concreteness
+  cannot be a kernel computation (§23.5), so it enters as `software_native_advantage`'s missing judge
+  rather than as an axis; ADR-060 leaves §13.4's third flag needing the same judge, and ADR-061 adds
+  `buyer_type` as its third caller.
   *Disproved by:* anything ranking Cells or proposals by a single scalar combining novelty with
   anything else.
 - [x] **Identical wake reason — TESTED, CONFIRMED, REMEDY REFUSED** (2026-08-27), ADR-055. Varying it

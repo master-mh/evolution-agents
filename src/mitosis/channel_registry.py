@@ -36,15 +36,12 @@ sent, and the operator can abandon, wait, or pick someone else.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import secrets
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
-from . import audit
+from . import audit, counterparty
 from .tool_registry import autonomy_enabled
 
 #: §25.1's ladder, and the number is deliberately **not** the flattering one.
@@ -322,42 +319,22 @@ def validate_request(channel: str, *, intent: str) -> ChannelSpec:
 
 
 # --- the counterparty hash (§16.3) --------------------------------------------
-
-
-def _salt(conn: sqlite3.Connection) -> bytes:
-    """The colony's counterparty salt, created once on first use.
-
-    Never rotated. Rotating it would silently empty the do-not-contact list and
-    the contact history — every hash would stop matching — which turns the one
-    guarantee people actually rely on into a no-op with no error anywhere.
-
-    Created lazily, which means the otherwise read-only `check_action` can write
-    this one row the first time it is asked anything. That is colony state
-    rather than action state — the same row every later call reads — and the
-    alternative, refusing to answer until someone runs a setup verb, would make
-    the "ask before you send" path the awkward one.
-    """
-    row = conn.execute("SELECT salt_hex FROM counterparty_salt WHERE id = 1").fetchone()
-    if row is not None:
-        return bytes.fromhex(row["salt_hex"])
-    salt_hex = secrets.token_hex(32)
-    conn.execute(
-        "INSERT OR IGNORE INTO counterparty_salt (id, salt_hex, created_at_utc) "
-        "VALUES (1, ?, ?)",
-        (salt_hex, datetime.now(timezone.utc).isoformat()),
-    )
-    row = conn.execute("SELECT salt_hex FROM counterparty_salt WHERE id = 1").fetchone()
-    return bytes.fromhex(row["salt_hex"])
+#
+# Moved to `counterparty.py` (ADR-061) once §12.1's inbound revenue key needed
+# the same digest under the same salt. What is left here is §21.2's *target*
+# normalisation, which is a channel concept: a domain and a platform account are
+# addressed openly and are stored as typed-but-normalised, not hashed.
 
 
 def normalise_target(value: str | None) -> str | None:
     """§21.2's domain and platform account, in the form the aggregation uses.
 
-    Normalised exactly as `counterparty_hash` normalises what it hashes, and for
-    the reason given there: `Alice@Ex.com` and `alice@ex.com` are one person, and
-    a dedupe that misses that is a dedupe that does not work. `Colony.Test` and
-    `colony.test` are one domain — DNS says so — and two operators typing a
-    platform account differently would otherwise collide on nothing.
+    Normalised by `counterparty.normalise`, the same function that normalises
+    what gets hashed, and for the reason given there: `Alice@Ex.com` and
+    `alice@ex.com` are one person, and a dedupe that misses that is a dedupe
+    that does not work. `Colony.Test` and `colony.test` are one domain — DNS
+    says so — and two operators typing a platform account differently would
+    otherwise collide on nothing.
 
     **Applied on write as well as on read**, and to every channel rather than
     only the one keyed on the column. The sibling query for a domain deliberately
@@ -368,23 +345,20 @@ def normalise_target(value: str | None) -> str | None:
     direction: a refused claim costs a conversation, a missed collision costs
     §21.1's shared assets.
     """
-    if value is None:
-        return None
-    return value.strip().casefold() or None
+    return counterparty.normalise(value)
 
 
-def counterparty_hash(conn: sqlite3.Connection, counterparty: str) -> str:
-    """The only representation of a counterparty this colony ever stores.
+def counterparty_hash(conn: sqlite3.Connection, party: str) -> str:
+    """§21.2's spelling of `counterparty.hash_of`, raising this module's error.
 
-    Normalised before hashing — trimmed and case-folded — because `Alice@Ex.com`
-    and `alice@ex.com` are one person, and a dedupe that misses that is a dedupe
-    that does not work. HMAC rather than a bare salted digest so the salt is
-    used as a key rather than as a prefix.
+    Kept as a name because §21.2's callers speak of a counterparty hash and
+    catch `ChannelError`; the digest itself is not a channel concept and no
+    longer lives here.
     """
-    normalised = (counterparty or "").strip().casefold()
-    if not normalised:
-        raise ChannelError("a counterparty must not be blank")
-    return hmac.new(_salt(conn), normalised.encode("utf-8"), hashlib.sha256).hexdigest()
+    try:
+        return counterparty.hash_of(conn, party)
+    except counterparty.CounterpartyError as exc:
+        raise ChannelError(str(exc)) from exc
 
 
 # --- §21.1 channel freeze -----------------------------------------------------

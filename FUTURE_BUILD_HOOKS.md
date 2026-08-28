@@ -1451,3 +1451,28 @@ actually queued for building — this file is memory, not a backlog to work thro
   *refusal* path is checked (exit 2, §24.3); the override is not — and the override is the half that
   matters, because it stamps the report `** SELF-GRADED, §24.3 **`. A flag that silently stopped
   stamping would leave a self-graded number reading like an independent one.
+
+<!-- 2026-08-28, ADR-061 (the inbound counterparty key) -->
+- **§12.1's `buyer_type` needs a declaration path, and three callers are now waiting on the same
+  one.** ADR-059 (`software_native_advantage`'s missing judge), ADR-060 (§13.4's third flag, "the
+  same mechanism is renamed"), and now ADR-061 (`buyer_type`). Each is a content judgment §23.5
+  keeps out of the kernel, and each currently abstains for the same reason. Build **one** path that
+  records a judgment together with who made it, not three bespoke fields.
+- **`source` on a revenue transaction is still free text, and it lands in the hash-chained
+  description.** ADR-061 gave the *party* a home that cannot hold an identity, but an operator who
+  types a customer name into `--source` still writes it permanently into the ledger, where §3.6
+  forbids editing it out. The CLI help now warns; nothing enforces it. A check is possible (refuse a
+  `source` containing an `@`, or matching a known counterparty spelling) and was deliberately not
+  built — it would over-refuse on invoice references and under-refuse on names.
+- **`revenue.record_revenue`'s default idempotency key is derived from `source`.** That is what makes
+  two payments from one buyer require two distinct `source` strings, which is correct (one invoice
+  recorded twice is not two payments) but is a sharp edge for anyone recording a genuine repeat.
+  Worth revisiting only if a real colony trips on it; do **not** fold the counterparty into the key,
+  which would make the digest load-bearing for idempotency and couple the salt to replay.
+- **`counterparty_salt` still lives in migration 0021, named for external actions.** Harmless, and
+  now slightly misleading: the table serves two subsystems. Not worth a rebuild on its own; fold the
+  rename into the next migration that touches it, if one ever does.
+- **The archive's niches now have mixed arity.** A genome with revenue bins on two dimensions and one
+  without bins on one, so they are different niches and a genome *moves* when its first payment
+  arrives. That is §12.2's rebinning working as specified, but it means niche occupancy is not
+  stable over time — worth remembering before anything caches it or reads a trend from it.

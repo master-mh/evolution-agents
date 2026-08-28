@@ -670,6 +670,7 @@ def cmd_record_revenue(args: argparse.Namespace) -> None:
             note=args.note,
             artifact_id=args.artifact,
             experiment_id=_require_experiment(conn, args.experiment),
+            counterparty=args.counterparty,
             idempotency_key=args.idempotency_key,
         )
     except revenue.RevenueError as exc:
@@ -679,6 +680,10 @@ def cmd_record_revenue(args: argparse.Namespace) -> None:
     print(f"Recorded revenue for cell {args.cell}")
     print(f"  amount:    {args.amount} ({amount} minor units) {book.value}")
     print(f"  source:    {args.source}")
+    # Whether, never who. Printing the digest would put a linkable key on a
+    # terminal and into whatever captures it, for no benefit to the operator,
+    # who typed the party in and already knows.
+    print(f"  counterparty recorded: {args.counterparty is not None}")
     if args.note:
         print(f"  note:      {args.note}")
     print(f"  txn:       {transaction.transaction_id}")
@@ -2811,7 +2816,15 @@ def build_parser() -> argparse.ArgumentParser:
     revenue_parser.add_argument(
         "--source",
         required=True,
-        help="who paid and for what — an invoice id, customer ref, or 'manual'",
+        help="what the payment was for — an invoice id or 'manual'. Not the place "
+             "for the buyer's name: this text goes into the hash-chained "
+             "description. Use --counterparty for who paid.",
+    )
+    revenue_parser.add_argument(
+        "--counterparty", default=None,
+        help="who paid (§12.1, §16.3). Stored only as a salted hash — the same "
+             "digest §21.2 uses outbound — so the colony can tell a repeat buyer "
+             "from a new one and can never say who either is.",
     )
     revenue_parser.add_argument(
         "--book", default=Book.USD_REAL.value, choices=[Book.USD_REAL.value, Book.USD_SIM.value]

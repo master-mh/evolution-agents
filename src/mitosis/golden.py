@@ -972,7 +972,60 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #               genomes instead of Cells would reproduce this section exactly.
 #               `test_a_niche_counts_living_cells_and_not_the_genomes_they_share`
 #               is what actually defends that, with two Cells sharing one genome.
-EXPECTATION_VERSION = 30
+#   30 -> 31 (§12.1's inbound counterparty key; §16.3, §21.2, §3.4; ADR-061).
+#           **The scenario gained a second payment, from the same buyer as the
+#           first.** Six sections move and five of them are that payment's
+#           arithmetic; the sixth is the point of the slice.
+#           (a) **`novelty_archive`: the archive is two-dimensional.**
+#               `measured_dimensions` gains `revenue_recurrence`, and
+#               `unmeasured_dimensions` drops to `buyer_type` alone. cell#4's
+#               genome leaves `novelty_distance=adjacent` (3 genomes, 3 living
+#               cells -> 2 and 2) for the new niche
+#               `revenue_recurrence=repeat/novelty_distance=adjacent` (1, 1).
+#               **`repeat` rather than `one_off` is deliberate**: it is the only
+#               bin whose value depends on two digests being *equal*, so a broken
+#               salt, a dropped normalisation, or a counterparty silently not
+#               written all show up here. A one-payment scenario would report
+#               `one_off` whether or not any of that worked — the same
+#               indistinguishable-fixture shape that made ADR-060's niche
+#               occupancy uncatchable in a replay.
+#           (b) **`buyer_type` stays unmeasured, and that is the finding.**
+#               ADR-060 recorded this dimension as blocked on the counterparty
+#               key. The key is built and it does not unblock it: a salted digest
+#               gives equality, never identity, and §16.3 keeps customer identity
+#               out of this colony permanently. Version 30's note said to watch
+#               for either dimension "becoming measured without a counterparty
+#               key"; the sharper watch now is `buyer_type` becoming measured
+#               *at all* without a declarer, which would mean something started
+#               classifying buyers from the channel or the amount.
+#           (c) **`balances`: USD_REAL is identical in every account.** Only
+#               USD_SIM moves, by the second payment of 15: cell#4 cash 570 ->
+#               585 against `revenue` -40 -> -55 (revenue accrues negative — an
+#               external source is a place value comes from).
+#           (d) **`experiments`** `synthetic_revenue` and `synthetic_net_profit`
+#               40 -> 55, which is §2.6 deriving a *sum* over two payments for
+#               the first time; the in-scenario assertion moved with it, and a
+#               report that returned the latest payment rather than the total
+#               would have passed the old one.
+#           (e) **`assessments`** `revenue_since_minor_units` 40 -> 55, the same
+#               15 reaching §13.2's frontier.
+#           (f) **`transaction_types`** USD_SIM `cell_revenue` 1 -> 2 and
+#               **`audit_event_types`** `cell_revenue_recorded` 1 -> 2: one more
+#               payment, one more event. The audit event records
+#               `counterparty_recorded: true` and never the digest, so nothing
+#               counterparty-shaped enters the snapshot — the same rule §21.2's
+#               registry has followed since ADR-036, and necessary here for the
+#               same reason: the salt is per colony, so a digest in the snapshot
+#               would make the replay non-deterministic.
+#           (g) **What did *not* move, and is the load-bearing part.** Every
+#               transaction hash in the scenario that has no counterparty is
+#               byte-identical, because the new field is omitted from the hash
+#               preimage when absent rather than included as null. Including it
+#               as null would have made `verify_chain` report every existing
+#               colony's entire ledger as tampered with.
+#               `test_a_transaction_without_a_counterparty_hashes_as_it_always_did`
+#               pins the pre-0028 formula directly.
+EXPECTATION_VERSION = 31
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -1941,6 +1994,20 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         hypothesis="fixed scenario: does the write-up earn anything",
         ladder_rung=1,
     )
+    #     **Both payments name the same counterparty** (ADR-061), and the
+    #     replay is pinned on `repeat` rather than on `one_off` for a specific
+    #     reason: `repeat` is the only conclusion that depends on two digests
+    #     being *equal*. A broken salt, a dropped normalisation or a counterparty
+    #     silently not written all turn `repeat` into `one_off`, and a scenario
+    #     with one payment reports `one_off` whether or not any of that works.
+    #     ADR-060's missed niche-occupancy bug was the same shape — a fixture
+    #     that could not tell the two behaviours apart.
+    #
+    #     The `source` differs between them because the default idempotency key
+    #     is derived from it: one invoice recorded twice is not two payments,
+    #     and the ledger says so before this scenario gets a chance to.
+    #     `--counterparty` is never `source`; the party is hashed, the invoice
+    #     reference is not.
     revenue.record_revenue(
         conn,
         cell_id=auditor_child.cell_id,
@@ -1949,7 +2016,21 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         book=Book.USD_SIM,
         artifact_id=golden_artifact,
         experiment_id=golden_experiment.experiment_id,
+        counterparty="golden-buyer@golden.test",
         idempotency_key="golden:revenue:artifact",
+    )
+    revenue.record_revenue(
+        conn,
+        cell_id=auditor_child.cell_id,
+        amount_minor_units=15,
+        source="golden-run fixed customer, second invoice",
+        book=Book.USD_SIM,
+        experiment_id=golden_experiment.experiment_id,
+        # Deliberately spelled differently. §16.3's normalisation is what makes
+        # this the same buyer, and a replay that used the identical string twice
+        # would pass with the normalisation deleted.
+        counterparty="  Golden-Buyer@Golden.Test  ",
+        idempotency_key="golden:revenue:artifact:second",
     )
 
     # 19. The external-action registry (§21, §28 Phase 8; ADR-036). The Cell
@@ -2211,13 +2292,17 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     #      scenario that concluded it earlier would pin the section as absent.
     #
     #      §2.6's report is asserted rather than merely recorded: the experiment
-    #      earned 40 USD_SIM and moved no real money, so a derivation reading the
-    #      wrong account or the wrong book fails here rather than in a hash.
+    #      earned 40 + 15 USD_SIM across its two payments (ADR-061) and moved no
+    #      real money, so a derivation reading the wrong account or the wrong
+    #      book fails here rather than in a hash. The sum is spelled out because
+    #      it is the second payment that makes it a sum at all — a report that
+    #      silently returned the *latest* payment rather than the total would
+    #      have passed the old single-payment assertion.
     golden_report = experiments.report(conn, golden_experiment.experiment_id)
-    if golden_report.synthetic_revenue_minor_units != 40:
+    if golden_report.synthetic_revenue_minor_units != 55:
         raise AssertionError(
             "§2.6: the experiment's synthetic revenue should be derived from the "
-            f"ledger as 40, got {golden_report.synthetic_revenue_minor_units}"
+            f"ledger as 55, got {golden_report.synthetic_revenue_minor_units}"
         )
     if golden_report.real_spend_minor_units != 0:
         raise AssertionError("a golden run must never move USD_REAL")

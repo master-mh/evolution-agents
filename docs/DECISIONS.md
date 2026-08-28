@@ -3478,3 +3478,122 @@ computable; the other two of the three ADR-058 deferred still need a judge.
   hold as many living Cells as genomes, so counting genomes instead of Cells would reproduce the
   section exactly. A named unit test defends it instead — found by teeth-checking, which reported
   that mutation as MISSED until the fixture was changed to make the two counts differ.
+
+---
+
+## ADR-061: the inbound counterparty key unblocked one dimension, and disproved the claim about the other
+
+- **Status:** Accepted; new `counterparty.py`, migration 0028, golden expectations 30 -> 31
+- **Spec ref:** §12.1, §12.2, §16.3, §21.2, §3.4, §3.6, §2.5, §2.6, §23.5, §0.3; ADR-036, ADR-044,
+  ADR-047, ADR-059, ADR-060
+- **Context:** ADR-060 shipped a **one-dimensional** archive. Its stated blocker was specific:
+  `revenue.record_revenue` recorded who paid as free-text `source`, so two payments from one buyer
+  were indistinguishable from one payment each from two. PRIORITIES, `novelty._buyer_type`,
+  `novelty._revenue_recurrence` and BUILD_RECORD all said the same thing — build an inbound
+  counterparty key and **both** of §12.1's remaining dimensions become measurable.
+
+### The key was right. The claim about what it unblocks was half wrong
+
+A salted digest gives **equality without identity**. That is exactly what `revenue_recurrence`
+needs — one-off / repeat is a question about *the same buyer paying again* — and it is exactly what
+`buyer_type` does not need. human consumer / small business / enterprise / machine is a claim about
+who the buyer **is**, and §16.3 puts customer identity permanently outside this colony. There is
+nothing to classify from, with the key or without it.
+
+So `buyer_type` was never blocked on this key, and building the key proved it rather than fixing it.
+The honest route left is a **declaration by someone who can see the buyer**, which is ADR-059's
+finding again: a judgment the kernel cannot compute (§23.5) enters with a judge attached, not as a
+derived axis. Deriving it from the channel a party was contacted on would be a guess wearing a
+measurement's clothes — the shape ADR-044 named.
+
+**Four tracking files carried the wrong version of this claim**, each correct about the direction
+and wrong about the scope. That is this repo's documented drift shape, and the correction is now
+written into `novelty._buyer_type` and the module docstring rather than only into an ADR.
+
+### Where the key lives, and why not the three easier places
+
+| candidate | why not |
+|---|---|
+| `ledger_transactions.metadata_json` | **Not in the hash preimage.** `_compute_hash` covers the transaction's identifying fields and its canonicalised entries — no metadata on either side. A counterparty there is silently editable, and this field decides whether a Cell occupies §12.1's `repeat` niche, which is a fitness-bearing claim. |
+| a `revenue_counterparties` side table | Droppable and editable independently of the payment it describes, and outside §3.4's chain. Who paid is a fact *about the payment*, and the payment is a ledger row. |
+| reuse `external_action_registry` | §21.2 records actions the colony **took**. A payment received is not an action taken, and filing one there would make "contacted" and "paid" the same row shape. |
+
+It goes on `ledger_transactions` as a column and **into the hash preimage**, so editing who paid
+invalidates every transaction that followed (§3.6: never edit history, post an adjustment).
+
+### The preimage is extended by omission, which is the whole risk of this slice
+
+Adding `"counterparty_hash": None` to every preimage would change the hash of **every transaction
+ever written**, so `verify_chain` would report the entire ledger of every existing colony as
+tampered with — the exact alarm the chain exists to raise, for the exact wrong reason. The key is
+therefore included **only when present**, unlike `event_id`, which is included as null. The
+inconsistency is deliberate and is the one thing in this slice that had to be got right:
+
+- `test_a_transaction_without_a_counterparty_hashes_as_it_always_did` recomputes the pre-0028
+  formula by hand and compares it to a stored hash.
+- `test_clearing_who_paid_breaks_the_chain` covers the risk omission creates — that *erasing* a
+  counterparty might reproduce the old hash. It does not; the stored hash was computed with the key
+  present.
+- The golden run passed **unchanged** on the first full run after the ledger change, before the
+  scenario recorded any counterparty. That was the real evidence.
+
+### The CHECK constraint is the §16.3 guarantee, not input validation
+
+`counterparty_hash` is declared `CHECK (… length = 64 AND NOT GLOB '*[^0-9a-f]*')`, so the column
+**cannot physically hold** an email address, an account handle or a legal name. ADR-047's lesson
+applied a second time: before building a seam to enforce something, ask whether the schema can make
+it unrepresentable. A seam binds callers that know about it; a constraint binds callers that do not
+exist yet. Teeth-checking confirmed the shape — mutating `revenue` to store the raw party is stopped
+by the constraint at the INSERT, not by a test noticing the leak afterwards.
+
+`counterparty.is_hash` states the same rule in Python, and `test_the_schema_check_and_is_hash_are_one_rule`
+builds a probe table **from the migration's own text** so the two spellings cannot drift apart.
+
+### The cadence abstains in one direction only
+
+`repeat` survives an incomplete record and `one_off` does not, because more data can add a repeat
+and can never remove one:
+
+- a digest seen twice is `repeat` **even if other payments are unkeyed**;
+- all payments keyed and all distinct is `one_off`;
+- all distinct *but some payments unkeyed* **abstains** — an unkeyed payment could be the second one
+  from a buyer already counted, and reporting `one_off` there is ADR-044's undercount trap.
+
+Both halves are teeth-checked, in both directions: an implementation that read `one_off` from a
+partial record fails one named test, and an implementation that abstained whenever *any* payment
+lacked a key — safe, and throwing away a conclusion it had already earned — fails another.
+
+**Aggregated across the genome's Cells, not per Cell.** The archive bins genomes, and one buyer
+coming back to the same business idea is a repeat customer of that idea whichever sibling took the
+second payment. ADR-060's named trap ran the other way — counting *payments* per Cell would call
+three one-off customers `repeat` — and keying on the buyer is what closes it.
+
+### `subscription` is a bin nothing can produce, and that is written down
+
+Telling a subscription from a loyal buyer means telling a **contract** from a payment pattern, and
+that needs the service-obligation record §16.3 calls liability-linked. This colony has none. A
+subscription therefore lands in `repeat` and says so in its reason. `UNREACHABLE_BINS` records the
+refusal, because a bin that never appears looks identical to a bin that never happens and only one
+of those is a statement about the colony.
+
+### What it displaced
+
+- **A `buyer_type` declared at `record_revenue`.** Admissible in principle — no Cell can record
+  revenue, so §23.5's "a field a Cell can fill is a field it will optimise" does not bite, and the
+  operator declaring a buyer type is no stranger than the operator declaring the amount. Rejected
+  for this slice because it would smuggle a **judgment** into a slice about a **key**, and because
+  the amount is checkable against an invoice (§3.7) while the type is checkable against nothing.
+  It belongs with ADR-059's missing judge, arriving with a declarer recorded beside it.
+- **A second payment counted per Cell rather than per buyer** — the obvious implementation, and the
+  one ADR-060 explicitly warned about.
+- **Leaving `counterparty_hash` in `channel_registry`.** `revenue` sits at the ledger end of the
+  layering and `channel_registry` up where `context` imports it, so the primitive was extracted to
+  `counterparty.py`, which depends on nothing but the salt row. Both directions now share one salt
+  deliberately: a party the colony contacted who then pays produces the same digest, so §21.2's
+  contact history and the money join up without either side holding an identity. Two salts would
+  have looked identical to every test that exercised one direction.
+- **Pinning the golden run on `one_off`.** A single payment reports `one_off` whether or not the
+  salt, the normalisation, or the write works at all. The replay records **two payments from the
+  same buyer, spelled differently**, because `repeat` is the only bin whose value depends on two
+  digests being equal. This is ADR-060's own lesson: its niche-occupancy bug was uncatchable in the
+  replay because the fixture could not distinguish the two behaviours.

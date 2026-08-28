@@ -12,65 +12,62 @@ proposed experiments, the strategy kind decided, the experiment_id foreign keys,
 normalised cost, the reply format a model can follow, the temperature/diversity
 measurement, §15.1 anchoring and the twins that chose the fix, the proposal log that
 shows no wording, the §23.4 repeat, the wake reason, the genome, the human-decision wake,
-the +15% that did not survive honesty, §13.4's concreteness measure, and
-§13.2's selector, 2026-07-21 through 2026-08-27):
+the +15% that did not survive honesty, §13.4's concreteness measure,
+§13.2's selector, and §12's novelty archive, 2026-07-21 through 2026-08-27):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-27 — §31 lists two tables for the novelty archive, and §12.2 refuses both
+## 2026-08-28 — The counterparty key unblocked one dimension and disproved the claim about the other
 
-`novelty.py` + 17 tests + `mitosis archive` + golden expectations **29 -> 30** (ADR-060).
-**No migration.** `structural_novelty` wired into §13.2's frontier.
+`counterparty.py` + **migration 0028** + 19 tests + `record-revenue --counterparty` + golden
+expectations **30 -> 31** (ADR-061). §12.1's archive is **two-dimensional**.
 
-ADR-059 shipped the selector with `structural_novelty` abstaining and ADR-058 scored one of §13.4's
-four flags, both for the same reason: **there was nothing to be novel against.**
+Four tracking files said an inbound counterparty key would unblock both of §12.1's remaining
+dimensions. It unblocked one, and building it is what proved the other was never blocked on it.
 
-### The clause that removed the tables
+### A digest gives equality, never identity
 
-> **§12.2** Store full raw behavioural descriptors **separately**; the archive is a **derived
-> view**, allowing later rebuilding with different dimensions and bins.
+`revenue_recurrence` asks whether *the same buyer paid again* — a question about equality, which is
+exactly what a salted hash answers. `buyer_type` asks who the buyer **is**, and §16.3 puts customer
+identity permanently outside this colony. No key can produce it; it needs a **declarer**, which is
+ADR-059's missing judge in a second place. The correction is written into `novelty._buyer_type`
+itself, not only into the ADR, because that is where the wrong claim was.
 
-Read as an instruction it says "make a table". Read for what it protects, it says the archive must
-not *be* the record — and in this kernel the raw material already lives separately and in better
-custody: `cell_genomes` is content-addressed (§16.1) and append-only. A `behavioural_descriptors`
-table would be the second version §2.5 refuses, and §31 offers "suggested entities" rather than a
-build order. **Third and fourth §31 entity that §2.5 has removed** (after ADR-043, ADR-044).
+### Where it lives, and the one risky part
 
-### One of §12.1's three dimensions is live, and the block on the other two is specific
+On `ledger_transactions` as a column, **inside §3.4's hash preimage** — who paid is a fact about the
+payment, and this field decides whether a Cell occupies §12.1's `repeat` niche. `metadata_json` was
+the tempting home and is not covered by the hash at all.
 
-`novelty_distance` is structural. `buyer_type` and `revenue_recurrence` both need to know *who
-paid*, and `revenue.record_revenue` records that as free text — so two payments from one buyer are
-indistinguishable from one each from two. **The colony already solved this outbound**: §21.2's
-`external_action_registry` stores a salted hash of a counterparty, equality without identity, exactly
-as §16.3 requires. Naming the asymmetry beats guessing: counting payments per *Cell* would report a
-Cell with three one-off customers as `repeat`.
+**The preimage is extended by omission.** Including the key as null on every transaction would
+change every hash ever written and make `verify_chain` report every existing colony as tampered
+with. Including it only when present leaves pre-0028 rows byte-identical — evidenced by the golden
+run passing **unchanged** on the first full run after the ledger change, and pinned by a test that
+recomputes the pre-0028 formula by hand.
 
-### The bins are §13.4's language, not a threshold anyone chose
+### The CHECK is the guarantee, not validation
 
-**adjacent** = the nearest earlier genome differs in exactly one business field, which is §13.4's
-first flag as a distance. **moderate** = more than one, but some earlier genome shares its `market`.
-**radical** = no earlier genome shares its `market` (§16.3 makes the market hypothesis what keeps a
-lineage that lineage).
+The column is declared `CHECK (length = 64 AND NOT GLOB '*[^0-9a-f]*')`, so it **cannot hold** an
+email address — ADR-047's lesson twice over: a seam binds callers that know about it, a constraint
+binds callers that do not exist yet. A probe table built from the migration's own text pins
+`counterparty.is_hash` against it so the two spellings cannot drift.
 
-**Radical is checked first**, and that ordering is load-bearing — a genome whose only changed field
-*is* the market would otherwise be filed as a relabel, inverting §13.4 rather than applying it.
-**Zero distance is a real case**: a genome differing only in `risk_class` or `allowed_tools` gets a
-new content hash and the same hypothesis, so it bins `adjacent` with its own reason. Otherwise a Cell
-could reach a further niche by asking for permissions instead of by having an idea.
+### The cadence abstains in one direction only
 
-**It is a distance, not a merit.** A small one is evidence of §13.4's first flag; a large one proves
-nothing, since a genome changed to nonsense scores `radical`. Being a Pareto axis rather than a score
-is what makes it safe to ship: nothing is funded for being radical.
+`repeat` survives a partial record (more data can add a repeat, never remove one); `one_off` does
+not. Aggregated across a genome's Cells, because one buyer returning to the same idea is a repeat
+customer of that idea. `subscription` is unreachable — telling it from a loyal buyer needs the
+service-obligation record §16.3 calls liability-linked — and `UNREACHABLE_BINS` says so rather than
+leaving an absent branch.
 
 ### Verification
 
-- **Teeth-checked eight ways**, and **two came back MISSED** — the §13.4 flag keyed on a field count
-  rather than on the market, and niche occupancy counting genomes instead of Cells. Both fixtures
-  could not distinguish the two behaviours; rewritten, both now CAUGHT. The second one the golden
-  replay also cannot catch, because its two niches happen to hold as many Cells as genomes.
-- **1058 tests and the golden run green.** Only the `selection` section changed
-  (`structural_novelty` null -> 0.0) plus the new `novelty_archive` section; **`balances` identical
-  in every account in every book**, because the archive is derived and writes nothing.
-- Next: an **inbound counterparty key** is what unblocks two more §12.1 dimensions and with them a
-  two- or three-dimensional archive. Then §12.3's Thompson posteriors — which need stage
-  *conversions*, and `promotion.allocate` only ever issues rung 7, so the ladder's next rung comes
-  first.
+- **Teeth-checked twelve ways, all CAUGHT**, including both directions of the abstention rule and a
+  faithful per-Cell aggregation that produces a plausible wrong bin (`one_off`) rather than none.
+- **1077 tests and the golden run green.** USD_REAL identical in every account; the replay is pinned
+  on `repeat` with the buyer **spelled differently** in the two payments, because `repeat` is the
+  only bin whose value depends on two digests being equal.
+- Next: §12.1 asks for two or three dimensions and now has two. The third needs a **declared**
+  `buyer_type` with its declarer recorded — the same Auditor/human judgment path ADR-059 left
+  unbuilt and ADR-060 needs for §13.4's third flag, so it is one build serving three callers. After
+  that, §12.3's Thompson posteriors, still blocked on stage *conversions* while `promotion.allocate`
+  only ever issues rung 7.

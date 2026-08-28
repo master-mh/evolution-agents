@@ -109,6 +109,10 @@ class Transaction(_Frozen):
     description: str = ""
     previous_transaction_hash: str | None
     transaction_hash: str
+    #: Who paid, as §16.3's salted digest and never as themselves (§12.1, §21.2).
+    #: NULL on every transaction that has no counterparty — which is most of
+    #: them, and on revenue recorded before migration 0028.
+    counterparty_hash: str | None = None
     metadata: dict[str, Any] = {}
     entries: tuple[Entry, ...]
 

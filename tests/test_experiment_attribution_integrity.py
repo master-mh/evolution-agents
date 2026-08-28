@@ -391,29 +391,39 @@ def test_the_refusal_names_the_id_and_offers_the_alternative(conn, cell):
 # --------------------------------------------------------------------------
 
 
-def _migrate_through(conn, last_filename):
-    """Apply migrations in order up to and including `last_filename`, so a
-    database can be built in its pre-0027 shape and then upgraded."""
+def _migrate_all_except(conn, skipped_filename):
+    """Apply every migration in order **except** one, so a database can be built
+    in its pre-`skipped_filename` shape and then upgraded.
+
+    Was `_migrate_through(conn, "0026_experiments.sql")` — stop at 0026 — which
+    said "a colony at 0026" while meaning "a colony without the foreign keys".
+    Those coincided until migration 0028 added a column the kernel writes
+    unconditionally, and then the fixture started failing on a schema gap that
+    has nothing to do with what these tests are about. Naming the *excluded*
+    migration keeps the fixture true as later ones land.
+    """
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations ("
         "  filename TEXT PRIMARY KEY,"
         "  applied_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
         ")"
     )
+    applied = False
     for path in db._migration_files():
-        if path.name > last_filename:
-            break
+        if path.name == skipped_filename:
+            applied = True
+            continue
         conn.executescript(path.read_text())
         conn.execute("INSERT INTO schema_migrations (filename) VALUES (?)", (path.name,))
+    assert applied, f"{skipped_filename} is not a migration; the fixture is testing nothing"
     return conn
 
 
 @pytest.fixture()
 def pre_fk_conn():
-    """A colony at migration 0026 — everything except the experiment foreign
-    keys."""
+    """Today's schema minus the experiment foreign keys."""
     connection = db.connect()
-    _migrate_through(connection, "0026_experiments.sql")
+    _migrate_all_except(connection, FK_MIGRATION)
     population.set_limits_if_absent(
         connection,
         PopulationLimits(
