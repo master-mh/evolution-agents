@@ -3810,3 +3810,89 @@ structurally at the one module that acts on a verdict at all.
 - **A substring test for "promotion" in `scheduler.py`.** It tripped on the seam's own name, and was
   loose where it mattered (`from . import promotion as p` passed it) and tight where it did not.
   Replaced with an AST import check.
+
+---
+
+## ADR-064: §12.3's `P(next stage)` counts a realised conversion, never §25.2's evidence verdict
+
+- **Status:** Accepted; `posteriors.py`, `mitosis posteriors`, golden expectations 33 -> 34
+- **Spec ref:** §12.3, §12.1, §12.2, §10.5, §2.5, §25.1, §25.2; ADR-063
+
+- **Context:** ADR-063 made a rung-7 -> rung-8 conversion representable
+  (`promotions.supersedes_promotion_id`), which is what FUTURE_BUILD_HOOKS had named as the one
+  missing precondition for §12.3's beta-binomial `P(next stage)`: "every one of them needs
+  stage-*conversion* events — Cells moving between §25.1 rungs — and `promotion.allocate` only ever
+  issued rung 7, so the colony has produced no conversions at all." With rung 8 issuable, this slice
+  builds exactly the one thing §12.3 names as an acceptable first implementation: "First implementation
+  may use beta-binomial stage-conversion posteriors" — leaving expected net value, expected time to
+  conversion, probability of reproducibility and probability of large loss to FUTURE_BUILD_HOOKS.
+
+### The decision that had to be made before any arithmetic: what counts as a trial
+
+`outcome.py` already computes a verdict for a rung-7 promotion — `SUPPORTS_PROMOTION` — that answers
+"does this promotion's own evidence currently support an expansion". It is *available*, it is *already
+a Bernoulli-shaped signal*, and it is the wrong thing to count. §10.5's whole discipline is deciding on
+**realised** facts rather than estimates; generalised from one Cell to a niche of them, a niche's
+stage-conversion rate must be about Cells that actually **climbed** the ladder, not about promotions
+the kernel currently believes *could* climb it. A Cell can earn `SUPPORTS_PROMOTION` and never be
+allocated rung 8 — an operator can simply not act, or the pool can be empty, or nobody has looked —
+and none of those is evidence about the niche's conversion rate. `test_supporting_evidence_without_
+an_actual_conversion_does_not_count` pins the case directly: an earned rung-7 promotion, confirmed via
+`outcome.assess` to read `SUPPORTS_PROMOTION`, with the posterior still reporting zero conversions
+because nothing allocated rung 8 against it.
+
+So the trial is a raw SQL join over `promotions`, keyed on `supersedes_promotion_id` — not a call into
+`outcome.py` at all. That also keeps the same layering `promotion.py` already enforces on `outcome`:
+`outcome` imports `promotion`, so a call the other way is a back-edge, and this module avoids the
+question by depending on neither reading the other's judgment.
+
+### The niche is `novelty.archive`'s coordinate, not the Cell
+
+§12.3 asks for a posterior "within each niche", and a niche is already defined — §12.1's
+buyer_type/revenue_recurrence/novelty_distance coordinate over a **genome**, not a Cell
+(`novelty.archive`, ADR-060). A rung-7 promotion is attributed to the niche of the Cell's genome at
+query time, the same posture `Archive.living_cells` already takes. Genomes that abstain on every §12.1
+dimension have no niche; their promotions are not dropped, they are counted separately
+(`unbinned_trials`/`unbinned_conversions`), matching `Archive.unbinned_genome_hashes`'s own posture of
+naming an absence rather than hiding it.
+
+### An empty niche gets Beta(1, 1), not an abstention
+
+Every other dimension this codebase reports with no data abstains — `economic_potential`,
+`reproducibility`, an unattested `buyer_type` — because each of those has no formula to fall back on
+without evidence. A beta-binomial posterior is different: Beta(1, 1) *is* the answer at zero trials,
+and it is the one §12.3 actually asked for, because Thompson sampling needs every niche, including
+unfunded ones, to have a distribution it can be drawn from. Reporting `UNEVALUABLE` here would be the
+one dimension in this codebase where withholding is the less honest choice, not the safer one.
+
+### No table, and §12.3's own future-proofing clause answered for free
+
+"schemas must allow hierarchical/non-stationary models later" is §12.3's explicit requirement on
+whatever ships first. `posteriors.py` owns no table — derived on every read, the same posture
+`novelty.py` and `selection.py` already take toward §2.5 and §12.2 — so a richer posterior later is a
+different function body over the same `promotions` rows, never a migration. The requirement is
+satisfied by the module having nothing to migrate.
+
+### Guarded the same way `selection.py`'s frontier is
+
+A per-niche conversion rate is exactly the "estimated negative EV" shape §10.5 forbids acting on
+without an independent Auditor concurring, generalised from one Cell to a niche of them.
+`test_no_kernel_path_acts_on_a_posterior` closes `death.py`, `promotion.py`, `displacement.py` and
+`scheduler.py` structurally, mirroring `test_no_kernel_path_acts_on_a_frontier`; `test_the_posterior_
+never_reaches_a_cell` closes `context.py` and `deliberation.py` for the same §23.5 reason `selection.py`
+is closed to them. Teeth-checked: an import from `death.py` (no import cycle, since `posteriors` never
+imports `death`) is caught by the AST guard; the same mutation into `promotion.py` fails at import time
+with a circular-import error before the guard even runs, because `posteriors` already imports
+`promotion` for its rung constants — a stronger guarantee than the test, not a gap in it.
+
+### What it displaced
+
+- **Reading `outcome.Verdict.SUPPORTS_PROMOTION` as the Bernoulli trial.** The obvious signal, already
+  computed, already binary — and the one §10.5 forbids, per the section above.
+- **A `stage_conversion_posteriors` table.** Rejected on the same §2.5/§12.2 grounds `novelty.py` and
+  `selection.py` already settled: nothing here is a fact a decision has consumed yet.
+- **Reporting an empty niche as unevaluable.** The one dimension in this codebase where that would be
+  the *less* honest choice — see above.
+- **A credible interval alongside the posterior mean.** §12.3 asks for a posterior, not a confidence
+  statement about it; a beta inverse-CDF is machinery this module does not need to ship the first
+  implementation and is logged in FUTURE_BUILD_HOOKS rather than built speculatively.

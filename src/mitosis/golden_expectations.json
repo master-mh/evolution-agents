@@ -1,5 +1,5 @@
 {
-  "expectation_version": 33,
+  "expectation_version": 34,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "482ab8a828c70568ae37fdd88c930a960c786a5b724a658f0226b70166e82212",
+  "semantic_hash": "7d92b7a41bdabb1d5dd104894fd6098d36d70c7f74f9569a52070f565af00819",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -1800,6 +1800,36 @@
         "economic_potential",
         "transfer_robustness"
       ]
+    },
+    "stage_conversion_posteriors": {
+      "niches": [
+        {
+          "alpha": 1.0,
+          "beta": 2.0,
+          "conversions": 0,
+          "niche": "buyer_type=small_business/revenue_recurrence=repeat/novelty_distance=adjacent",
+          "posterior_mean": 0.333333,
+          "trials": 1
+        },
+        {
+          "alpha": 1.0,
+          "beta": 1.0,
+          "conversions": 0,
+          "niche": "novelty_distance=adjacent",
+          "posterior_mean": 0.5,
+          "trials": 0
+        },
+        {
+          "alpha": 1.0,
+          "beta": 1.0,
+          "conversions": 0,
+          "niche": "novelty_distance=radical",
+          "posterior_mean": 0.5,
+          "trials": 0
+        }
+      ],
+      "unbinned_conversions": 0,
+      "unbinned_trials": 0
     },
     "tool_calls": [
       {

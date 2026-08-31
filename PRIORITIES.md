@@ -228,14 +228,22 @@
   enforced by migration 0030's trigger rather than by `promotion.py` (ADR-047), including a
   same-Cell check that is §29's reciprocal evidence farming as a plausible-looking foreign key.
   Teeth-checked twelve ways; the twelfth found a test passing for the wrong reason.
-- [ ] **§12.3's beta-binomial stage-conversion posteriors — now unblocked and the front of Phase 2.**
-  Rung-7 promotions that converted to rung 8 are the binary the posteriors need, and ADR-063 made
-  that conversion recordable and distinguishable (`supersedes_promotion_id`,
-  `decided_automatically`). §12.3 also names expected net value if successful, expected time to
-  conversion, probability of reproducibility and probability of large loss — and the spec permits
-  starting with the beta-binomial alone, provided the schema allows hierarchical/non-stationary
-  models later. Still needed alongside: **no elite per niche**, and §11.2's independent-adoption
-  record.
+- [x] **§12.3's beta-binomial stage-conversion posteriors — BUILT** (2026-08-31), ADR-064, golden
+  33 -> 34. `posteriors.py`: one Beta(1, 1) posterior per §12 niche, over realised rung-7 -> rung-8
+  conversions (`promotions.supersedes_promotion_id`, ADR-063). **The trial deliberately does not
+  read `outcome.py`'s `SUPPORTS_PROMOTION` verdict** — that answers whether a promotion's evidence
+  *could* earn an expansion, which is an estimate a person can decline to act on, and §10.5's
+  discipline (realised facts, not estimates) rules it out as the Bernoulli signal.
+  `test_supporting_evidence_without_an_actual_conversion_does_not_count` pins the distinction
+  directly. **An empty niche still gets a posterior** — Beta(1, 1), not an abstention — the one
+  dimension in this codebase where withholding would be the less honest choice, because Thompson
+  sampling needs every niche, funded or not, to be sampled from. No table (§2.5/§12.2's derived-view
+  posture), which also satisfies §12.3's "schemas must allow hierarchical/non-stationary models
+  later" for free: nothing here has a schema to migrate. **First-implementation scope only** —
+  expected net value, expected time to conversion, probability of reproducibility and probability of
+  large loss are unbuilt and logged in FUTURE_BUILD_HOOKS, each needing machinery this colony does
+  not have yet. Still needed alongside, unchanged from before this slice: **no elite per niche**, and
+  §11.2's independent-adoption record.
   *Disproved by:* anything ranking Cells or proposals by a single scalar combining novelty with
   anything else.
 - [x] **Identical wake reason — TESTED, CONFIRMED, REMEDY REFUSED** (2026-08-27), ADR-055. Varying it

@@ -1421,11 +1421,30 @@ actually queued for building — this file is memory, not a backlog to work thro
   counter is §13.4's fourth flag (does the change introduce any capability or transaction structure),
   which lives outside the kernel by ADR-058 — so automating §14 without wiring a judge would open the
   surface before the defence exists.
-- **§12.3's Thompson-sampling posteriors are the missing half of the archive.** Per niche: `P(next
-  stage)`, expected net value if successful, expected time to conversion, probability of
-  reproducibility, probability of large loss. Every one of them needs stage-*conversion* events —
-  Cells moving between §25.1 rungs — and `promotion.allocate` only ever issues rung 7, so the colony
-  has produced no conversions at all. Build the ladder's next rung before the posteriors, not after.
+- **§12.3's Thompson-sampling posteriors — `P(next stage)` is built (ADR-064, `posteriors.py`); the
+  other four are not.** §12.3 names `P(next stage)`, expected net value if successful, expected time
+  to stage conversion, probability of reproducibility, and probability of large loss, and permits
+  shipping the first alone. What is still missing, and why each is a separate build rather than an
+  extension of `posteriors.py`'s beta-binomial:
+  - **Expected net value if successful** needs a value model over `outcome.assess`'s
+    `net_contribution_minor_units`, conditioned on conversion — a different statistic (a mean over a
+    continuous quantity) from a beta-binomial's conversion rate, and §10.3 ("Explorers need no
+    immediate revenue") is exactly the clause that makes "success" and "value" two different axes
+    here, not one collapsed into the other.
+  - **Expected time to stage conversion** needs a survival-style time-to-event model — the
+    beta-binomial `posteriors.py` ships throws away *when* a conversion happened, only whether it
+    did, and a rung-7 promotion still open is right-censored, not a failure. `outcome.py`'s own
+    censoring of overdue-but-unresolved forecasts is the nearest precedent for the shape, not a
+    ready-made answer.
+  - **Probability of reproducibility** is still blocked on §11.2's independent-adoption record,
+    unbuilt for the same reason `selection.GATE_DIMENSIONS["reproducibility"]` abstains: nothing
+    yet records one Cell's finding being reused and verified by another.
+  - **Probability of large loss** needs §13's liability reserve (Phase 6+), the same gap
+    `outcome.Assessment.liability_minor_units` already reports unmodelled rather than fabricates as
+    zero.
+  A credible interval alongside `posteriors.py`'s posterior mean (a beta inverse-CDF) is a smaller,
+  separate addition logged here rather than built speculatively — §12.3 asks for a posterior, not a
+  confidence statement about one.
 - **§9.4's niche-specific carrying capacity is now computable and unenforced.** `Niche.living_cells`
   is the number that clause needs. What is missing is a *policy*: a per-niche cap interacts with
   §9.2's colony-wide cap and with §9.3 displacement, and choosing which binds first is a decision,
@@ -1541,3 +1560,11 @@ actually queued for building — this file is memory, not a backlog to work thro
   `mitosis auto-promote`. That is deliberate for this slice (the golden run must stay still), but it
   means the timer-driven path is **built and unexercised** — the sixteenth-socket shape, one layer
   up. Wiring it is a one-line change plus an argued golden-run diff.
+
+<!-- 2026-08-31, ADR-064 (§12.3's stage-conversion posteriors) -->
+- **`mitosis posteriors` joins `mitosis archive`/`mitosis frontier` in having no CLI test.** Same
+  pre-existing gap noted after ADR-060: both were smoke-tested by hand and neither appears in
+  `test_cli.py`. `posteriors.posteriors()` itself has nine unit tests; only the thin `cmd_posteriors`
+  print wrapper is untested, matching precedent rather than closing the underlying structural gap —
+  "every registered verb at least parses and runs" is still the fix that would cover this and the
+  other 40+ untested verbs at once.

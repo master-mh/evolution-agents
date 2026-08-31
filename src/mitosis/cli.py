@@ -53,6 +53,7 @@ from . import (
     reservations,
     resource_metering,
     novelty,
+    posteriors,
     rights,
     selection,
     artifacts as artifacts_module,
@@ -2148,6 +2149,35 @@ def cmd_archive(args: argparse.Namespace) -> None:
     conn.close()
 
 
+def cmd_posteriors(args: argparse.Namespace) -> None:
+    """§12.3's beta-binomial `P(next stage)`, one posterior per §12 niche.
+
+    A conversion is a realised fact — a rung-8 promotion naming a rung-7 one as
+    the predecessor it expanded — never a read of §25.2's evidence verdict,
+    which can support an expansion nobody ever allocated.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    result = posteriors.posteriors(conn)
+    if not result.niches and not result.unbinned_trials:
+        print("No niches and no rung-7 promotions yet.")
+        conn.close()
+        return
+
+    for niche in result.niches:
+        print(f"  {niche.label:44s} {niche.conversions:3d}/{niche.trials:<3d} converted  "
+              f"P(next stage) = {niche.posterior_mean:.3f}  "
+              f"(Beta({niche.alpha:g}, {niche.beta:g}))")
+    if result.unbinned_trials:
+        print(f"\n  unbinned: {result.unbinned_conversions}/{result.unbinned_trials} converted "
+              "— genomes with no measured §12.1 dimension")
+    print()
+    print("Beta(1, 1) prior; a posterior over a realised rung-7 -> rung-8 conversion, "
+          "not over §25.2's evidence verdict. Nothing in the kernel acts on it.")
+    conn.close()
+
+
 def cmd_frontier(args: argparse.Namespace) -> None:
     """§13.2 over the grants waiting on the pool: gates, then a Pareto frontier.
 
@@ -3518,6 +3548,13 @@ def build_parser() -> argparse.ArgumentParser:
         "archive", help="§12's MAP-Elites archive: which niches the colony occupies"
     )
     archive_parser.set_defaults(func=cmd_archive)
+
+    posteriors_parser = subparsers.add_parser(
+        "posteriors",
+        help="§12.3: beta-binomial P(next stage) per niche, from realised rung-7 -> "
+             "rung-8 conversions",
+    )
+    posteriors_parser.set_defaults(func=cmd_posteriors)
 
     allocate_parser = subparsers.add_parser(
         "allocate", help="§25.1 rung 7: consume an approved grant and fund the Cell"

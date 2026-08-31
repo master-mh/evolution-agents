@@ -78,6 +78,7 @@ from . import (
     lineage,
     novelty,
     outcome,
+    posteriors,
     selection,
     population,
     prediction,
@@ -1097,7 +1098,42 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #               exercising rung 9 and that must be an argued change to this file
 #               rather than a drift. The negative is the point: the mechanism
 #               ships complete and switched off.
-EXPECTATION_VERSION = 33
+#
+#   33 -> 34 (§12.3's beta-binomial `P(next stage)`, one posterior per niche;
+#             ADR-064). **One added section, `stage_conversion_posteriors`.**
+#             Nothing else moves — the module is purely derived (§2.5, §12.2),
+#             so adding it changes no balance, transaction, or existing row.
+#           (a) **Three niches, and the shape is the point.** The scenario's
+#               only rung-7 promotion (step 14, the auditor's child) sits in
+#               `buyer_type=small_business/revenue_recurrence=repeat/
+#               novelty_distance=adjacent` — §12's fully three-dimensional
+#               niche — with `trials: 1, conversions: 0`: a rung-7 promotion
+#               that has never been expanded. `novelty_distance=adjacent` and
+#               `novelty_distance=radical` hold genomes with no rung-7
+#               promotion at all and report `trials: 0` with the **uninformative
+#               prior** (`alpha: 1.0, beta: 1.0, posterior_mean: 0.5`) rather
+#               than being withheld — the module's central claim, pinned where
+#               a regression that started abstaining on an empty niche (or
+#               started reporting one as `0.0` instead of the prior) would be
+#               caught by an exact match rather than a spot check.
+#           (b) **`conversions: 0` everywhere is deliberate, and the sharper
+#               watch than the count itself.** The scenario never allocates a
+#               rung-8 promotion (version 32 -> 33's own note: rung 8 "ships
+#               complete and switched off"), so every niche's conversion count
+#               must stay 0. If a future scenario change makes any
+#               `conversions` figure here nonzero without also adding a rung-8
+#               `promotions` row naming the right `supersedes_promotion_id`,
+#               this module counted something that never happened — the exact
+#               failure `test_supporting_evidence_without_an_actual_conversion_
+#               does_not_count` exists to keep out of the unit tests, now
+#               watched in the replay too.
+#           (c) **`alpha`/`beta` are pinned alongside `trials`/`conversions`**
+#               even though they are arithmetically redundant given a fixed
+#               prior (`alpha = 1 + conversions`, `beta = 1 + trials -
+#               conversions`) — a change to `PRIOR_ALPHA`/`PRIOR_BETA` moves
+#               these two columns and none of the others, and a snapshot that
+#               omitted them would not catch it.
+EXPECTATION_VERSION = 34
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -3111,6 +3147,29 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         for candidate in frontier.candidates
     ]
 
+    # §12.3's beta-binomial `P(next stage)`, per niche. A conversion is the
+    # realised fact ADR-063 made representable — a rung-8 promotion naming a
+    # rung-7 one as its predecessor — never §25.2's evidence verdict, which
+    # can support an expansion the scenario never allocates. Genome hashes are
+    # excluded as digests, matching `novelty_archive` above; a niche is pinned
+    # by its coordinate and the two realised counts the posterior was built
+    # from, plus the posterior itself (`alpha`/`beta` are redundant with
+    # `trials`/`conversions` given a fixed prior, but pinning them separately
+    # catches a change to `PRIOR_ALPHA`/`PRIOR_BETA` that the counts alone
+    # would not).
+    stage_posteriors = posteriors.posteriors(conn)
+    posterior_rows = [
+        {
+            "niche": item.label,
+            "trials": item.trials,
+            "conversions": item.conversions,
+            "alpha": item.alpha,
+            "beta": item.beta,
+            "posterior_mean": round(item.posterior_mean, 6),
+        }
+        for item in stage_posteriors.niches
+    ]
+
     model_call_rows = [
         {
             "cell": aliases.get(row["cell_id"], "cell#?"),
@@ -3176,6 +3235,11 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
             "candidates": selection_rows,
             "measured_dimensions": list(frontier.measured_dimensions),
             "unmeasured_dimensions": list(frontier.unmeasured_dimensions),
+        },
+        "stage_conversion_posteriors": {
+            "niches": posterior_rows,
+            "unbinned_trials": stage_posteriors.unbinned_trials,
+            "unbinned_conversions": stage_posteriors.unbinned_conversions,
         },
         "audit_event_types": audit_event_types,
         "event_inbox": inbox,
