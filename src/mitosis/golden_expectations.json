@@ -1,5 +1,5 @@
 {
-  "expectation_version": 34,
+  "expectation_version": 35,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "7d92b7a41bdabb1d5dd104894fd6098d36d70c7f74f9569a52070f565af00819",
+  "semantic_hash": "b5465ca16f35263ddbcda0f8c40f63f598200d7cca5109d637e6c00290492dbb",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -757,6 +757,7 @@
         "status": "completed"
       }
     ],
+    "genome_content_audits": [],
     "human_minutes": {
       "billed": 54,
       "reported": 58

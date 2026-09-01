@@ -212,14 +212,32 @@
   operator observes; §13.3's `software_native_advantage` and §13.4's third flag are *readings of the
   colony's own prose*, which need ADR-032's **scored** Auditor because §10.4 penalises wrongful
   flags. An operator does not need a Brier score; an Auditor does.
-- [ ] **The Auditor path for §13.3 and §13.4's content judgments.** The other half, now clearly
-  scoped by what ADR-062 did *not* do. Both are readings of a Cell's own prose, so both need a
-  probability and a registered prediction (ADR-032), not an operator's word. `auditor.py` already
-  has the machinery — independence checks, a kernel-composed claim, precision-weighting through
-  §8.5's register — and what is missing is a second *subject*: today an audit is about an
-  `approval_request`, and these are about a **genome** and a **genome pair**.
+- [x] **The Auditor path for §13.3 and §13.4's content judgments — BUILT** (2026-08-31), ADR-065,
+  migration 0031, golden 34 -> 35. `content_audit.py`: `audit_genome` (§13.3, and §13.4's "ordinary
+  freelancing described exotically") and `audit_genome_pair` (§13.4's "the same mechanism is
+  renamed"), one table with a `kind` discriminator (the `promotions.rung` shape, not the
+  `rights_attestations`/`buyer_attestations` two-table shape — these are one act with two subject
+  shapes, not two different acts). **Independence generalises from one Cell to a set of them**: a
+  genome has no single subject Cell, so the auditor's own genome and every Cell that has ever
+  carried either genome under review are checked. Teeth-checking found the dedicated self-audit
+  check is strictly subsumed by the lineage check (a Cell whose own genome matches always appears
+  in the lineage query trivially sharing a founder with itself) — kept anyway for a sharper error
+  message, with the lineage check as the actual guarantee. `concern`/`no_concern` and the coherence
+  rule transfer from migration 0018 unchanged. **Nothing consumes an audit yet** —
+  `selection.py`'s `software_native_advantage` gate still reports `UNMEASURABLE`; wiring it to read
+  a *resolved* audit (never an unresolved one, which would be §10.5's forbidden estimated-EV shape)
+  is the natural next step, structurally blocked for now by `test_nothing_yet_consumes_a_content_audit`.
   *Disproved by:* any §13.3 or §13.4 judgment recorded without a probability, or phrased by the Cell
   it is about.
+- [ ] **Wire `selection.py`'s `software_native_advantage` gate to `content_audit.py` — the front of
+  Phase 2's remaining §13.2 work.** Read only a *resolved* `genome_content_audits` prediction (an
+  unresolved one is §10.5's forbidden "estimated negative EV" shape); `PASSED`/`REJECTED` from the
+  verdict the resolution implies, `UNEVALUABLE` if an audit exists but has not resolved,
+  `UNMEASURABLE` unchanged if none exists. `test_nothing_yet_consumes_a_content_audit` and
+  `test_no_kernel_path_acts_on_a_frontier`'s allowed-importers list both need an explicit,
+  argued edit — this is not a drive-by wiring.
+  *Disproved by:* `selection.py` reading an unresolved content audit, or reading the Auditor's
+  probability directly instead of the resolved outcome.
 - [x] **§25.1's rung 8 — DONE** (2026-08-28), ADR-063, migration 0030, golden 32 -> 33. **The
   gating build is cleared: `promotion.allocate` issues rung 8, so §12.3's stage conversions exist.**
   The slice began by disproving its own brief — four files (including the docstring of the test

@@ -24,6 +24,7 @@ from . import (
     autopromotion,
     channel_registry,
     clock,
+    content_audit,
     context,
     counterparty,
     db,
@@ -2517,6 +2518,125 @@ def cmd_auditor_record(args: argparse.Namespace) -> None:
     conn.close()
 
 
+def cmd_audit_genome(args: argparse.Namespace) -> None:
+    """§13.3 (and §13.4's "ordinary freelancing described exotically"): have
+    an Auditor Cell judge whether a genome genuinely has program-native
+    advantage.
+
+    Operator-invoked, and only that — the same reason `mitosis audit` is: an
+    audit costs a model call, and a colony that audited on a timer would be
+    spending money unattended.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    provider = _build_provider(args)
+    try:
+        result = content_audit.audit_genome(
+            conn,
+            genome_hash=args.genome_hash,
+            auditor_cell_id=args.auditor,
+            provider=provider,
+            model=args.model,
+            max_tokens=args.max_tokens,
+            idempotency_key=args.idempotency_key,
+        )
+    except content_audit.ContentAuditError as error:
+        conn.close()
+        raise CliError(str(error)) from error
+
+    _print_content_audit(result, subject_line=f"  genome {result.genome_hash}")
+    conn.close()
+
+
+def cmd_audit_genome_pair(args: argparse.Namespace) -> None:
+    """§13.4: have an Auditor Cell judge whether two genomes are genuinely
+    distinct mechanisms, or the same one renamed. `mitosis archive` is where
+    an operator finds a candidate pair worth asking about — the kernel never
+    guesses which pair is suspicious."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    provider = _build_provider(args)
+    try:
+        result = content_audit.audit_genome_pair(
+            conn,
+            genome_hash=args.genome_hash,
+            compared_genome_hash=args.compared_genome_hash,
+            auditor_cell_id=args.auditor,
+            provider=provider,
+            model=args.model,
+            max_tokens=args.max_tokens,
+            idempotency_key=args.idempotency_key,
+        )
+    except content_audit.ContentAuditError as error:
+        conn.close()
+        raise CliError(str(error)) from error
+
+    _print_content_audit(
+        result,
+        subject_line=f"  genome A {result.genome_hash}\n  genome B {result.compared_genome_hash}",
+    )
+    conn.close()
+
+
+def _print_content_audit(result: content_audit.GenomeContentAudit, *, subject_line: str) -> None:
+    if not result.is_recorded:
+        # The model call was already bought and committed (ADR-022), so this
+        # is a recorded fact rather than an error.
+        print(f"Content audit {result.audit_id}  (REJECTED — no usable opinion)")
+        print(subject_line)
+        print()
+        for line in textwrap.wrap(result.failure_reason or "", width=76):
+            print(f"  {line}")
+        print()
+        print("  The Auditor paid for this call and produced nothing usable, so it")
+        print("  is recorded rather than discarded — `mitosis content-audit-record`")
+        print("  counts it. No prediction was registered: nothing to stake.")
+        return
+
+    print(f"Content audit {result.audit_id}  ({result.kind.value}, {result.verdict.value.upper()})")
+    print(subject_line)
+    print()
+    for line in textwrap.wrap(result.summary or "", width=76):
+        print(f"  {line}")
+    print()
+    print(f"  probability the genuine-claim holds: {result.probability}")
+    print(f"  registered as prediction {result.prediction_id} (§8.5)")
+    print("  §10.4: this flag is scored. A wrongful one costs the Auditor its")
+    print("  calibration, which is what stops flagging everything being free.")
+    print()
+    print("  Nothing in the kernel consumes this yet — it is read, not acted on.")
+
+
+def cmd_content_audit_record(args: argparse.Namespace) -> None:
+    """§10.4's precision-weighted record for one Auditor's content judgments
+    — §13.3/§13.4 only. `mitosis auditor-record` reports request audits."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    record = content_audit.precision(conn, args.cell)
+    print(f"Auditor {record.auditor_cell_id}, content judgments (SPEC.md §10.4)")
+    print(f"  audits given:      {record.audits} ({record.resolved_audits} resolved)")
+    print(f"  rejected replies:  {record.rejected}  "
+          "(paid for, produced nothing usable)")
+    print(f"  flags raised:      {record.flags_raised} ({record.flags_resolved} resolved)")
+    print(f"    vindicated:      {record.flags_vindicated}  (valid detected errors)")
+    print(f"    wrongful:        {record.wrongful_flags}  (§29.10 penalises these)")
+    precision_value = record.flag_precision
+    print(
+        "  flag precision:    "
+        + ("n/a (nothing resolved yet — unmeasured, not perfect)"
+           if precision_value is None else f"{precision_value:.4f}")
+    )
+    print(
+        "  mean Brier:        "
+        + ("n/a" if record.mean_brier is None else f"{record.mean_brier:.4f}")
+        + "   (0.25 is what always answering 0.5 scores)"
+    )
+    conn.close()
+
+
 def cmd_call_model(args: argparse.Namespace) -> None:
     """The one CLI verb that can spend real money.
 
@@ -3589,6 +3709,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     auditor_record_parser.add_argument("--cell", required=True)
     auditor_record_parser.set_defaults(func=cmd_auditor_record)
+
+    audit_genome_parser = subparsers.add_parser(
+        "audit-genome",
+        help="§13.3: have an Auditor Cell judge whether a genome genuinely has "
+             "program-native advantage",
+    )
+    audit_genome_parser.add_argument("genome_hash")
+    audit_genome_parser.add_argument(
+        "--auditor", required=True,
+        help="cell_id of the auditing Cell (must be an auditor/immune Cell that "
+             "does not carry this genome and shares no lineage with a Cell that does)",
+    )
+    audit_genome_parser.add_argument("--idempotency-key", default=None)
+    _add_model_args(audit_genome_parser, default_max_tokens=deliberation.DEFAULT_MAX_TOKENS)
+    audit_genome_parser.set_defaults(func=cmd_audit_genome)
+
+    audit_genome_pair_parser = subparsers.add_parser(
+        "audit-genome-pair",
+        help="§13.4: have an Auditor Cell judge whether two genomes are genuinely "
+             "distinct mechanisms, or the same one renamed",
+    )
+    audit_genome_pair_parser.add_argument("genome_hash")
+    audit_genome_pair_parser.add_argument("compared_genome_hash")
+    audit_genome_pair_parser.add_argument(
+        "--auditor", required=True,
+        help="cell_id of the auditing Cell (must be an auditor/immune Cell that "
+             "carries neither genome and shares no lineage with a Cell that does)",
+    )
+    audit_genome_pair_parser.add_argument("--idempotency-key", default=None)
+    _add_model_args(audit_genome_pair_parser, default_max_tokens=deliberation.DEFAULT_MAX_TOKENS)
+    audit_genome_pair_parser.set_defaults(func=cmd_audit_genome_pair)
+
+    content_audit_record_parser = subparsers.add_parser(
+        "content-audit-record",
+        help="§10.4's precision-weighted record for one Auditor's §13.3/§13.4 "
+             "content judgments",
+    )
+    content_audit_record_parser.add_argument("--cell", required=True)
+    content_audit_record_parser.set_defaults(func=cmd_content_audit_record)
 
     assess_parser = subparsers.add_parser(
         "assess",

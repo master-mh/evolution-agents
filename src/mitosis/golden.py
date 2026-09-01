@@ -1133,7 +1133,36 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #               conversions`) — a change to `PRIOR_ALPHA`/`PRIOR_BETA` moves
 #               these two columns and none of the others, and a snapshot that
 #               omitted them would not catch it.
-EXPECTATION_VERSION = 34
+#
+#   34 -> 35 (the Auditor path for §13.3/§13.4's content judgments; ADR-065).
+#             **One added section, `genome_content_audits`, and it is empty.**
+#             `content_audit.py` gives an Auditor Cell a second subject beyond
+#             `approval_request` — a genome (§13.3, and §13.4's "ordinary
+#             freelancing described exotically") or a genome pair (§13.4's
+#             "the same mechanism is renamed") — scored the same way §23.2's
+#             request audits already are: a probability, registered before the
+#             outcome is known, hash-chained, penalised if wrong.
+#           (a) **Empty is the honest state, not an oversight.** The fixture's
+#               only two Auditor-eligible Cells share one lineage
+#               (`auditor_cell` and its child `auditor_child`), and this
+#               module's independence check — the same reasoning `audits`
+#               already applies to one Cell, generalised to every Cell a
+#               genome has ever been carried by — refuses exactly that
+#               pairing. No other Cell in the scenario is both Auditor-typed
+#               and holds a genome with real §16.2 content to judge. Giving
+#               this section a real row would mean adding a sixth Cell, which
+#               moves population counts and every book's balance along with
+#               it — deliberately left for its own separately-reviewed slice
+#               rather than smuggled into this one (logged in
+#               FUTURE_BUILD_HOOKS).
+#           (b) **Nothing else moved.** No balance, no promotion, no existing
+#               `audits` row — the mechanism is additive over a table nothing
+#               else reads yet (`test_nothing_yet_consumes_a_content_audit`).
+#           (c) **The watch this leaves.** If `genome_content_audits` ever
+#               gains a row in this replay without a corresponding Cell birth
+#               explaining where its Auditor and its subject came from, the
+#               scenario changed by more than this comment describes.
+EXPECTATION_VERSION = 35
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -3079,6 +3108,35 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         for row in conn.execute("SELECT * FROM audits ORDER BY rowid").fetchall()
     ]
 
+    # §13.3/§13.4's content judgments (ADR-064's companion mechanism to the
+    # one above, over a genome rather than a request). **Always empty in this
+    # scenario, and that is stated rather than hidden** — the fixture has no
+    # cross-lineage Auditor Cell holding a genome with real §16.2 content to
+    # judge non-degenerately (the only other Auditor-eligible Cell,
+    # `auditor_child`, shares `auditor_cell`'s lineage and the independence
+    # check this module enforces would refuse exactly that pairing). Inserting
+    # a sixth Cell to manufacture one would move population counts and every
+    # book's balances along with it — a bigger, separately-reviewed diff than
+    # this section earns on its own. Genome hashes are truncated for the same
+    # reason `novelty_archive` excludes them outright: they are content
+    # digests, not something a reader compares by eye.
+    genome_content_audit_rows = [
+        {
+            "kind": row["kind"],
+            "auditor": aliases.get(row["auditor_cell_id"], "cell#?"),
+            "genome": row["genome_hash"][:12],
+            "compared_genome": (
+                row["compared_genome_hash"][:12] if row["compared_genome_hash"] else None
+            ),
+            "status": row["status"],
+            "verdict": row["verdict"],
+            "probability": row["probability"],
+            "has_prediction": row["prediction_id"] is not None,
+            "failure_reason": row["failure_reason"],
+        }
+        for row in conn.execute("SELECT * FROM genome_content_audits ORDER BY rowid").fetchall()
+    ]
+
     # §25.2's read-back, derived rather than stored — the assessment has no
     # table, so this section is computed from the register and the ledger at
     # snapshot time exactly as `mitosis assess` computes it.
@@ -3223,6 +3281,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "approval_requests": approval_rows,
         "approval_grants": approval_grants,
         "audits": audit_rows,
+        "genome_content_audits": genome_content_audit_rows,
         "promotions": promotion_rows,
         "assessments": assessment_rows,
         "novelty_archive": {

@@ -3896,3 +3896,96 @@ with a circular-import error before the guard even runs, because `posteriors` al
 - **A credible interval alongside the posterior mean.** §12.3 asks for a posterior, not a confidence
   statement about it; a beta inverse-CDF is machinery this module does not need to ship the first
   implementation and is logged in FUTURE_BUILD_HOOKS rather than built speculatively.
+
+---
+
+## ADR-065: §13.3/§13.4's Auditor path judges a genome directly — never through §25.2's verdict, and never through a second table per kind
+
+- **Status:** Accepted; `content_audit.py`, migration 0031, `audit-genome`/`audit-genome-pair`/
+  `content-audit-record`, golden expectations 34 -> 35
+- **Spec ref:** §13.3, §13.4, §10.4, §0.3, §29.10, §12.1, §12.2, §23.5, §10.5; ADR-032, ADR-058,
+  ADR-062
+
+- **Context:** ADR-062 built §12.1's third dimension (`buyer_type`, declared by an operator) and drew
+  a line on purpose: two other judgments — §13.3's program-native advantage and §13.4's "the same
+  mechanism is renamed" — are readings of a Cell's own prose, not external facts, and need "a
+  probability and a registered prediction (ADR-032), not an operator's word". `auditor.py` already
+  built every piece of machinery §10.4 demands for exactly this; its one gap was the subject —
+  `audits` is keyed to `approval_requests`, and these two judgments are about a **genome** and a
+  **genome pair**, neither of which is owned by any one request.
+
+### One table, a `kind` column — not two tables, and not a widened `audits`
+
+Three shapes were available and two were refused:
+
+- **Widening `audits` to a nullable `request_id`/`proposal_id`** would have let a genome audit and a
+  request audit share one table, but `audits`' own CHECK constraints, its `subject_cell_id`
+  requirement, and `approval.payload`'s reader all assume exactly one request per row. Loosening all
+  of that to admit a second subject shape is the "second answer living in the first table's clothes"
+  trap this repo keeps naming.
+- **Two tables**, one per `kind`, mirroring `rights_attestations`/`buyer_attestations`. Rejected here
+  specifically, even though that precedent is real: those two are genuinely different *acts* by
+  different declarers about different objects (a source domain; a buyer segment). `software_native_
+  advantage` and `renamed_mechanism` are the *same act* — an Auditor Cell scoring a probability about
+  a Cell's own prose — with a different subject shape. Splitting them would duplicate every column
+  except the two that actually vary.
+- **One table, `kind` discriminated, `compared_genome_hash` nullable** — the shape shipped, matching
+  `promotions.rung`'s own precedent for keeping two variants of one mechanism together. The CHECK
+  constraint makes the pairing itself unrepresentable rather than merely validated in Python
+  (ADR-047): `software_native_advantage` forbids a second genome, `renamed_mechanism` requires one
+  distinct from the first.
+
+### `concern`/`no_concern` transfers unchanged, and so does the coherence rule
+
+Both kinds are framed as "genuinely holds up" — genuinely program-native, genuinely a distinct
+mechanism — so migration 0018's verdict vocabulary and its coherence rule (`concern` implies a
+probability below one half that the genuine-claim is true) apply without modification. No new
+enum, no new direction to get backwards. `ContentAuditReply` is a fresh Pydantic model rather than a
+reuse of `auditor.AuditReply` — same shape, deliberately not imported, matching the "copy the shape,
+not the code" posture ADR-041/ADR-062 already established for `rights_attestations`/
+`buyer_attestations`.
+
+### Independence, generalised from one Cell to a set of them
+
+`auditor.py` checks the auditor is not the subject Cell and shares no lineage with it. A genome has no
+single subject Cell — content-addressed, it may be carried by zero, one, or many, dead or alive,
+across any number of lineages. The generalisation checked here: the auditor's own current genome must
+not be either hash under review (an Auditor cannot judge its own business hypothesis), and the
+auditor must share no lineage founder with *any* Cell that has ever carried either genome. **Teeth-
+checking found the first check is strictly subsumed by the second** — a Cell whose own genome matches
+the one under review always appears in the lineage query's own result set, trivially sharing a founder
+with itself — so removing the dedicated self-check does not open a gap, it only degrades the error
+message from "you carry this genome" to the more generic "you share lineage with a carrier". Both
+checks ship: the first for diagnostic clarity in the common case, the second as the actual guarantee.
+
+### What it deliberately does not do
+
+- **Nothing consumes a content audit yet.** `selection.py`'s `software_native_advantage` gate still
+  reports `UNMEASURABLE` unconditionally. This module makes the dimension *measurable*; wiring the
+  gate to read a *resolved* audit is a deliberate next step — an *unresolved* one would be exactly the
+  "estimated negative EV" shape §10.5 keeps out of an automatic decision, and `test_nothing_yet_
+  consumes_a_content_audit` closes every kernel module against importing this one until that wiring is
+  argued.
+- **No merged precision record with `auditor.Precision`.** §10.4's fitness signal for one Auditor Cell
+  is currently split across two calls (`mitosis auditor-record`, `mitosis content-audit-record`)
+  rather than one. Logged as a future merge, not built speculatively — the two mechanisms are young
+  enough that inspecting them separately is more useful than a premature combination.
+- **The golden scenario stays unexercised.** The fixture's only two Auditor-eligible Cells share one
+  lineage, and this module's own independence check refuses exactly that pairing — no other scenario
+  Cell is both Auditor-typed and holds a genome with real §16.2 content. Manufacturing a valid pairing
+  means a sixth Cell, which moves population counts and every book's balance along with it. Logged in
+  FUTURE_BUILD_HOOKS as its own reviewed diff rather than folded into this one.
+
+### What it displaced
+
+- **Reading §25.2's evidence verdict as a stand-in.** Not applicable here the way it was for §12.3
+  (ADR-064) — there is no analogous "verdict" to misread, but the same discipline shaped the design:
+  the claim is a realised, kernel-composed statement an operator later resolves from observation, not
+  something read off an existing derived judgment.
+- **A `subject_cell_id` column**, mirroring `audits`. Rejected because a genome has no single subject
+  Cell; the independence check queries `cells` directly instead of storing a denormalised pointer that
+  would be wrong the moment a second Cell adopts the same genome.
+- **Auto-selecting the comparison genome for `renamed_mechanism`** from `novelty.archive`'s nearest-
+  neighbour logic. Rejected: which pair is worth asking about is an operator's judgment call, and the
+  kernel inventing a "most suspicious pair" heuristic nobody asked for is exactly the unrequested
+  policy this repo's slices keep refusing to add.

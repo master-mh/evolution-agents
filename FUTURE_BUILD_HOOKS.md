@@ -1568,3 +1568,27 @@ actually queued for building — this file is memory, not a backlog to work thro
   print wrapper is untested, matching precedent rather than closing the underlying structural gap —
   "every registered verb at least parses and runs" is still the fix that would cover this and the
   other 40+ untested verbs at once.
+
+<!-- 2026-08-31, ADR-065 (§13.3/§13.4's Auditor path) -->
+- **The golden scenario never exercises a content audit.** `genome_content_audits` ships as an
+  always-empty section (golden 34 -> 35). The fixture's only two Auditor-eligible Cells
+  (`auditor_cell` and its child `auditor_child`) share one lineage, and `content_audit.py`'s own
+  independence check correctly refuses that pairing; no other scenario Cell is both Auditor-typed
+  and holds a genome with real §16.2 content. Exercising this needs a sixth Cell — a second,
+  independent-lineage Auditor (or an IMMUNE-typed one) — which moves population counts and every
+  book's balance along with it, so it deserves its own reviewed diff rather than being folded into
+  the slice that shipped the mechanism.
+- **No merged `Precision` record across `auditor.py` and `content_audit.py`.** §10.4's fitness
+  signal for one Auditor Cell is split across two CLI verbs (`auditor-record`,
+  `content-audit-record`) and two `precision()` functions with an identical dataclass shape. A
+  merge is straightforward once there is a reason to want one number rather than two — logged
+  rather than built ahead of that reason.
+- **A credible interval on a content audit's probability.** Same gap `posteriors.py` left for its
+  own posterior mean: useful, needs a beta/normal-approximation utility this repo does not have
+  yet, not required to ship the mechanism.
+- **`concreteness.py` (ADR-058) and `content_audit.py` now overlap on §13.4's fourth flag** ("no new
+  capability/transaction structure exists") from two directions — one an offline, unscored,
+  cross-arm research tool; the other a live, scored, single-genome Auditor judgment. Nobody has
+  argued whether the fourth flag should migrate from the script into an Auditor claim now that a
+  live judge exists, or stay a research instrument permanently. Worth a deliberate call rather than
+  a silent drift toward one or the other.

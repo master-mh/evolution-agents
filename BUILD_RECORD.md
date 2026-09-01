@@ -14,63 +14,59 @@ measurement, §15.1 anchoring and the twins that chose the fix, the proposal log
 shows no wording, the §23.4 repeat, the wake reason, the genome, the human-decision wake,
 the +15% that did not survive honesty, §13.4's concreteness measure,
 §13.2's selector, §12's novelty archive, the inbound counterparty key,
-§12.1's declared third dimension, and rung 8,
-2026-07-21 through 2026-08-28):
+§12.1's declared third dimension, rung 8, and §12.3's `P(next stage)`,
+2026-07-21 through 2026-08-31):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-31 — §12.3's `P(next stage)` counts a realised conversion, never a verdict
+## 2026-08-31 — §13.3/§13.4's Auditor path judges a genome directly
 
-`posteriors.py` + `mitosis posteriors` + 9 tests + golden expectations **33 -> 34** (ADR-064).
-**§12.3's beta-binomial Thompson-sampling target ships: one posterior per §12 niche, built from
-rung-7 -> rung-8 conversions.**
+`content_audit.py` + migration 0031 + 21 tests + `audit-genome`/`audit-genome-pair`/
+`content-audit-record` + golden expectations **34 -> 35** (ADR-065). **`auditor.py`'s machinery
+gets its second subject: a genome (§13.3, and §13.4's "ordinary freelancing described
+exotically") and a genome pair (§13.4's "the same mechanism is renamed") — scored the same way an
+approval request already is.**
 
-### The decision was which signal counts as a trial, not the arithmetic
+### One table, a `kind` column — the `promotions.rung` shape, not the attestation shape
 
-`outcome.py` already computes a verdict — `SUPPORTS_PROMOTION` — for whether a rung-7 promotion's
-own evidence would earn an expansion. It is available, binary, and the wrong thing to count. §10.5's
-discipline (decide on realised facts, not estimates) generalises from one Cell to a niche of them: a
-niche's conversion rate is about Cells that actually climbed the ladder, not about promotions the
-kernel currently believes could. A Cell can earn `SUPPORTS_PROMOTION` and never be allocated rung 8 —
-an operator can simply not act — and that is not evidence about the niche. The trial is a raw join on
-`promotions.supersedes_promotion_id`, the realised fact ADR-063 made representable, computed without
-ever calling into `outcome.py`.
+Two precedents pointed opposite ways. `rights_attestations`/`buyer_attestations` copied one
+shape into two separate tables for two genuinely different acts by different declarers.
+`promotions.rung` keeps two variants of *one* mechanism together. This is the second case:
+`software_native_advantage` and `renamed_mechanism` are the same act — an Auditor scoring a
+probability about a Cell's own prose — with a different subject shape, so one table with a `kind`
+discriminator and a nullable `compared_genome_hash` won. The CHECK constraint makes the pairing
+itself unrepresentable: `software_native_advantage` forbids a second genome, `renamed_mechanism`
+requires one distinct from the first.
 
-### The niche is `novelty.archive`'s coordinate, and an empty one still gets a posterior
+### Independence, generalised from one Cell to a set of them
 
-A rung-7 promotion is attributed to the §12.1 niche of the Cell's genome; genomes that abstain on
-every dimension are counted separately (`unbinned_trials`/`unbinned_conversions`) rather than
-dropped, matching `Archive.unbinned_genome_hashes`. **A niche with zero rung-7 promotions still
-reports Beta(1, 1)**, not an abstention — the one dimension in this codebase where withholding would
-be the less honest choice, because Thompson sampling needs every niche, funded or not, to have a
-distribution it can be drawn from.
+A genome has no single subject Cell — content-addressed, it may be carried by zero, one, or many,
+dead or alive. The check: the auditor's own current genome must not be either hash under review,
+and the auditor must share no lineage founder with *any* Cell that has ever carried either genome.
+**Teeth-checking found the dedicated self-check is strictly subsumed by the lineage check** — a
+Cell whose own genome matches always appears in the lineage query's own result, trivially sharing
+a founder with itself. Both ship anyway: the first for a sharper error message, the second as the
+actual guarantee.
 
-### No table
+### `concern`/`no_concern` transfers unchanged
 
-Derived on every read, same posture as `novelty.py` and `selection.py` toward §2.5/§12.2. This also
-answers §12.3's own future-proofing clause for free: "schemas must allow hierarchical/non-stationary
-models later" is automatic when the module owns no schema — a richer model is a different function
-body over the same rows, never a migration.
-
-### Guarded the same way `selection.py`'s frontier is
-
-`test_no_kernel_path_acts_on_a_posterior` closes `death.py`, `promotion.py`, `displacement.py` and
-`scheduler.py`; `test_the_posterior_never_reaches_a_cell` closes `context.py` and `deliberation.py`
-(§23.5). §10.5's "estimated negative EV" shape, generalised from a Cell to a niche of them.
+Both kinds are framed as "genuinely holds up" (genuinely program-native, genuinely a distinct
+mechanism), so migration 0018's verdict vocabulary and coherence rule apply with zero
+modification — no new direction to get backwards.
 
 ### Verification
 
-- **9 new tests; teeth-checked two ways.** Conflating "converted" with "always true" (the tempting
-  `outcome.assess` shortcut) failed four tests, including the one written to catch exactly it. A
-  forbidden import into `death.py` was caught by the AST guard; the same mutation into `promotion.py`
-  failed even earlier, at import time, with a circular-import error — `posteriors` already imports
-  `promotion` for its rung constants, which makes that back-edge structurally impossible rather than
-  merely refused.
-- **1119 tests and the golden run green.** The golden diff is **one added section**,
-  `stage_conversion_posteriors` — three niches, the scenario's one rung-7 promotion sitting at
-  `trials: 1, conversions: 0`, the other two niches reporting the bare Beta(1, 1) prior. No balance,
-  transaction, or existing row moved.
-- Next: the Auditor path for §13.3/§13.4's content judgments is the other half ADR-062 scoped and
-  clearly left open. §12.3's remaining four posteriors (expected net value, expected time to
-  conversion, probability of reproducibility, probability of large loss) stay logged in
-  FUTURE_BUILD_HOOKS — each needs machinery this colony does not have yet (§11.2's adoption record,
-  a liability model, a survival-style time-to-event model).
+- **21 new tests; teeth-checked two ways.** Removing the dedicated self-audit check still raised
+  (via the lineage check, confirming no coverage gap) but with the wrong, more generic message —
+  a legitimate finding about diagnostic clarity, not a defect. Dropping the partial unique index
+  (`idx_genome_content_audits_one_opinion`) produced a clean `DID NOT RAISE`, the exact shape
+  `test_the_schema_refuses_a_second_opinion_from_the_same_auditor` exists to catch.
+- **1140 tests and the golden run green.** The golden diff is **one added section**,
+  `genome_content_audits: []` — empty, and stated as deliberate rather than hidden: the fixture's
+  only two Auditor-eligible Cells share one lineage, and this module's own independence check
+  refuses exactly that pairing. Manufacturing a valid pair means a sixth Cell, which moves
+  population counts and every book's balance — logged for its own reviewed diff rather than
+  folded into this one.
+- Next: nothing yet consumes a content audit (`test_nothing_yet_consumes_a_content_audit` keeps
+  it that way). `selection.py`'s `software_native_advantage` gate is the natural first consumer —
+  reading a *resolved* audit only, never an unresolved one, which would be exactly the "estimated
+  negative EV" shape §10.5 forbids acting on automatically.
