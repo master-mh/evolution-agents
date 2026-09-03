@@ -1628,3 +1628,26 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **No `mitosis`-level report of how often a wake needed a repair.** `deliberations.
   repair_model_call_id IS NOT NULL` already answers "how many" from the CLI or a direct query; a
   dedicated `mitosis repair-rate`-style verb is additive and not built ahead of a reason to want one.
+
+<!-- 2026-09-03, ADR-069 follow-up (post-slice critique) -->
+- **The empty-first-reply case is the one most worth repairing and the one least likely to.** When
+  the first `gateway.call_model` returns no text (`call.response_text` None → `reply = ""`), the
+  parse fails and `_attempt_parse_repair` echoes `{"role": "assistant", "content": ""}` back to the
+  model. A provider that rejects empty-content messages makes the *repair call itself* fail — which
+  now (post-narrowing) still degrades gracefully only if the failure is a `ProviderError` the
+  gateway converts to a `failed` row; an outright raise of a non-economic type would propagate. So
+  the case a re-prompt should most obviously rescue (the model said nothing) is the least likely to
+  be rescued, and nothing pins the behaviour. Unverified against `llama3.2`/Ollama specifically —
+  worth either a guard (skip the assistant echo when `reply` is empty, or substitute a placeholder)
+  or at least a test that documents what happens. Cheap; not bundled into the fix slice.
+- **The repair reuses the genome's sampling temperature, and that is an unargued choice.**
+  `deliberate()` resolves `temperature` once and hands the same value to the repair, with the
+  comment "a repair reasons about the same genome, so it samples the same way." But a parse-repair's
+  goal is *format compliance*, and a high genome temperature is a plausible contributor to the
+  malformed reply in the first place — re-rolling at the same temperature is more likely to fail
+  again. The genuine counter-argument (not currently written down) is that temperature is a §14.1
+  operator *under selection*, so forcing the repair to t=0 would decouple the repair from the genome
+  being evaluated and contaminate what ADR-050-style measurement is trying to read. Note ADR-050
+  observed the malformed shape *at t=0*, which is evidence *for* the current choice the ADR does not
+  cite. Worth a deliberate call (and a line in ADR-069's "What it displaced") rather than silent
+  reuse — decide whether format-recovery or selection-fidelity wins on the repair turn specifically.
