@@ -14,59 +14,53 @@ measurement, §15.1 anchoring and the twins that chose the fix, the proposal log
 shows no wording, the §23.4 repeat, the wake reason, the genome, the human-decision wake,
 the +15% that did not survive honesty, §13.4's concreteness measure,
 §13.2's selector, §12's novelty archive, the inbound counterparty key,
-§12.1's declared third dimension, rung 8, and §12.3's `P(next stage)`,
+§12.1's declared third dimension, rung 8, §12.3's `P(next stage)`, and the
+Auditor path for §13.3/§13.4's content judgments,
 2026-07-21 through 2026-08-31):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-08-31 — §13.3/§13.4's Auditor path judges a genome directly
+## 2026-09-03 — §13.2's `software_native_advantage` gate reads a resolved content audit
 
-`content_audit.py` + migration 0031 + 21 tests + `audit-genome`/`audit-genome-pair`/
-`content-audit-record` + golden expectations **34 -> 35** (ADR-065). **`auditor.py`'s machinery
-gets its second subject: a genome (§13.3, and §13.4's "ordinary freelancing described
-exotically") and a genome pair (§13.4's "the same mechanism is renamed") — scored the same way an
-approval request already is.**
+`selection._software_native_advantage` + 3 new tests + golden run unchanged (ADR-066). **The gate
+ADR-065 deliberately left `UNMEASURABLE` is now conditionally measurable**, the same way ADR-060
+gave `structural_novelty` a live prior: `content_audit.py`'s Auditor path is this gate's one
+consumer, and `test_only_selection_consumes_a_content_audit` (renamed from `test_nothing_yet_
+consumes_a_content_audit`) keeps it that way.
 
-### One table, a `kind` column — the `promotions.rung` shape, not the attestation shape
+### Only a resolved prediction may gate — an unresolved one is exactly §10.5's forbidden shape
 
-Two precedents pointed opposite ways. `rights_attestations`/`buyer_attestations` copied one
-shape into two separate tables for two genuinely different acts by different declarers.
-`promotions.rung` keeps two variants of *one* mechanism together. This is the second case:
-`software_native_advantage` and `renamed_mechanism` are the same act — an Auditor scoring a
-probability about a Cell's own prose — with a different subject shape, so one table with a `kind`
-discriminator and a nullable `compared_genome_hash` won. The CHECK constraint makes the pairing
-itself unrepresentable: `software_native_advantage` forbids a second genome, `renamed_mechanism`
-requires one distinct from the first.
+An audit's `probability` is registered before the outcome is known; reading it into an automatic
+gate would be gating a candidate on an *estimate*. The gate instead reads `prediction.get(conn,
+audit.prediction_id).outcome` — set only once the register has resolved the claim against what was
+actually observed. No audit at all is `UNMEASURABLE`, unchanged; an audit that exists but has not
+resolved is `UNEVALUABLE`, not a rejection — the same distinction `_evidence_quality` already draws
+for a Cell with no resolved forecasts.
 
-### Independence, generalised from one Cell to a set of them
+### Any single resolved, vindicated concern rejects — no quorum across Auditors
 
-A genome has no single subject Cell — content-addressed, it may be carried by zero, one, or many,
-dead or alive. The check: the auditor's own current genome must not be either hash under review,
-and the auditor must share no lineage founder with *any* Cell that has ever carried either genome.
-**Teeth-checking found the dedicated self-check is strictly subsumed by the lineage check** — a
-Cell whose own genome matches always appears in the lineage query's own result, trivially sharing
-a founder with itself. Both ship anyway: the first for a sharper error message, the second as the
-actual guarantee.
+§10.5's "an independent Auditor must concur" bar is written for *killing* a Cell. This gate does
+not kill — a rejected candidate can be re-proposed once the concern is addressed, and more than one
+Auditor may record an opinion about the same genome (migration 0031's partial unique index only
+stops the *same* Auditor opining twice). Requiring unanimity would let a vindicated "ordinary
+freelancing" flag be outvoted by Auditors who never looked closely, so the rule mirrors
+`_policy_compliance`'s existing posture: any one resolved, vindicated concern rejects; the register
+scoring the Auditor who raised it is the check on carelessness, not a second gate reading their
+track record.
 
-### `concern`/`no_concern` transfers unchanged
+### A stale PRIORITIES claim, corrected rather than left to drift
 
-Both kinds are framed as "genuinely holds up" (genuinely program-native, genuinely a distinct
-mechanism), so migration 0018's verdict vocabulary and coherence rule apply with zero
-modification — no new direction to get backwards.
+PRIORITIES said `test_no_kernel_path_acts_on_a_frontier`'s allowed-importers list would also need
+an edit. It did not — that test scans who imports `selection`, not what `selection` imports, and
+this slice only added the latter. Logged and corrected in ADR-066 rather than left stale for the
+next reader.
 
 ### Verification
 
-- **21 new tests; teeth-checked two ways.** Removing the dedicated self-audit check still raised
-  (via the lineage check, confirming no coverage gap) but with the wrong, more generic message —
-  a legitimate finding about diagnostic clarity, not a defect. Dropping the partial unique index
-  (`idx_genome_content_audits_one_opinion`) produced a clean `DID NOT RAISE`, the exact shape
-  `test_the_schema_refuses_a_second_opinion_from_the_same_auditor` exists to catch.
-- **1140 tests and the golden run green.** The golden diff is **one added section**,
-  `genome_content_audits: []` — empty, and stated as deliberate rather than hidden: the fixture's
-  only two Auditor-eligible Cells share one lineage, and this module's own independence check
-  refuses exactly that pairing. Manufacturing a valid pair means a sixth Cell, which moves
-  population counts and every book's balance — logged for its own reviewed diff rather than
-  folded into this one.
-- Next: nothing yet consumes a content audit (`test_nothing_yet_consumes_a_content_audit` keeps
-  it that way). `selection.py`'s `software_native_advantage` gate is the natural first consumer —
-  reading a *resolved* audit only, never an unresolved one, which would be exactly the "estimated
-  negative EV" shape §10.5 forbids acting on automatically.
+- **3 new tests, teeth-checked.** Reverting the gate's wiring in `evaluate()` back to
+  `_unmeasurable_gate("software_native_advantage")` failed the new PASSED test with the expected
+  assertion (`UNMEASURABLE` where `PASSED` was expected) — a real MISS, not a false CAUGHT.
+- **1143 tests and the golden run green, hash unchanged.** No fixture Cell has ever had a content
+  audit (ADR-065's own golden note), so this slice's diff is nowhere in the replay — additive over
+  a gate nothing in the scenario reaches yet.
+- Next: `selection.py`'s frontier still carries two dimensions with no data at all
+  (`economic_potential`, `reproducibility`) — see PRIORITIES `Next` for what each is blocked on.

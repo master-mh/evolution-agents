@@ -389,14 +389,15 @@ def test_a_content_audit_never_reaches_a_cell():
         )
 
 
-def test_nothing_yet_consumes_a_content_audit():
-    """This slice builds the mechanism, not a consumer. `selection.py`'s
-    `software_native_advantage` gate still reports `UNMEASURABLE`
-    unconditionally — wiring it to read a *resolved* audit is a deliberate
-    next step (an unresolved one would be exactly the "estimated negative EV"
-    shape §10.5 keeps out of an automatic decision), not this one."""
+def test_only_selection_consumes_a_content_audit():
+    """`selection.py`'s `software_native_advantage` gate is the one deliberate
+    consumer (see `test_selection.py`'s gate tests) — it reads only a
+    *resolved* audit, never an unresolved one, which would be exactly the
+    "estimated negative EV" shape §10.5 keeps out of an automatic decision.
+    Nothing else may import this module until the same argument is made for
+    it."""
     source_dir = Path(__file__).resolve().parents[1] / "src" / "mitosis"
-    allowed = {"content_audit.py", "cli.py", "golden.py"}
+    allowed = {"content_audit.py", "selection.py", "cli.py", "golden.py"}
     consumers = sorted(
         path.name for path in source_dir.glob("*.py")
         if path.name not in allowed and "content_audit" in _imported_modules(path)

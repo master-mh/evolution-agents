@@ -19,6 +19,7 @@ import pytest
 
 from mitosis import (
     approval,
+    content_audit,
     deliberation,
     ledger,
     lifecycle,
@@ -64,10 +65,10 @@ def _seed(conn):
     )
 
 
-def _cell(conn, tag, genome_content=None):
+def _cell(conn, tag, genome_content=None, cell_type=CellType.EXPLORER):
     cell = lifecycle.create_cell(
         conn,
-        cell_type=CellType.EXPLORER,
+        cell_type=cell_type,
         budget_minor_units=200,
         book=Book.USD_SIM,
         idempotency_key=f"cell:{tag}",
@@ -178,6 +179,41 @@ def _resolved_forecasts(conn, cell, probability, occurred, count=3):
 
 def _for(frontier, grant):
     return next(c for c in frontier.candidates if c.grant_id == grant.grant_id)
+
+
+NO_CONCERN_REPLY = json.dumps(
+    {"verdict": "no_concern", "summary": "genuinely combinatorial", "probability": 0.8},
+    sort_keys=True,
+)
+CONCERN_REPLY = json.dumps(
+    {"verdict": "concern", "summary": "reads as ordinary freelancing", "probability": 0.2},
+    sort_keys=True,
+)
+
+
+def _audited_cell(conn, tag, *, reply, occurred, resolve=True):
+    """A candidate Cell whose genome has one resolved (or pending, if
+    `resolve=False`) `content_audit.py` judgment — an independent Auditor Cell
+    (its own lineage, `_cell` never reproduces) judges the subject's genome,
+    and the caller decides whether that prediction gets resolved and to what
+    outcome, matching `_resolved_forecasts`' shape for the evidence-quality
+    gate."""
+    subject = _cell(conn, tag, genome_content={
+        "market": f"{tag} bookshops", "problem": "stock decisions are guesswork",
+        "product": "a weekly stock digest", "revenue_model": "monthly subscription per shop",
+        "acquisition_channel": "trade newsletters", "workflow": "ingest, rank, publish",
+    })
+    reviewer = _cell(conn, f"{tag}-auditor", cell_type=CellType.AUDITOR)
+    audit = content_audit.audit_genome(
+        conn,
+        genome_hash=subject.genome_hash,
+        auditor_cell_id=reviewer.cell_id,
+        provider=providers.MockProvider(reply=reply),
+        model="mock-1",
+    )
+    if resolve:
+        prediction.resolve(conn, audit.prediction_id, occurred=occurred, source="test")
+    return subject
 
 
 # --- the clause's own list (§13.2) -------------------------------------------
@@ -376,6 +412,51 @@ def test_understated_risk_does_not_reject_but_an_escalating_signal_does(conn):
     )
     conn.commit()
     assert "policy_compliance" in _for(selection.evaluate(conn), grant).rejected_by
+
+
+def test_a_content_audit_that_holds_up_passes_the_software_native_advantage_gate(conn):
+    """§13.3, read from a *resolved* `content_audit.py` judgment.
+
+    The claim an Auditor scores is "genuinely §13.3"; resolving it `True` is a
+    realised fact that the idea holds up, the same standing `_evidence_quality`
+    gives a resolved forecast rather than an opinion about one.
+    """
+    _seed(conn)
+    cell = _audited_cell(conn, "holds-up", reply=NO_CONCERN_REPLY, occurred=True)
+    grant = _candidate(conn, cell, "holds-up")
+
+    candidate = _for(selection.evaluate(conn), grant)
+    gate = next(g for g in candidate.gates if g.dimension == "software_native_advantage")
+    assert gate.outcome is selection.GateOutcome.PASSED
+    assert candidate.passes_gates
+
+
+def test_a_content_audit_that_does_not_hold_up_rejects_the_gate(conn):
+    """The reverse resolution: a claim that resolves `False` is a vindicated
+    concern (§13.4's "ordinary freelancing described exotically"), a realised
+    finding rather than the estimated negative EV §10.5 forbids acting on."""
+    _seed(conn)
+    cell = _audited_cell(conn, "ordinary", reply=CONCERN_REPLY, occurred=False)
+    grant = _candidate(conn, cell, "ordinary")
+
+    candidate = _for(selection.evaluate(conn), grant)
+    assert "software_native_advantage" in candidate.rejected_by
+
+
+def test_an_unresolved_content_audit_is_unevaluable_not_a_rejection(conn):
+    """Reading an unresolved prediction into the gate would be scoring a
+    candidate on an Auditor's opinion before the register has judged the
+    Auditor — exactly the shape §10.5 forbids. §13.2's own gate for a Cell
+    with no resolved forecasts draws the identical distinction: unmeasured is
+    not inferior."""
+    _seed(conn)
+    cell = _audited_cell(conn, "pending", reply=NO_CONCERN_REPLY, occurred=True, resolve=False)
+    grant = _candidate(conn, cell, "pending")
+
+    candidate = _for(selection.evaluate(conn), grant)
+    gate = next(g for g in candidate.gates if g.dimension == "software_native_advantage")
+    assert gate.outcome is selection.GateOutcome.UNEVALUABLE
+    assert candidate.passes_gates
 
 
 def test_gates_run_before_the_frontier(conn):

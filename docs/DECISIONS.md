@@ -3989,3 +3989,68 @@ checks ship: the first for diagnostic clarity in the common case, the second as 
   neighbour logic. Rejected: which pair is worth asking about is an operator's judgment call, and the
   kernel inventing a "most suspicious pair" heuristic nobody asked for is exactly the unrequested
   policy this repo's slices keep refusing to add.
+
+---
+
+## ADR-066: `selection.py`'s `software_native_advantage` gate reads a resolved content audit, and rejects on any single one that resolved false
+
+- **Status:** Accepted; `selection._software_native_advantage`, 3 new tests, golden run unchanged
+  (34 -> 35 stays 35 — no fixture Cell has ever had a content audit)
+- **Spec ref:** §13.2, §13.3, §13.4, §10.5, §0.3, §23.5; ADR-065
+
+- **Context:** ADR-065 built `content_audit.py`, giving §13.3/§13.4 a live Auditor judge, and left
+  `selection.py`'s `software_native_advantage` gate reporting `UNMEASURABLE` unconditionally on
+  purpose — `test_nothing_yet_consumes_a_content_audit` closed every kernel module against importing
+  `content_audit` until the wiring was argued rather than done as a drive-by. This is that argument.
+
+### Reading only a resolved prediction, never the Auditor's raw probability
+
+`content_audit.py`'s own docstring names the reason this was deferred rather than built in the same
+slice: an audit's `probability` is registered *before* the outcome is known, so reading it into an
+automatic gate would be gating a candidate on an **estimate** — exactly the "estimated negative EV"
+shape §10.5 forbids acting on without strong evidence and a concurring Auditor. The gate instead reads
+`prediction.get(conn, audit.prediction_id).outcome` — a value that exists only after the register has
+resolved the claim against what was actually observed, the identical discipline `_evidence_quality`
+already applies to a Cell's own forecast record.
+
+`UNEVALUABLE` (an audit exists but has not resolved) and `UNMEASURABLE` (no audit exists at all)
+stay the two distinct absences `GateOutcome`'s docstring already names, mirroring `_evidence_quality`'s
+"a Cell with no resolved forecasts is `UNEVALUABLE`, never rejected" — an audited-but-not-yet-resolved
+genome is not inferior, it is unmeasured.
+
+### Any single resolved audit that resolves false rejects — concurrence is not required here
+
+§10.5's stronger bar — "estimated negative EV alone must not kill a Cell... unless... an independent
+Auditor or evaluator concurs" — is written for *death*. This gate does not kill anything: a candidate
+rejected this funding round can be re-proposed once the concern is addressed, and migration 0031's
+partial unique index already permits more than one Auditor to record an opinion about the same genome.
+Requiring every Auditor who has ever judged a genome to agree would mean one Auditor's vindicated
+"ordinary freelancing" flag could be outvoted by others who never looked closely — the same failure
+mode `_policy_compliance` already refuses by rejecting on a single escalating §23.4 signal rather than
+requiring a quorum of them. So the rule here is symmetric with that gate: any one resolved, vindicated
+concern rejects; the register having scored the Auditor who raised it (via `content_audit.precision`)
+is the check on Auditors who flag carelessly, not a second gate reading their track record.
+
+### What it displaced
+
+- **A quorum or majority-vote rule across every resolved audit for a genome.** Considered and
+  rejected above — no spec clause asks for consensus at the gate, only at the kill path, and a quorum
+  requirement would need a threshold this module has no principled way to pick.
+- **Reading `content_audit.precision`'s flag-precision figure** as a continuous input instead of a
+  binary resolved/unresolved read. Rejected for the same reason `economic_potential` declines a
+  self-reported upside: there is no proper scoring rule over an aggregate precision figure the way
+  there is over a single resolved binary claim, and folding it in would smuggle a scalar into a gate
+  §13.2 built specifically to avoid one.
+- **Moving `software_native_advantage` header text out of the "cannot be measured" bullet list
+  entirely.** Kept as a parenthetical (matching `structural_novelty`'s ADR-060 precedent) rather than
+  deleted, because the dimension is still frequently `UNMEASURABLE` in practice — most genomes have no
+  audit — and the module docstring is where a reader learns why.
+
+### Correcting a stale note
+
+`PRIORITIES.md` stated this slice would also need an edit to `test_no_kernel_path_acts_on_a_frontier`'s
+allowed-importers list. It did not: that test scans for modules importing `selection`, and this slice
+only added an import *from* `selection.py` *of* `content_audit` — the direction `test_nothing_yet_
+consumes_a_content_audit` (renamed `test_only_selection_consumes_a_content_audit`) already governs.
+The claim was written before the wiring was designed and never checked against the two tests' actual
+axes; logged here rather than left to drift further (`feedback-mitosis-claim-drift`'s pattern).

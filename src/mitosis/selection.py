@@ -23,7 +23,7 @@ first funded, which is the absence of selection wearing an ordering's clothes.
 `CANDIDATE_KINDS` and `NON_CANDIDATE_SENSE` force every other kind to carry a
 reason it is excluded rather than falling out of a filter nobody revisits.
 
-## Four of the nine dimensions cannot be measured, and say so
+## Two of the nine dimensions cannot be measured, and say so
 
 A dimension with no data reports `None` **with a reason**, never `0.0`. A zero
 is a claim ("this idea is not novel"); an abstention is the truth ("nothing here
@@ -42,12 +42,14 @@ radical is now a live ordinal axis. It measures distance, not merit — see
 - **`reproducibility`** needs §11.2's independent-adoption record — another Cell
   using the finding and passing verification. §10.5's `EVIDENCE_NOT_REPRODUCIBLE`
   is declared in `death.py` and unimplemented for the same reason.
-- **`software_native_advantage`** is §13.3's list (large-scale iteration,
-  machine-to-machine commerce, combinatorial search…) and is a judgment about an
-  *idea's content*. The admissible judges are a human (§23) or an independent
-  Auditor (§10.4); the Cell is excluded by §0.3, and the kernel is excluded by
-  §23.5 — scoring an idea's content inside the loop that produces ideas is the
-  surface `tests/test_analysis_boundary.py` exists to keep shut.
+
+(**`software_native_advantage` was here too, until this slice.** It is still a
+judgment about an idea's content, still admissible only from a human (§23) or an
+independent Auditor (§10.4), and the kernel still never makes the judgment
+itself — `content_audit.py` is what changed, giving `software_native_advantage`
+a live Auditor judge the way ADR-060 gave `structural_novelty` a live prior.
+This gate only ever *reads* a judgment someone else already made and the
+register already scored; see `_software_native_advantage`.)
 
 ## Why a self-reported probability is safe to select on and a self-reported
 ## upside is not
@@ -85,7 +87,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 
-from . import approval, experiments, novelty, prediction, promotion
+from . import approval, content_audit, experiments, novelty, prediction, promotion
 from .models import CellStatus
 from .proposal import ProposalKind
 
@@ -363,6 +365,67 @@ def _policy_compliance(conn: sqlite3.Connection, cell_id: str, request_id: str) 
                 "not quarantined; no escalating §23.4 signal on this request")
 
 
+def _software_native_advantage(conn: sqlite3.Connection, cell_id: str) -> Gate:
+    """§13.3's list, read from a *resolved* `content_audit.py` judgment.
+
+    **Only a resolved prediction may gate.** `content_audit.py`'s own docstring
+    names the reason this wiring was deferred: reading an Auditor's probability
+    before the register has scored it would gate a candidate on an *estimate*
+    — exactly the shape §10.5 forbids acting on automatically. Once the
+    prediction resolves it is a realised fact, the same discipline
+    `_evidence_quality` and `_policy_compliance` already apply.
+
+    **No audit for this genome is `UNMEASURABLE`**, unchanged from before this
+    slice. **An audit that exists but has not resolved is `UNEVALUABLE`**, not
+    a rejection — an Auditor's claim before its horizon is up tells this gate
+    nothing yet, the same distinction `_evidence_quality` draws for a Cell with
+    no resolved forecasts.
+
+    **Any single resolved audit whose claim resolved false rejects.** The claim
+    is always "genuinely §13.3" (`content_audit.precision`'s own comment), so a
+    false resolution is a vindicated concern — a realised finding, not an
+    opinion. This takes the same posture `_policy_compliance` already takes
+    with a single escalating signal, rather than requiring every Auditor who
+    has ever judged this genome to agree; §10.5's stronger "an Auditor must
+    concur" bar is written for killing a Cell, not for screening a candidate
+    out of one funding round.
+    """
+    row = conn.execute("SELECT genome_hash FROM cells WHERE cell_id = ?", (cell_id,)).fetchone()
+    if row is None:
+        return _unmeasurable_gate("software_native_advantage")
+
+    resolved_outcomes: list[bool] = []
+    unresolved = False
+    for record in content_audit.audits_for_genome(conn, row["genome_hash"]):
+        # `compared_genome_hash` is always NULL for this kind (migration
+        # 0031's CHECK), so a match here is always about `genome_hash` itself,
+        # never about this genome appearing as the *comparison* side of a
+        # `renamed_mechanism` pair.
+        if record.kind is not content_audit.Kind.SOFTWARE_NATIVE_ADVANTAGE or not record.is_recorded:
+            continue
+        assert record.prediction_id is not None
+        registered = prediction.get(conn, record.prediction_id)
+        assert registered is not None
+        if not registered.is_resolved:
+            unresolved = True
+            continue
+        resolved_outcomes.append(bool(registered.outcome))
+
+    if any(outcome is False for outcome in resolved_outcomes):
+        n = sum(1 for o in resolved_outcomes if o is False)
+        return Gate("software_native_advantage", GateOutcome.REJECTED,
+                    f"{n} resolved content audit(s) found this genome does not genuinely "
+                    "have §13.3's program-native advantage")
+    if resolved_outcomes:
+        return Gate("software_native_advantage", GateOutcome.PASSED,
+                    f"{len(resolved_outcomes)} resolved content audit(s) found this genome "
+                    "genuinely has §13.3's program-native advantage")
+    if unresolved:
+        return Gate("software_native_advantage", GateOutcome.UNEVALUABLE,
+                    "a content audit exists for this genome but has not resolved yet")
+    return _unmeasurable_gate("software_native_advantage")
+
+
 def _unmeasurable_gate(dimension: str) -> Gate:
     return Gate(dimension, GateOutcome.UNMEASURABLE, GATE_DIMENSIONS[dimension])
 
@@ -577,7 +640,7 @@ def evaluate(conn: sqlite3.Connection, *, now: datetime | None = None) -> Fronti
                     _evidence_quality(conn, grant.cell_id),
                     _unmeasurable_gate("reproducibility"),
                     _policy_compliance(conn, grant.cell_id, grant.request_id),
-                    _unmeasurable_gate("software_native_advantage"),
+                    _software_native_advantage(conn, grant.cell_id),
                 ),
                 axes=(
                     _structural_novelty(conn, grant.cell_id),

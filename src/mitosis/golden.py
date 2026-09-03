@@ -1156,8 +1156,9 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #               rather than smuggled into this one (logged in
 #               FUTURE_BUILD_HOOKS).
 #           (b) **Nothing else moved.** No balance, no promotion, no existing
-#               `audits` row — the mechanism is additive over a table nothing
-#               else reads yet (`test_nothing_yet_consumes_a_content_audit`).
+#               `audits` row — the mechanism is additive over a table only
+#               `selection.py`'s gate reads, and only when resolved
+#               (`test_only_selection_consumes_a_content_audit`).
 #           (c) **The watch this leaves.** If `genome_content_audits` ever
 #               gains a row in this replay without a corresponding Cell birth
 #               explaining where its Auditor and its subject came from, the

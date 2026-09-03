@@ -223,19 +223,23 @@
   check is strictly subsumed by the lineage check (a Cell whose own genome matches always appears
   in the lineage query trivially sharing a founder with itself) — kept anyway for a sharper error
   message, with the lineage check as the actual guarantee. `concern`/`no_concern` and the coherence
-  rule transfer from migration 0018 unchanged. **Nothing consumes an audit yet** —
-  `selection.py`'s `software_native_advantage` gate still reports `UNMEASURABLE`; wiring it to read
-  a *resolved* audit (never an unresolved one, which would be §10.5's forbidden estimated-EV shape)
-  is the natural next step, structurally blocked for now by `test_nothing_yet_consumes_a_content_audit`.
+  rule transfer from migration 0018 unchanged. **Nothing consumed an audit at ship time** —
+  `selection.py`'s `software_native_advantage` gate reported `UNMEASURABLE` unconditionally; wired
+  2026-09-03, ADR-066, see below.
   *Disproved by:* any §13.3 or §13.4 judgment recorded without a probability, or phrased by the Cell
   it is about.
-- [ ] **Wire `selection.py`'s `software_native_advantage` gate to `content_audit.py` — the front of
-  Phase 2's remaining §13.2 work.** Read only a *resolved* `genome_content_audits` prediction (an
-  unresolved one is §10.5's forbidden "estimated negative EV" shape); `PASSED`/`REJECTED` from the
-  verdict the resolution implies, `UNEVALUABLE` if an audit exists but has not resolved,
-  `UNMEASURABLE` unchanged if none exists. `test_nothing_yet_consumes_a_content_audit` and
-  `test_no_kernel_path_acts_on_a_frontier`'s allowed-importers list both need an explicit,
-  argued edit — this is not a drive-by wiring.
+- [x] **Wire `selection.py`'s `software_native_advantage` gate to `content_audit.py` — DONE**
+  (2026-09-03), ADR-066, 3 new tests, golden run unchanged (stays 35 — no fixture Cell has ever had a
+  content audit). `_software_native_advantage` reads only a *resolved* `genome_content_audits`
+  prediction (an unresolved one would be §10.5's forbidden "estimated negative EV" shape):
+  `PASSED`/`REJECTED` from the resolved outcome, `UNEVALUABLE` if an audit exists but has not
+  resolved, `UNMEASURABLE` unchanged if none exists. **Any single resolved audit that resolved false
+  rejects** — no quorum across Auditors, the same "one detected fact rejects" posture
+  `_policy_compliance` already takes with a §23.4 signal, argued in ADR-066 as distinct from §10.5's
+  stronger concurrence bar (which is written for killing a Cell, not for screening one funding
+  round). **The PRIORITIES claim that `test_no_kernel_path_acts_on_a_frontier`'s allowed-importers
+  list would also need an edit was wrong** — that test scans who imports `selection`, not what
+  `selection` imports, and was unaffected; corrected in ADR-066 rather than left stale.
   *Disproved by:* `selection.py` reading an unresolved content audit, or reading the Auditor's
   probability directly instead of the resolved outcome.
 - [x] **§25.1's rung 8 — DONE** (2026-08-28), ADR-063, migration 0030, golden 32 -> 33. **The

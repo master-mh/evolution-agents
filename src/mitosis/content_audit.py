@@ -91,14 +91,14 @@ argument.
 
 ## What this deliberately does not do
 
-**Nothing consumes a content audit yet.** `selection.py`'s `software_native_
-advantage` gate reports `UNMEASURABLE` unconditionally — this module makes it
-*measurable*, and wiring the gate to read a resolved audit is a deliberate
-next step, not this one (logged in FUTURE_BUILD_HOOKS). Reading an
-*unresolved* prediction into a gate would be scoring a candidate on an
-Auditor's opinion before the register has judged the Auditor, which is
-precisely the "estimated negative EV" shape §10.5 exists to keep out of an
-automatic decision.
+**`selection.py`'s `software_native_advantage` gate is this module's one
+consumer.** It reads only a *resolved* `genome_content_audits` row — never an
+unresolved one, which would be scoring a candidate on an Auditor's opinion
+before the register has judged the Auditor, precisely the "estimated negative
+EV" shape §10.5 exists to keep out of an automatic decision. No audit at all
+still reports `UNMEASURABLE`; an audit that exists but has not resolved
+reports `UNEVALUABLE`, not a rejection. See `selection._software_native_
+advantage`.
 
 **No combined precision record across both audit kinds.** `precision()` here
 reports only `genome_content_audits`; `auditor.precision()` reports only
