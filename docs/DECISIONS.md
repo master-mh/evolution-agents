@@ -4255,18 +4255,29 @@ when a second call was made. A plain nullable `TEXT REFERENCES model_calls(model
 legal SQLite `ALTER TABLE ADD COLUMN` (no CHECK, no NOT NULL, no computed default), so this needed
 no rebuild the way migration 0032 (`proposals.risk_tier`) did.
 
-### Best-effort by construction — a repair can never make `deliberate()` raise where it did not before
+### Best-effort for *economic* failures only — a repair never raises `deliberate()` on the grounds it couldn't afford a second call
 
-`_attempt_parse_repair` wraps the whole attempt in a broad `except Exception`. Any failure of the
-attempt itself — an exhausted real-spend cap, an insufficient balance, anything `gateway.call_model`
-raises before a reservation exists — degrades to the exact pre-repair behaviour: an UNPARSEABLE
-deliberation recording only the original failure, `repair_model_call_id` left `NULL`. This mirrors
-`_unfunded_books`' own stated reasoning ("a refusal costs nothing and is recorded, whereas the
-gateway's refusal is an exception in the middle of a wake") extended to a second call that might
-not be affordable even when the first one was. A provider-level failure on the repair call itself
-(`ProviderCallError`) needs no special handling at all — `gateway.call_model` already converts that
-into a `failed` `model_calls` row rather than raising, so it flows through the same "reply text
-failed to validate" path as an ordinary malformed reply.
+`_attempt_parse_repair` catches exactly the exceptions that mean the second call could not be
+*attempted* — `_REPAIR_UNATTEMPTABLE_ERRORS = (gateway.GatewayError, reservations.ReservationError,
+real_spend_breaker.RealSpendBreakerError)`: an exhausted real-spend cap, an insufficient balance,
+the breaker, the gateway's own pre-call refusals. Each degrades to the exact pre-repair behaviour:
+an UNPARSEABLE deliberation recording only the original failure, `repair_model_call_id` left `NULL`.
+This mirrors `_unfunded_books`' own reasoning ("a refusal costs nothing and is recorded, whereas the
+gateway's refusal is an exception in the middle of a wake") extended to a second call that might not
+be affordable even when the first one was. A provider-level failure on the repair call itself
+(`ProviderCallError`) needs no special handling — `gateway.call_model` already converts that into a
+`failed` `model_calls` row rather than raising, so it flows through the same "reply text failed to
+validate" path as an ordinary malformed reply.
+
+**Refined 2026-09-03 (post-slice critique):** the first pass caught a *blanket* `except Exception`
+here, which also swallowed genuine faults — a programming error in `_attempt_parse_repair`, a locked
+or corrupt database — and disguised them as "the model could not format its reply," an UNPARSEABLE
+row with the traceback buried in `failure_reason` and no test able to catch it. The catch is now
+narrowed to `_REPAIR_UNATTEMPTABLE_ERRORS`; anything else propagates, exactly as it already does from
+the *first*, unwrapped `gateway.call_model` in `deliberate()`. New test
+`test_a_bug_in_the_repair_path_propagates_rather_than_masquerading` pins this and teeth-checks
+against the blanket catch; `test_a_repair_that_cannot_even_be_attempted_falls_back_gracefully` now
+raises a real `RealSpendCapExceededError` rather than a stand-in `RuntimeError`.
 
 ### The repair turn, and what it deliberately does not resend
 

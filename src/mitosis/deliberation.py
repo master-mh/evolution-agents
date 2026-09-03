@@ -64,6 +64,8 @@ from . import (
     prediction,
     proposal as proposal_module,
     providers,
+    real_spend_breaker,
+    reservations,
 )
 from .accounts import cell_cash
 from .models import Book, Cell, CellStatus
@@ -103,6 +105,23 @@ DEFAULT_MAX_TOKENS = 700
 #: prevent. Named rather than hardcoded so the cap is visible at the call
 #: site and in tests that pin it.
 MAX_PARSE_REPAIR_ATTEMPTS = 1
+
+#: The exceptions a repair attempt may raise that mean "the second call could
+#: not even be *attempted*" — the Cell cannot afford it, a cap or the real-spend
+#: breaker refused it, or the gateway declined it outright. These, and only
+#: these, degrade a repair to the pre-repair UNPARSEABLE outcome (ADR-069):
+#: losing the *first* failure's record because a *second* call was unaffordable
+#: would be strictly worse than not repairing at all. Anything else a repair
+#: raises — a programming error in `_attempt_parse_repair`, a locked or corrupt
+#: database — is a genuine fault and must propagate, exactly as it already does
+#: from the first (unwrapped) `gateway.call_model` in `deliberate()`: a bug
+#: masquerading as "the model cannot format its reply" is the failure mode a
+#: blanket `except Exception` here would have hidden.
+_REPAIR_UNATTEMPTABLE_ERRORS = (
+    gateway.GatewayError,
+    reservations.ReservationError,
+    real_spend_breaker.RealSpendBreakerError,
+)
 
 
 class DeliberationError(Exception):
@@ -365,14 +384,18 @@ def _attempt_parse_repair(
     have succeeded and been billed, so what needs fixing is the *reply text*,
     not an ambiguous call outcome.
 
-    **Best-effort by construction.** Any failure of the attempt itself — a
-    real-spend cap, an insufficient balance, anything `gateway.call_model`
-    raises before a call is made — is caught here and reported in `note`
-    rather than raised, so a repair that cannot even be attempted degrades to
+    **Best-effort for economic failures only.** An *unaffordable* or *refused*
+    second call — a real-spend cap, an insufficient balance, the breaker, any
+    `_REPAIR_UNATTEMPTABLE_ERRORS` the gateway raises before a call is made —
+    is caught here and reported in `note` rather than raised, so it degrades to
     exactly the pre-repair behaviour (`_unfunded_books`' own reasoning: "a
     refusal costs nothing and is recorded, whereas the gateway's refusal is
-    an exception in the middle of a wake"). `deliberate()` must never raise
-    where it did not raise before this existed.
+    an exception in the middle of a wake"). A repair therefore never turns an
+    UNPARSEABLE reply into a *raise* on economic grounds. But a genuine fault —
+    a bug in this function, a locked database — is deliberately *not* caught: it
+    propagates exactly as it already would from the first, unwrapped
+    `gateway.call_model` in `deliberate()`, rather than being disguised as "the
+    model could not format its reply."
     """
     try:
         repair_call = gateway.call_model(
@@ -392,7 +415,11 @@ def _attempt_parse_repair(
             experiment_id=experiment_id,
             idempotency_key=f"deliberation:{wake_key}:repair",
         )
-    except Exception as exc:  # noqa: BLE001 — an unattemptable repair is a fact, not a crash
+    except _REPAIR_UNATTEMPTABLE_ERRORS as exc:
+        # An unaffordable/refused second call is a fact about the colony, not a
+        # crash: degrade to the pre-repair outcome (see _REPAIR_UNATTEMPTABLE_ERRORS).
+        # Any *other* exception is a real fault and propagates, matching the
+        # first, unwrapped gateway call in deliberate().
         return _RepairResult(model_call_id=None, parsed=None, note=f"repair not attempted: {exc}")
 
     try:

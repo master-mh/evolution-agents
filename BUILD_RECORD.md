@@ -69,6 +69,17 @@ legal SQLite `ALTER TABLE ADD COLUMN`, so this needed no rebuild the way migrati
 - No live measurement of the actual parse-rate lift was run — logged in FUTURE_BUILD_HOOKS as a
   separate, reviewable act with its own arms and sample size, matching ADR-067's precedent for the
   temperature socket.
+### Follow-up (same day, post-slice critique): the catch is narrowed
+
+A critique of the slice caught that `_attempt_parse_repair`'s `except Exception` was a *blanket*
+catch — it degraded genuine faults (a bug in the repair path, a locked DB) to a silent UNPARSEABLE
+row with the traceback buried in `failure_reason`, uncatchable by any test that drives a working
+provider. Narrowed to `_REPAIR_UNATTEMPTABLE_ERRORS` (gateway/reservations/breaker refusals only);
+everything else propagates, matching the first, unwrapped `gateway.call_model` in `deliberate()`.
+New test `test_a_bug_in_the_repair_path_propagates_rather_than_masquerading` (teeth-checked against
+the blanket catch); the fallback test now raises a real `RealSpendCapExceededError`. 1175 tests and
+golden green; golden unchanged (the repair path is never hit in the fixture). ADR-069 amended.
+
 - Next: `auditor.py`/`content_audit.py`/`cli.py`'s `call-model` get no parse-repair retry (scoped
   out the same way ADR-067 scoped temperature to `deliberation.py` only) — an unargued follow-up,
   not a gap in this slice. Otherwise, Phase 2 proper: synthetic customers, marketplace, MAP-Elites,

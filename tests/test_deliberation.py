@@ -25,6 +25,7 @@ from mitosis import (
     prediction,
     proposal,
     providers,
+    real_spend_breaker,
 )
 from mitosis.models import Book, CellStatus, CellType, EntrySpec
 
@@ -614,9 +615,9 @@ def test_a_repair_that_cannot_even_be_attempted_falls_back_gracefully(conn, monk
     exists — `deliberate()` must still return an UNPARSEABLE deliberation
     rather than raising mid-wake, exactly what would have happened before
     this mechanism existed. `gateway.call_model` is monkeypatched to let the
-    first (real) call through and raise on the second, standing in for
-    whichever specific cap fires in production — `_attempt_parse_repair`'s
-    `except Exception` does not distinguish between them."""
+    first (real) call through and raise a real-spend cap on the second,
+    standing in for whichever economic refusal fires in production — the ones
+    `_attempt_parse_repair` catches on purpose (`_REPAIR_UNATTEMPTABLE_ERRORS`)."""
     cell = _make_cell(conn)
     real_call_model = deliberation.gateway.call_model
     calls = {"n": 0}
@@ -625,7 +626,9 @@ def test_a_repair_that_cannot_even_be_attempted_falls_back_gracefully(conn, monk
         calls["n"] += 1
         if calls["n"] == 1:
             return real_call_model(*args, **kwargs)
-        raise RuntimeError("simulated cap: the repair attempt could not be reserved")
+        raise real_spend_breaker.RealSpendCapExceededError(
+            "simulated cap: the repair attempt could not be reserved"
+        )
 
     monkeypatch.setattr(deliberation.gateway, "call_model", flaky_call_model)
 
@@ -635,6 +638,31 @@ def test_a_repair_that_cannot_even_be_attempted_falls_back_gracefully(conn, monk
     assert result.repair_model_call_id is None, "no call was ever made, so nothing to point at"
     assert "repair not attempted" in result.failure_reason
     assert _model_call_count(conn) == 1
+
+
+def test_a_bug_in_the_repair_path_propagates_rather_than_masquerading(conn, monkeypatch):
+    """A genuine fault on the repair call — a programming error, a locked or
+    corrupt database, anything outside `_REPAIR_UNATTEMPTABLE_ERRORS` — must
+    NOT be swallowed and recorded as "the model could not format its reply."
+    It propagates, exactly as it already would from the first, unwrapped
+    `gateway.call_model` in `deliberate()`. This is the teeth of narrowing the
+    catch from a blanket `except Exception` (the finding ADR-069's first pass
+    left open): a blanket catch would have turned this bug into a silent
+    UNPARSEABLE row with the traceback buried in `failure_reason`."""
+    cell = _make_cell(conn)
+    real_call_model = deliberation.gateway.call_model
+    calls = {"n": 0}
+
+    def buggy_call_model(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_call_model(*args, **kwargs)
+        raise RuntimeError("a bug in the repair path, not an economic refusal")
+
+    monkeypatch.setattr(deliberation.gateway, "call_model", buggy_call_model)
+
+    with pytest.raises(RuntimeError, match="a bug in the repair path"):
+        _deliberate(conn, cell, "not json")
 
 
 def test_ledger_conservation_holds_across_a_repaired_wake(conn):
