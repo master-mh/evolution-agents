@@ -35,6 +35,9 @@ def _rule() -> str:
     return proposal.response_schema_hint().split("\n\n", 1)[1]
 
 
+#: Keys the skeleton always shows, regardless of `kind`. Not the same claim as
+#: "always mandatory" — `risk_tier` (ADR-068) is shown here unconditionally
+#: but its own hint text carries the one exception, `abstain`.
 ALWAYS_REQUIRED = (
     "kind", "summary", "rationale", "risk_tier", "estimated_cost_minor_units",
 )
@@ -111,6 +114,86 @@ def test_a_reply_with_only_the_required_keys_parses():
         "estimated_cost_minor_units": 0,
     }))
     assert parsed.kind is ProposalKind.STRATEGY
+
+
+# --- risk_tier is optional for exactly one kind (ADR-068) ---------------------
+
+
+def test_an_abstain_reply_may_omit_risk_tier_entirely():
+    """§23.1 classifies actions; an abstaining Cell proposes none. `qwen2.5`
+    dropped the key outright on every abstain reply in its collapsed t=0 run —
+    this is that shape, made legal."""
+    parsed = proposal.parse(json.dumps({
+        "kind": "abstain",
+        "summary": "nothing worth doing this wake",
+        "rationale": "no evidence supports a new claim right now",
+        "estimated_cost_minor_units": 0,
+    }))
+    assert parsed.kind is ProposalKind.ABSTAIN
+    assert parsed.risk_tier is None
+
+
+def test_an_abstain_reply_may_send_risk_tier_as_null():
+    """`llama3.2`'s shape for the same objection: not omitted, but `null`.
+    Pydantic parses `null` into `None` for an `Optional` field, so both of the
+    two independently observed failure shapes are covered by one change."""
+    parsed = proposal.parse(json.dumps({
+        "kind": "abstain",
+        "summary": "nothing worth doing this wake",
+        "rationale": "no evidence supports a new claim right now",
+        "risk_tier": None,
+        "estimated_cost_minor_units": 0,
+    }))
+    assert parsed.risk_tier is None
+
+
+def test_an_abstain_reply_may_still_state_a_risk_tier():
+    """Optional, not forbidden — a Cell that has an opinion may still state
+    one; the schema only stops treating its absence as a parse failure."""
+    parsed = proposal.parse(json.dumps({
+        "kind": "abstain",
+        "summary": "nothing worth doing this wake",
+        "rationale": "no evidence supports a new claim right now",
+        "risk_tier": "LOW",
+        "estimated_cost_minor_units": 0,
+    }))
+    assert parsed.risk_tier is proposal.RiskTier.LOW
+
+
+@pytest.mark.parametrize(
+    "kind", sorted(set(ProposalKind) - {ProposalKind.ABSTAIN}, key=lambda k: k.value)
+)
+def test_every_other_kind_still_requires_a_risk_tier(kind):
+    """The exception is exactly one kind wide. Widening it silently — a
+    stronger model reaching the same objection on a *different* kind, say —
+    must still fail loudly rather than being read as evidence to relax
+    further."""
+    reply = {
+        "kind": kind.value,
+        "summary": "a summary",
+        "rationale": "a rationale",
+        "estimated_cost_minor_units": 0,
+    }
+    filled = {
+        "tool_request": {"tool": "http_get", "arguments": {}},
+        "external_action": {"channel": "email", "intent": "ask for feedback"},
+        "experiment": {"hypothesis": "widgets sell at 4"},
+    }
+    if kind in KIND_PAYLOADS:
+        reply[KIND_PAYLOADS[kind]] = filled[KIND_PAYLOADS[kind]]
+
+    with pytest.raises(proposal.ProposalError, match="risk_tier is required"):
+        proposal.parse(json.dumps(reply))
+
+
+def test_the_prompt_names_the_one_exception():
+    """The rendered hint must actually say which kind may omit the field, not
+    just that the schema now permits it — a model reading the old wording
+    ("required for every kind, abstain included") would still supply one it
+    no longer needs to."""
+    hint = _skeleton()["risk_tier"]
+    assert "abstain" in hint
+    assert "except" in hint
 
 
 # --- the renderings that were measured to matter ------------------------------

@@ -446,13 +446,21 @@
   *Disproved by:* a silent genome (no `model_policy`) reaching a provider as temperature 0 rather
   than `None`, or any caller setting `ModelRequest.temperature` from something other than
   `genome.temperature_of`.
-- [ ] **`risk_tier` on `abstain` — two models now independently refuse it.** `qwen2.5`'s only two
-  failures in 16 were `abstain` replies carrying `kind` + `rationale` alone, dropping `summary`,
-  `risk_tier` and `estimated_cost_minor_units`; `llama3.2` returned `"risk_tier": null` on the same
-  shape. A stronger model reaching the same objection is evidence the schema is wrong rather than the
-  models — a Cell declining to act is arguably not stating a risk tier. Making it optional for
-  ABSTAIN is a schema change with §23.1 implications; the alternative is leaving a parse failure in
-  place for a defensible answer. Cheap, and now well-evidenced.
+- [x] **`risk_tier` on `abstain` — DONE** (2026-09-03), ADR-068, migration 0032, 8 new tests, golden
+  35 -> 36. `risk_tier` is now `RiskTier | None`, enforced required-except-abstain at two independent
+  layers: `Proposal._risk_tier_matches_kind` (Pydantic, parse time) and migration 0032's `CHECK
+  (risk_tier IS NOT NULL OR kind = 'abstain')` (ADR-047's "unrepresentable, not merely refused"),
+  each teeth-checked separately and each failing on its own when disabled. **Scoped to exactly the
+  defensible field** — `qwen2.5`'s collapse also dropped `summary` and `estimated_cost_minor_units`,
+  neither of which got the same treatment: an abstaining Cell still has something to say and its cost
+  is trivially 0, so widening either would have fixed an unargued second failure under cover of this
+  one. **The "§23.1 implications" this entry flagged turned out not to materialise** — `approval.
+  _enqueue_locked` already returns `None` for an abstain proposal before ever reading `risk_tier`, so
+  the one place §23.1's tier is actually read as a classification is structurally unreachable for a
+  row that could carry NULL. Golden diff is a constant +30 `input_tokens` on every deliberation-loop
+  call (the rendered prompt hint describing the new exception is longer text); every balance, cost,
+  and `output_tokens` figure is unchanged.
+  *Disproved by:* a non-abstain proposal recorded with a NULL `risk_tier`, at either layer.
 - [x] **`qwen2.5` at t=0 — MEASURED** (2026-08-26). **0/16**, all eight replies per run
   byte-identical, converging on the `abstain` shape the schema rejects. The collapse is universal
   (greedy decoding, not a small-model artifact) and the *direction* of its effect on parse rate is

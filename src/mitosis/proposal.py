@@ -335,7 +335,12 @@ class Proposal(BaseModel):
     kind: ProposalKind
     summary: str = Field(min_length=1, max_length=MAX_SUMMARY_CHARS)
     rationale: str = Field(min_length=1, max_length=MAX_RATIONALE_CHARS)
-    risk_tier: RiskTier
+    #: Required for every kind except ABSTAIN (ADR-068). §23.1 classifies
+    #: *actions*; an abstaining Cell has proposed no action to classify, and
+    #: two models independently dropped or nulled this field on exactly that
+    #: kind. See `_risk_tier_matches_kind` for the enforcement, which mirrors
+    #: `_experiment_matches_kind`'s shape rather than inventing a new one.
+    risk_tier: RiskTier | None = None
     estimated_cost_minor_units: int = Field(ge=0)
     predictions: tuple[ProposedPrediction, ...] = Field(
         default=(), max_length=MAX_PREDICTIONS
@@ -361,6 +366,23 @@ class Proposal(BaseModel):
         """
         if self.kind is ProposalKind.ABSTAIN and self.artifact is not None:
             raise ValueError("an abstaining proposal cannot carry an artifact")
+        return self
+
+    @model_validator(mode="after")
+    def _risk_tier_matches_kind(self) -> "Proposal":
+        """§23.1 classifies *actions*, LOW through CRITICAL. ABSTAIN proposes
+        none, so it is the one kind where omitting `risk_tier` (or sending it
+        as `null`) is a defensible answer rather than a dropped field —
+        ADR-068, after two models independently produced exactly this shape.
+        Every other kind still requires a stated tier.
+        """
+        if self.kind is ProposalKind.ABSTAIN:
+            return self
+        if self.risk_tier is None:
+            raise ValueError(
+                f"risk_tier is required for kind {self.kind.value!r} "
+                "(only 'abstain' may omit it)"
+            )
         return self
 
     @model_validator(mode="after")
@@ -640,7 +662,11 @@ def _prompt_schema() -> dict[str, Any]:
         "kind": _one_of(ProposalKind),
         "summary": f"REQUIRED string, 1-{MAX_SUMMARY_CHARS} chars",
         "rationale": f"REQUIRED string, 1-{MAX_RATIONALE_CHARS} chars",
-        "risk_tier": _one_of(RiskTier) + " — required for every kind, abstain included",
+        "risk_tier": (
+            _one_of(RiskTier)
+            + ' — required for every kind except "abstain", which classifies no '
+            "action and may omit this key entirely"
+        ),
         "estimated_cost_minor_units": "REQUIRED integer >= 0 (use 0 if nothing would be spent)",
     }
     # The conditional payloads stay in the skeleton; `artifact` and

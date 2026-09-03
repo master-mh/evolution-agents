@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -549,6 +550,50 @@ def test_abstaining_is_a_valid_proposal(conn):
     )
     assert result.status == deliberation.DeliberationStatus.PROPOSED
     assert deliberation.get_proposal(conn, result.proposal_id)["kind"] == "abstain"
+
+
+def test_abstaining_with_no_risk_tier_is_recorded_not_rejected(conn):
+    """ADR-068, end to end: the two failure shapes that motivated it
+    (`qwen2.5` dropping the key, `llama3.2` sending `null`) must reach a
+    recorded proposal rather than an `UNPARSEABLE` deliberation."""
+    cell = _make_cell(conn)
+    payload = json.loads(_valid_reply(
+        kind="abstain",
+        summary="nothing worth doing this cycle",
+        rationale="no signal has changed since the last wake",
+        predictions=[],
+    ))
+    del payload["risk_tier"]
+
+    result = _deliberate(conn, cell, json.dumps(payload))
+
+    assert result.status == deliberation.DeliberationStatus.PROPOSED
+    stored = deliberation.get_proposal(conn, result.proposal_id)
+    assert stored["kind"] == "abstain"
+    assert stored["risk_tier"] is None
+
+
+def test_the_schema_itself_refuses_a_null_risk_tier_on_a_non_abstain_kind(conn):
+    """ADR-047's discipline applied here: `_risk_tier_matches_kind` is not the
+    only thing standing between a non-abstain proposal and a missing risk
+    tier — migration 0032's CHECK constraint makes the row unrepresentable
+    regardless of which future caller writes to `proposals` directly."""
+    cell = _make_cell(conn)
+    result = _deliberate(conn, cell)
+    assert result.status == deliberation.DeliberationStatus.PROPOSED
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO proposals (
+                proposal_id, deliberation_id, cell_id, kind, summary, rationale,
+                risk_tier, estimated_cost_minor_units, derived_from_untrusted,
+                payload_json, created_at_utc
+            ) VALUES ('bad-proposal', ?, ?, 'spend_request', 'x', 'x',
+                      NULL, 0, 0, '{}', '2026-01-01T00:00:00Z')
+            """,
+            (result.deliberation_id, cell.cell_id),
+        )
 
 
 # --- §15: bounded context ----------------------------------------------------

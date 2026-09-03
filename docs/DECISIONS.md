@@ -4131,3 +4131,80 @@ stays absent all the way through.
   its actual subject — that `model_policy` changes never count toward novelty distance — is unchanged.
   A `notes`/description key was considered and rejected: nothing reads free text today, and an unread
   field is exactly the kind of silent-drift risk `MODEL_POLICY_FIELDS`' closure exists to prevent.
+
+---
+
+## ADR-068: `risk_tier` is optional for exactly one kind — `abstain` — and unrepresentable otherwise
+
+- **Status:** Accepted; `proposal.py`, migration 0032, `deliberation.py`, 8 new tests across three
+  files, golden expectations **35 -> 36**
+- **Spec ref:** §23.1, §0.3; ADR-047, ADR-049, ADR-050
+
+- **Context:** Two independent live measurements produced the same shape of failure on `abstain`
+  replies. `qwen2.5` at t=0 dropped `risk_tier` (with `summary` and `estimated_cost_minor_units`)
+  from every abstain reply in its collapsed run; `llama3.2` sent `"risk_tier": null` on the same
+  shape. PRIORITIES read this correctly: "a stronger model reaching the same objection is evidence
+  the schema is wrong rather than the models" — §23.1 classifies *actions* ("batch low-risk
+  reversible actions; require individual review for high-risk or irreversible"), and a Cell that
+  proposes no action has nothing to classify. Asking it to state a tier anyway is asking it to
+  invent a number about a hypothetical with no shape.
+
+### Scoped to exactly the defensible field, not the whole failure shape
+
+`qwen2.5`'s collapse dropped three fields, not one. Only `risk_tier` has an argument for being
+optional: an abstaining Cell still has something to say (`summary`: "nothing worth doing, because
+...") and its cost is trivially 0 (the prompt already says "use 0 if nothing would be spent" — a
+Cell that cannot answer that has not understood the field, not correctly identified it as
+inapplicable). Widening `summary` or `estimated_cost_minor_units` too would fix a different, wholly
+unargued failure under cover of this one. This is the same discipline `content_audit.py` used for
+§13.4's two flags it left unbuilt — do exactly what the argument supports, log the rest.
+
+### Unrepresentable, not merely refused (ADR-047's precedent, applied again)
+
+`Proposal._risk_tier_matches_kind` (a `model_validator`, the same shape `_experiment_matches_kind`
+already uses) rejects a null `risk_tier` on every kind but `abstain` at parse time. That alone would
+have been sufficient for the one caller that exists today (`deliberation.deliberate`), but ADR-047's
+argument is that a constraint with no layer belongs in the schema whenever the schema can express
+it — it binds every caller, including ones that never import `proposal.py`. Migration 0032 rebuilds
+`proposals` (SQLite cannot `ALTER` a `CHECK`, the same reason migrations 0019/0021/0027 rebuilt it
+before) with `CHECK (risk_tier IS NOT NULL OR kind = 'abstain')`. Both layers are teeth-checked
+independently: reverting the Pydantic validator and reverting the CHECK each produce their own real
+MISS, confirming neither is redundant with the other.
+
+### The "§23.1 implications" PRIORITIES flagged did not materialise
+
+PRIORITIES' entry anticipated consequences worth checking before assuming none. There aren't any:
+`approval._enqueue_locked` already returns `None` for `kind == 'abstain'` *before* it ever reads
+`row["risk_tier"]` — abstaining proposals have never reached the approval queue (ADR-046's "approving
+one *is* the act" reasoning already excludes STATEMENT_KINDS' sibling, and `ProposalKind.ABSTAIN` is
+excluded from that set for the same underlying reason, just deliberately absent from the frozenset
+rather than listed in it). So the one place §23.1's tier actually gets *read* as a classification —
+`approval._assessed_tier`, via `RiskTier(row["risk_tier"])` — is structurally unreachable for a row
+that could ever carry a NULL. `deliberation.py`'s two `.value` accesses were the only real call sites
+needing a change, both now `parsed.risk_tier.value if parsed.risk_tier is not None else None`.
+
+### What it displaced
+
+- **A default of `LOW` for an omitted `risk_tier` on abstain.** Rejected: a fabricated default is
+  worse than an honest `None`, and it would be indistinguishable from a Cell that actually claimed
+  LOW — the same "a zero is a claim, an abstention is the truth" argument `selection.py`'s axes use
+  for their own absences.
+- **Making `risk_tier` optional for every kind.** Considered and rejected immediately: §23.1's
+  classification is real and load-bearing for the four kinds that propose something to review. The
+  fix is scoped to the one kind that structurally cannot state one, not a general relaxation.
+- **A CLI or Python-only fix, no migration.** Rejected per ADR-047: the schema can make the invariant
+  unrepresentable, so it should, independent of `proposal.py` remaining the only writer today.
+
+### Verification
+
+- **8 new tests across `test_prompt_shape.py`, `test_deliberation.py`; teeth-checked twice, once per
+  layer.** Neutralising `_risk_tier_matches_kind` failed `test_every_other_kind_still_requires_a_
+  risk_tier` (a clean `DID NOT RAISE`, parametrized over all four other kinds). Dropping migration
+  0032's CHECK failed `test_the_schema_itself_refuses_a_null_risk_tier_on_a_non_abstain_kind` the
+  same clean way — confirming the schema layer is doing real work, not merely mirroring Python.
+- **1168 tests and the golden run green.** Golden expectations moved **35 -> 36**: no scenario Cell
+  ever proposes `abstain`, so no row's `risk_tier` becomes NULL in the replay — the only diff is
+  `input_tokens` shifting by a constant +30 on every deliberation-loop `model_calls`/`resource_usage`
+  row, because the rendered prompt hint describing the new exception is longer text
+  (`MockProvider`'s token estimate is a pure function of prompt length). `output_tokens`, cost, and
+  every ledger balance are byte-identical to version 35.

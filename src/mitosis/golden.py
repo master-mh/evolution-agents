@@ -1163,7 +1163,26 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #               gains a row in this replay without a corresponding Cell birth
 #               explaining where its Auditor and its subject came from, the
 #               scenario changed by more than this comment describes.
-EXPECTATION_VERSION = 35
+#
+#   35 -> 36 (`risk_tier` becomes optional for `abstain`; ADR-068). **No
+#             section gains or loses a row — `input_tokens` shifts by a
+#             constant +30 on every `model_calls` row this scenario's
+#             deliberation loop produces, and `resource_usage`'s matching
+#             `input_tokens` rows shift the same amount.** `proposal.py`'s
+#             `_prompt_schema()` describes `risk_tier`'s new conditionality in
+#             the rendered prompt itself ("required for every kind except
+#             'abstain'..."), so every deliberation prompt this scenario
+#             assembles is longer by that many characters. `MockProvider`
+#             prices `input_tokens` as a deterministic function of prompt
+#             text length (`providers._estimate_tokens`), so the shift is
+#             exactly the prompt-text growth and nothing else: `output_tokens`
+#             (the mock reply is a fixed literal, untouched by the prompt),
+#             `cost_actual_micro_usd`, `status`, and every ledger balance are
+#             byte-identical to version 35. No scenario Cell proposes
+#             `abstain`, so `proposals.risk_tier` itself never becomes NULL
+#             anywhere in this replay — the new nullability is exercised only
+#             by unit tests, not by the golden scenario.
+EXPECTATION_VERSION = 36
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

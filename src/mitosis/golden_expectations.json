@@ -1,5 +1,5 @@
 {
-  "expectation_version": 35,
+  "expectation_version": 36,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "b5465ca16f35263ddbcda0f8c40f63f598200d7cca5109d637e6c00290492dbb",
+  "semantic_hash": "83d7fe66dc1c5baae09966124cd541e1b003160a9230aa16c2ec2dcc0d645f24",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -782,7 +782,7 @@
       {
         "cell": "cell#1",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 2799,
+        "input_tokens": 2829,
         "mirror_minor_units": 0,
         "output_tokens": 230,
         "pricing_table_version": "2026-07-27",
@@ -814,7 +814,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 2919,
+        "input_tokens": 2949,
         "mirror_minor_units": 0,
         "output_tokens": 279,
         "pricing_table_version": "2026-07-27",
@@ -830,7 +830,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3000,
+        "input_tokens": 3030,
         "mirror_minor_units": 0,
         "output_tokens": 178,
         "pricing_table_version": "2026-07-27",
@@ -846,7 +846,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3398,
+        "input_tokens": 3428,
         "mirror_minor_units": 0,
         "output_tokens": 269,
         "pricing_table_version": "2026-07-27",
@@ -862,7 +862,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3880,
+        "input_tokens": 3910,
         "mirror_minor_units": 0,
         "output_tokens": 216,
         "pricing_table_version": "2026-07-27",
@@ -878,7 +878,7 @@
       {
         "cell": "cell#1",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 2853,
+        "input_tokens": 2883,
         "mirror_minor_units": 0,
         "output_tokens": 228,
         "pricing_table_version": "2026-07-27",
@@ -894,7 +894,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3965,
+        "input_tokens": 3995,
         "mirror_minor_units": 0,
         "output_tokens": 225,
         "pricing_table_version": "2026-07-27",
@@ -910,7 +910,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 4029,
+        "input_tokens": 4059,
         "mirror_minor_units": 0,
         "output_tokens": 218,
         "pricing_table_version": "2026-07-27",
@@ -926,7 +926,7 @@
       {
         "cell": "cell#1",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 2909,
+        "input_tokens": 2939,
         "mirror_minor_units": 0,
         "output_tokens": 224,
         "pricing_table_version": "2026-07-27",
@@ -942,7 +942,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 4083,
+        "input_tokens": 4113,
         "mirror_minor_units": 0,
         "output_tokens": 224,
         "pricing_table_version": "2026-07-27",
@@ -958,7 +958,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 4083,
+        "input_tokens": 4113,
         "mirror_minor_units": 0,
         "output_tokens": 225,
         "pricing_table_version": "2026-07-27",
@@ -974,7 +974,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3925,
+        "input_tokens": 3955,
         "mirror_minor_units": 0,
         "output_tokens": 236,
         "pricing_table_version": "2026-07-27",
@@ -1582,7 +1582,7 @@
       {
         "cell": "cell#1",
         "minor_units": 1,
-        "quantity": 2799,
+        "quantity": 2829,
         "resource_type": "input_tokens"
       },
       {
@@ -1606,7 +1606,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 2919,
+        "quantity": 2949,
         "resource_type": "input_tokens"
       },
       {
@@ -1618,7 +1618,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3000,
+        "quantity": 3030,
         "resource_type": "input_tokens"
       },
       {
@@ -1636,7 +1636,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3398,
+        "quantity": 3428,
         "resource_type": "input_tokens"
       },
       {
@@ -1648,7 +1648,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3880,
+        "quantity": 3910,
         "resource_type": "input_tokens"
       },
       {
@@ -1660,7 +1660,7 @@
       {
         "cell": "cell#1",
         "minor_units": 1,
-        "quantity": 2853,
+        "quantity": 2883,
         "resource_type": "input_tokens"
       },
       {
@@ -1678,7 +1678,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3965,
+        "quantity": 3995,
         "resource_type": "input_tokens"
       },
       {
@@ -1696,7 +1696,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 4029,
+        "quantity": 4059,
         "resource_type": "input_tokens"
       },
       {
@@ -1714,7 +1714,7 @@
       {
         "cell": "cell#1",
         "minor_units": 1,
-        "quantity": 2909,
+        "quantity": 2939,
         "resource_type": "input_tokens"
       },
       {
@@ -1726,7 +1726,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 4083,
+        "quantity": 4113,
         "resource_type": "input_tokens"
       },
       {
@@ -1738,7 +1738,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 4083,
+        "quantity": 4113,
         "resource_type": "input_tokens"
       },
       {
@@ -1750,7 +1750,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3925,
+        "quantity": 3955,
         "resource_type": "input_tokens"
       },
       {

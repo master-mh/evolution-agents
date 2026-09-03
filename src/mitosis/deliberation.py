@@ -607,7 +607,9 @@ def _record_proposal(
                 parsed.kind.value,
                 parsed.summary,
                 parsed.rationale,
-                parsed.risk_tier.value,
+                # ADR-068: None exactly when kind is abstain — the schema's
+                # own CHECK (migration 0032) enforces the pairing.
+                parsed.risk_tier.value if parsed.risk_tier is not None else None,
                 parsed.estimated_cost_minor_units,
                 # §18/§19.4: recorded from the *context that produced it*, not
                 # from anything the Cell said. A Cell repeating a web page has
@@ -651,7 +653,7 @@ def _record_proposal(
                 "wake_key": wake_key,
                 "wake_reason": wake_reason,
                 "model_call_id": model_call_id,
-                "risk_tier": parsed.risk_tier.value,
+                "risk_tier": parsed.risk_tier.value if parsed.risk_tier is not None else None,
                 "predictions": len(parsed.predictions),
             },
         )
