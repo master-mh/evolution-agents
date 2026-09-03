@@ -1182,7 +1182,21 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #             `abstain`, so `proposals.risk_tier` itself never becomes NULL
 #             anywhere in this replay — the new nullability is exercised only
 #             by unit tests, not by the golden scenario.
-EXPECTATION_VERSION = 36
+#
+#   36 -> 37 (a bounded, single parse-repair retry; ADR-069). **One added
+#             field on every `deliberations` row, `made_repair_call`, and it
+#             is `False` everywhere.** No scenario reply is malformed, so no
+#             deliberation in this replay ever needs a repair attempt — the
+#             mechanism (`deliberation._attempt_parse_repair`,
+#             `deliberations.repair_model_call_id`) is additive over rows
+#             nothing in the fixture reaches. Confirmed by a full
+#             section-by-section diff against version 36 before regenerating,
+#             not assumed from the hash mismatch alone: every other field on
+#             every row (`status`, `context_tokens`, `made_model_call`, …) is
+#             byte-identical. `model_calls`/`resource_usage`/every ledger
+#             balance are untouched — the new column adds no cost, because
+#             nothing in the scenario ever writes to it.
+EXPECTATION_VERSION = 37
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -2809,6 +2823,12 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
             "context_tokens": row["context_tokens"],
             "context_dropped": json.loads(row["context_dropped_json"]),
             "made_model_call": row["model_call_id"] is not None,
+            # ADR-069: a bounded, single re-prompt after an unparseable reply.
+            # False for every deliberation in this scenario — no fixture reply
+            # is malformed — but present as a boolean-presence field the same
+            # way `made_model_call` is, so a future scenario that exercises a
+            # repair moves this key rather than introducing a new one.
+            "made_repair_call": row["repair_model_call_id"] is not None,
         }
         for row in conn.execute("SELECT * FROM deliberations ORDER BY rowid").fetchall()
     ]

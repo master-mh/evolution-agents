@@ -96,6 +96,14 @@ MIN_CASH_TO_DELIBERATE = 1
 
 DEFAULT_MAX_TOKENS = 700
 
+#: A parse-repair retry is bounded to exactly one attempt (ADR-069): "it pays
+#: twice for a prompt bug" is the accepted, bounded cost; an unbounded loop
+#: would turn a persistently broken prompt into an unbounded multiplier on a
+#: single wake's cost, which is exactly the failure mode a bound exists to
+#: prevent. Named rather than hardcoded so the cap is visible at the call
+#: site and in tests that pin it.
+MAX_PARSE_REPAIR_ATTEMPTS = 1
+
 
 class DeliberationError(Exception):
     pass
@@ -145,6 +153,9 @@ class Deliberation:
     wake_reason: str
     genome_hash: str
     model_call_id: str | None
+    #: The second, separately-billed call made when the first reply failed to
+    #: validate — NULL for every deliberation that never needed one (ADR-069).
+    repair_model_call_id: str | None
     status: str
     failure_reason: str | None
     context_tokens: int
@@ -177,6 +188,26 @@ def _system_prompt() -> str:
         "- Never state a probability of 0 or 1.\n"
         "- Send only the keys your chosen kind needs. A key you have nothing to "
         "put in is left out entirely, never sent empty."
+    )
+
+
+def _repair_instruction(error: str) -> str:
+    """The follow-up turn sent after an unparseable reply (ADR-069).
+
+    Points at the specific validation error rather than repeating the whole
+    schema — the schema is already the first turn's own content, still in
+    context, and restating it would waste tokens on the part that was never
+    the problem. "This is your only chance" is true and stated rather than
+    implied: `MAX_PARSE_REPAIR_ATTEMPTS` really is 1, and a model told it has
+    one shot is closer to the truth than one that thinks it can iterate.
+    """
+    return (
+        "That reply did not validate:\n"
+        f"    {error}\n\n"
+        "Reply again with ONE corrected JSON object matching the schema from "
+        "your first message, and nothing else — no prose before or after. "
+        "This is your only chance to fix it: if this reply does not validate "
+        "either, nothing from this wake is recorded."
     )
 
 
@@ -253,6 +284,7 @@ def _row_to_deliberation(conn: sqlite3.Connection, row: sqlite3.Row) -> Delibera
         wake_reason=row["wake_reason"],
         genome_hash=row["genome_hash"],
         model_call_id=row["model_call_id"],
+        repair_model_call_id=row["repair_model_call_id"],
         status=row["status"],
         failure_reason=row["failure_reason"],
         context_tokens=row["context_tokens"],
@@ -291,6 +323,87 @@ def list_proposals(conn: sqlite3.Connection, *, cell_id: str | None = None) -> l
             (cell_id,),
         ).fetchall()
     return [get_proposal(conn, r["proposal_id"]) for r in rows]  # type: ignore[misc]
+
+
+@dataclass(frozen=True)
+class _RepairResult:
+    """What one parse-repair attempt produced (ADR-069).
+
+    `model_call_id` is `None` only when the attempt could not be made at all
+    — an exhausted cap, an unpriced model, anything `gateway.call_model`
+    raises before a call exists to bill. Whenever a repair call *was* made,
+    its id is carried regardless of whether the reply it returned parsed,
+    because the Cell paid for it either way and §24.1 requires every call to
+    be traceable.
+    """
+
+    model_call_id: str | None
+    parsed: proposal_module.Proposal | None
+    note: str
+
+
+def _attempt_parse_repair(
+    conn: sqlite3.Connection,
+    *,
+    cell: Cell,
+    provider: providers.ModelProvider,
+    model: str,
+    assembled: context.AssembledContext,
+    reply: str,
+    error: str,
+    max_tokens: int,
+    temperature: float | None,
+    experiment_id: str | None,
+    wake_key: str,
+) -> _RepairResult:
+    """One bounded re-prompt after an unparseable reply
+    (`MAX_PARSE_REPAIR_ATTEMPTS`; ADR-069).
+
+    A wholly new, separately-priced, separately-capped `gateway.call_model`
+    — never a retry of the first reservation, and not the `execution_unknown`
+    retry `gateway.py`'s own docstring declines: the first call is known to
+    have succeeded and been billed, so what needs fixing is the *reply text*,
+    not an ambiguous call outcome.
+
+    **Best-effort by construction.** Any failure of the attempt itself — a
+    real-spend cap, an insufficient balance, anything `gateway.call_model`
+    raises before a call is made — is caught here and reported in `note`
+    rather than raised, so a repair that cannot even be attempted degrades to
+    exactly the pre-repair behaviour (`_unfunded_books`' own reasoning: "a
+    refusal costs nothing and is recorded, whereas the gateway's refusal is
+    an exception in the middle of a wake"). `deliberate()` must never raise
+    where it did not raise before this existed.
+    """
+    try:
+        repair_call = gateway.call_model(
+            conn,
+            cell_id=cell.cell_id,
+            provider=provider,
+            request=providers.ModelRequest(
+                model=model,
+                messages=(
+                    {"role": "user", "content": f"{_system_prompt()}\n\n{assembled.render()}"},
+                    {"role": "assistant", "content": reply},
+                    {"role": "user", "content": _repair_instruction(error)},
+                ),
+                max_tokens=max_tokens,
+                temperature=temperature,
+            ),
+            experiment_id=experiment_id,
+            idempotency_key=f"deliberation:{wake_key}:repair",
+        )
+    except Exception as exc:  # noqa: BLE001 — an unattemptable repair is a fact, not a crash
+        return _RepairResult(model_call_id=None, parsed=None, note=f"repair not attempted: {exc}")
+
+    try:
+        parsed = proposal_module.parse(repair_call.response_text or "")
+    except proposal_module.ProposalError as exc:
+        return _RepairResult(
+            model_call_id=repair_call.model_call_id,
+            parsed=None,
+            note=f"repair reply also failed to validate: {exc}",
+        )
+    return _RepairResult(model_call_id=repair_call.model_call_id, parsed=parsed, note="repaired")
 
 
 def deliberate(
@@ -369,6 +482,13 @@ def deliberate(
     # because a wake never named the experiment it was thinking about.
     experiment_id = experiments.attribution_for(conn, cell.cell_id)
 
+    # §14.1's sampling-temperature mutation operator, read from this Cell's
+    # own genome rather than pinned as a kernel constant (ADR-050, ADR-067).
+    # `None` when the genome declares no policy — the provider's own default,
+    # not a kernel opinion. Resolved once and reused for a repair attempt
+    # below: a repair reasons about the same genome, so it samples the same way.
+    temperature = genome.temperature_of(canonical_genome)
+
     # The gateway call commits its own reservation before the external call
     # (ADR-022), so it happens outside every transaction this module opens.
     call = gateway.call_model(
@@ -381,11 +501,7 @@ def deliberate(
                 {"role": "user", "content": f"{_system_prompt()}\n\n{assembled.render()}"},
             ),
             max_tokens=max_tokens,
-            # §14.1's sampling-temperature mutation operator, read from this
-            # Cell's own genome rather than pinned as a kernel constant
-            # (ADR-050, ADR-067). `None` when the genome declares no policy —
-            # the provider's own default, not a kernel opinion.
-            temperature=genome.temperature_of(canonical_genome),
+            temperature=temperature,
         ),
         experiment_id=experiment_id,
         idempotency_key=f"deliberation:{wake_key}",
@@ -395,6 +511,36 @@ def deliberate(
     try:
         parsed = proposal_module.parse(reply)
     except proposal_module.ProposalError as exc:
+        # §24's "retries controlled failures" (ADR-069): one bounded re-prompt
+        # before giving up. The first call already succeeded and was billed,
+        # so this is not the `execution_unknown` retry `gateway.py` declines —
+        # see `_attempt_parse_repair`.
+        repair = _attempt_parse_repair(
+            conn,
+            cell=cell,
+            provider=provider,
+            model=model,
+            assembled=assembled,
+            reply=reply,
+            error=str(exc),
+            max_tokens=max_tokens,
+            temperature=temperature,
+            experiment_id=experiment_id,
+            wake_key=wake_key,
+        )
+        if repair.parsed is not None:
+            return _record_proposal(
+                conn,
+                cell=cell,
+                wake_key=wake_key,
+                wake_reason=wake_reason,
+                assembled=assembled,
+                model_call_id=call.model_call_id,
+                repair_model_call_id=repair.model_call_id,
+                parsed=repair.parsed,
+                experiment_id=experiment_id,
+                proposal_sink=proposal_sink,
+            )
         return _record_unparseable(
             conn,
             cell=cell,
@@ -402,7 +548,8 @@ def deliberate(
             wake_reason=wake_reason,
             assembled=assembled,
             model_call_id=call.model_call_id,
-            reason=str(exc),
+            repair_model_call_id=repair.model_call_id,
+            reason=f"{exc} ({repair.note})",
         )
 
     return _record_proposal(
@@ -428,6 +575,7 @@ def _insert_deliberation_locked(
     wake_reason: str,
     assembled: context.AssembledContext | None,
     model_call_id: str | None,
+    repair_model_call_id: str | None = None,
     status: str,
     failure_reason: str | None,
 ) -> str:
@@ -438,9 +586,9 @@ def _insert_deliberation_locked(
         """
         INSERT INTO deliberations (
             deliberation_id, cell_id, wake_key, wake_reason, genome_hash,
-            model_call_id, context_json, context_tokens, context_dropped_json,
-            status, failure_reason, created_at_utc
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            model_call_id, repair_model_call_id, context_json, context_tokens,
+            context_dropped_json, status, failure_reason, created_at_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             deliberation_id,
@@ -449,6 +597,7 @@ def _insert_deliberation_locked(
             wake_reason,
             cell.genome_hash,
             model_call_id,
+            repair_model_call_id,
             json.dumps(record, sort_keys=True, separators=(",", ":")),
             assembled.tokens if assembled else 0,
             json.dumps(dropped, separators=(",", ":")),
@@ -499,13 +648,15 @@ def _record_unparseable(
     wake_reason: str,
     assembled: context.AssembledContext,
     model_call_id: str,
+    repair_model_call_id: str | None = None,
     reason: str,
 ) -> Deliberation:
-    """A reply that did not validate.
+    """A reply that did not validate — the first one, and the repair's if one
+    was attempted (ADR-069).
 
-    The Cell still paid for the call — the tokens were burned whatever came
-    back — so this is recorded rather than rolled back. The raw reply is not
-    stored: it is untrusted content (§19.4), and a prose blob sitting in the
+    The Cell still paid for every call made — the tokens were burned whatever
+    came back — so this is recorded rather than rolled back. Neither raw reply
+    is stored: it is untrusted content (§19.4), and a prose blob sitting in the
     database is exactly what a later reader would mistake for a result.
     """
     conn.execute("BEGIN IMMEDIATE")
@@ -517,6 +668,7 @@ def _record_unparseable(
             wake_reason=wake_reason,
             assembled=assembled,
             model_call_id=model_call_id,
+            repair_model_call_id=repair_model_call_id,
             status=DeliberationStatus.UNPARSEABLE,
             failure_reason=reason,
         )
@@ -525,7 +677,11 @@ def _record_unparseable(
             event_type="cell_deliberation_unparseable",
             cell_id=cell.cell_id,
             description=reason,
-            metadata={"wake_key": wake_key, "model_call_id": model_call_id},
+            metadata={
+                "wake_key": wake_key,
+                "model_call_id": model_call_id,
+                "repair_model_call_id": repair_model_call_id,
+            },
         )
         conn.execute("COMMIT")
     except Exception:
@@ -544,6 +700,7 @@ def _record_proposal(
     wake_reason: str,
     assembled: context.AssembledContext,
     model_call_id: str,
+    repair_model_call_id: str | None = None,
     parsed: proposal_module.Proposal,
     experiment_id: str | None,
     proposal_sink: ProposalSink | None,
@@ -569,6 +726,7 @@ def _record_proposal(
             wake_reason=wake_reason,
             assembled=assembled,
             model_call_id=model_call_id,
+            repair_model_call_id=repair_model_call_id,
             status=DeliberationStatus.PROPOSED,
             failure_reason=None,
         )
@@ -653,6 +811,7 @@ def _record_proposal(
                 "wake_key": wake_key,
                 "wake_reason": wake_reason,
                 "model_call_id": model_call_id,
+                "repair_model_call_id": repair_model_call_id,
                 "risk_tier": parsed.risk_tier.value if parsed.risk_tier is not None else None,
                 "predictions": len(parsed.predictions),
             },

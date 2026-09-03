@@ -4208,3 +4208,98 @@ needing a change, both now `parsed.risk_tier.value if parsed.risk_tier is not No
   row, because the rendered prompt hint describing the new exception is longer text
   (`MockProvider`'s token estimate is a pure function of prompt length). `output_tokens`, cost, and
   every ledger balance are byte-identical to version 35.
+
+---
+
+## ADR-069: A bounded, single parse-repair retry — a new call, never the `execution_unknown` retry `gateway.py` already declined
+
+- **Status:** Accepted; `deliberation.py`, migration 0033, `cli.py`, 7 new tests, golden 36 -> 37
+- **Spec ref:** §24 (intro: "retries controlled failures"), §24.1; ADR-022, ADR-049, ADR-050
+
+- **Context:** PRIORITIES had carried this since ADR-049 as "the standard remedy, deliberately
+  unbuilt": re-prompting with the validation error after an unparseable reply "would probably lift
+  the rate a lot," but the item was gated — "worth arguing once the model question above is
+  settled, because a better model may make it unnecessary." The model question settled in the
+  negative: `qwen2.5` is unusable on this hardware (0.53 tok/s), so `llama3.2` stays the model and
+  its parse-rate ceiling stands. That closes the gate this entry was waiting on.
+
+### Not the retry `gateway.py` already scoped and declined
+
+`gateway.py`'s own docstring lists "Retries" among what is deliberately out of scope: "A retry
+after an `execution_unknown` failure risks double-billing, and deciding that needs the
+reconciliation this kernel cannot do yet." That is a different mechanism answering a different
+question — whether to re-attempt a call whose *billing status is ambiguous*. A parse-repair retry
+never faces that question: the first call is known to have **succeeded and been billed** (it
+returned response text; `ProposalError` only fires after that). What failed is the *reply*, not
+the call. So this is a wholly new, separately-priced, separately-capped `gateway.call_model`
+invocation — the same category §24's intro line also names ("validates structured output"), which
+FUTURE_BUILD_HOOKS already noted lives in `deliberation.py`/`proposal.py` rather than the gateway.
+Building this here extends that precedent rather than crossing the boundary `gateway.py` drew.
+
+### Bounded to exactly one attempt, and the bound is load-bearing
+
+`MAX_PARSE_REPAIR_ATTEMPTS = 1`. PRIORITIES' own framing — "it pays twice for a prompt bug" —
+already named the accepted cost; an unbounded loop would turn a persistently broken prompt (a
+model stuck emitting the same malformed shape, the exact failure ADR-050 measured at `qwen2.5`
+t=0) into an unbounded per-wake cost multiplier, which is precisely the runaway-cost shape Charter
+C4/C5's caps exist to prevent one call at a time, not one wake at a time. A second reply that also
+fails to validate ends the wake as UNPARSEABLE; nothing tries a third time.
+
+### One nullable column, not a second `model_call_id`
+
+A repaired deliberation genuinely makes two billed calls. Collapsing them into the existing
+`model_call_id` column would either drop the first call's cost from the record or overwrite which
+call actually "did the thinking." `deliberations.repair_model_call_id` (migration 0033) is `NULL`
+for the overwhelming majority of deliberations — the ones that parse first try — and named only
+when a second call was made. A plain nullable `TEXT REFERENCES model_calls(model_call_id)` is a
+legal SQLite `ALTER TABLE ADD COLUMN` (no CHECK, no NOT NULL, no computed default), so this needed
+no rebuild the way migration 0032 (`proposals.risk_tier`) did.
+
+### Best-effort by construction — a repair can never make `deliberate()` raise where it did not before
+
+`_attempt_parse_repair` wraps the whole attempt in a broad `except Exception`. Any failure of the
+attempt itself — an exhausted real-spend cap, an insufficient balance, anything `gateway.call_model`
+raises before a reservation exists — degrades to the exact pre-repair behaviour: an UNPARSEABLE
+deliberation recording only the original failure, `repair_model_call_id` left `NULL`. This mirrors
+`_unfunded_books`' own stated reasoning ("a refusal costs nothing and is recorded, whereas the
+gateway's refusal is an exception in the middle of a wake") extended to a second call that might
+not be affordable even when the first one was. A provider-level failure on the repair call itself
+(`ProviderCallError`) needs no special handling at all — `gateway.call_model` already converts that
+into a `failed` `model_calls` row rather than raising, so it flows through the same "reply text
+failed to validate" path as an ordinary malformed reply.
+
+### The repair turn, and what it deliberately does not resend
+
+A three-message follow-up (original prompt, the model's own failed reply, a correction request
+naming the specific validation error) rather than re-rendering the full context a second time —
+the schema hint is already in the first turn and still in context, so repeating it would spend
+tokens on the part that was never the problem. Echoing the Cell's own prior reply back to it is not
+the §19.4 "untrusted external content" this repo treats model output as being — that principle
+governs what a Cell may treat as a trusted *command* (§19.4's actual subject is public-web content),
+not what a kernel-composed follow-up turn may show a model about its own immediately-prior output
+in the same wake.
+
+### What it displaced
+
+- **Retrying inside the gateway itself**, keyed on `execution_unknown` recovery. Rejected: that is
+  a different failure category (ambiguous billing) with its own unresolved reconciliation
+  dependency, and conflating the two would have made this slice's scope open-ended.
+- **An unbounded or configurable retry count.** Rejected per the cost-bound argument above — a
+  second reply that also fails to parse is itself informative (the prompt or the model, not a
+  transient slip), and a third attempt would not plausibly recover what two attempts could not.
+- **Recording the repair prompt/reply text.** Rejected for the same reason the original unparseable
+  reply is not stored: untrusted content sitting in a row a later reader could mistake for a result.
+  `model_calls.response_text` already carries both raw replies for whoever needs to inspect them.
+- **A live measurement of the actual parse-rate lift.** Not run in this slice, matching precedent
+  from ADR-067 (the temperature socket): this ships the mechanism the measurement would use, not a
+  repeat of ADR-050's kind of live Ollama campaign. Logged in FUTURE_BUILD_HOOKS.
+
+### Verification
+
+- **7 new tests in `test_deliberation.py`; teeth-checked.** Disabling the wiring in `deliberate()`'s
+  except-branch (routing straight to a no-op `_RepairResult`) failed the two tests that defend
+  the headline behaviour — a repaired PROPOSED outcome, and the two-call bound on a persistently
+  bad reply — both with clean, specific assertion failures, not exit-code-only CAUGHTs.
+- **1172 tests and the golden run green.** Golden expectations moved 36 -> 37: no scenario reply is
+  malformed, so every deliberation's new `made_repair_call` field is `False` and nothing else in
+  the snapshot moved — confirmed by a full section-by-section diff before regenerating, not assumed.

@@ -480,11 +480,176 @@ def test_an_unparseable_reply_is_recorded_without_storing_the_prose(conn):
 
 def test_the_cell_still_paid_for_an_unparseable_reply(conn):
     """The tokens were burned whatever came back. Rolling the call back would
-    make a Cell that returns garbage cheaper to run than one that complies."""
+    make a Cell that returns garbage cheaper to run than one that complies.
+
+    A fixed `MockProvider` returns the same broken text on the repair attempt
+    too (ADR-069), so both calls are billed and both are traceable — the
+    Cell's tokens were burned twice, and the record says so.
+    """
     cell = _make_cell(conn)
     result = _deliberate(conn, cell, "not json")
     assert result.model_call_id is not None
+    assert result.repair_model_call_id is not None
+    assert result.status == deliberation.DeliberationStatus.UNPARSEABLE
+    assert _model_call_count(conn) == 2
+
+
+# --- ADR-069: one bounded parse-repair retry -----------------------------------
+
+
+class _SequencedProvider:
+    """Returns a different canned reply on each successive call, so a test can
+    exercise "the first reply was bad, the second (repair) reply was good" —
+    something one fixed `MockProvider` cannot represent, since its reply never
+    varies by call. Calling past the end of `replies` repeats the last one."""
+
+    name = providers.MOCK_PROVIDER
+
+    def __init__(self, replies):
+        self._replies = list(replies)
+        self.calls = 0
+
+    def complete(self, request):
+        index = min(self.calls, len(self._replies) - 1)
+        reply = self._replies[index]
+        self.calls += 1
+        return providers.MockProvider(reply=reply).complete(request)
+
+
+class _FailsOnSecondCall:
+    """The first call succeeds with a bad reply; the second (the repair) fails
+    at the provider level — the shape `gateway.call_model` already handles
+    internally (records a `failed` `model_calls` row, does not raise)."""
+
+    name = providers.MOCK_PROVIDER
+
+    def __init__(self, first_reply):
+        self._first_reply = first_reply
+        self.calls = 0
+
+    def complete(self, request):
+        self.calls += 1
+        if self.calls == 1:
+            return providers.MockProvider(reply=self._first_reply).complete(request)
+        raise providers.ProviderCallError("simulated repair-call failure", execution_unknown=False)
+
+
+def test_a_repaired_reply_is_recorded_as_proposed(conn):
+    """The headline case: a bad first reply followed by a valid repair reply
+    ends up PROPOSED, not UNPARSEABLE, and both calls are on the record."""
+    cell = _make_cell(conn)
+    provider = _SequencedProvider(["not json", _valid_reply()])
+
+    result = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=provider, wake_key="w1", model="mock-1",
+    )
+
+    assert result.status == deliberation.DeliberationStatus.PROPOSED
+    assert result.model_call_id is not None
+    assert result.repair_model_call_id is not None
+    assert result.model_call_id != result.repair_model_call_id
+    assert result.proposal_id is not None
+    assert provider.calls == 2
+
+
+def test_a_second_failed_reply_is_still_unparseable_and_bounded_to_one_retry(conn):
+    """Two bad replies in a row end the wake — never a third attempt.
+    `MAX_PARSE_REPAIR_ATTEMPTS` is 1, and this is the behavioural proof of it:
+    a provider that always fails is called exactly twice, not repeatedly."""
+    cell = _make_cell(conn)
+    provider = _SequencedProvider(["not json", "still not json"])
+
+    result = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=provider, wake_key="w1", model="mock-1",
+    )
+
+    assert result.status == deliberation.DeliberationStatus.UNPARSEABLE
+    assert result.repair_model_call_id is not None
+    assert "repair reply also failed to validate" in result.failure_reason
+    assert provider.calls == 2
+    assert _model_call_count(conn) == 2
+
+
+def test_repair_is_idempotent_on_wake_key(conn):
+    """Charter C6: a redelivered wake must not pay for a third call. The outer
+    `wake_key` guard in `deliberate()` already returns the existing
+    deliberation before any of this runs — proven here across a repair
+    specifically, since that is the path with two calls to not repeat."""
+    cell = _make_cell(conn)
+    provider = _SequencedProvider(["not json", _valid_reply()])
+
+    first = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=provider, wake_key="w1", model="mock-1",
+    )
+    second = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=provider, wake_key="w1", model="mock-1",
+    )
+
+    assert second.deliberation_id == first.deliberation_id
+    assert provider.calls == 2, "the redelivered wake must not call the provider again"
+    assert _model_call_count(conn) == 2
+
+
+def test_a_provider_level_failure_on_the_repair_is_still_recorded_unparseable(conn):
+    """`gateway.call_model` already handles a provider error internally — the
+    repair call ends up `failed`, not raised — and this module must not treat
+    that any differently from a repair reply that simply failed to parse."""
+    cell = _make_cell(conn)
+    provider = _FailsOnSecondCall("not json")
+
+    result = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=provider, wake_key="w1", model="mock-1",
+    )
+
+    assert result.status == deliberation.DeliberationStatus.UNPARSEABLE
+    assert result.repair_model_call_id is not None, (
+        "the repair call was made and billed even though it then failed"
+    )
+
+
+def test_a_repair_that_cannot_even_be_attempted_falls_back_gracefully(conn, monkeypatch):
+    """The pre-repair behaviour is the floor: if the repair attempt itself
+    cannot even be made — a real-spend cap, an exhausted balance, an unpriced
+    model, anything `gateway.call_model` can raise before a reservation
+    exists — `deliberate()` must still return an UNPARSEABLE deliberation
+    rather than raising mid-wake, exactly what would have happened before
+    this mechanism existed. `gateway.call_model` is monkeypatched to let the
+    first (real) call through and raise on the second, standing in for
+    whichever specific cap fires in production — `_attempt_parse_repair`'s
+    `except Exception` does not distinguish between them."""
+    cell = _make_cell(conn)
+    real_call_model = deliberation.gateway.call_model
+    calls = {"n": 0}
+
+    def flaky_call_model(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_call_model(*args, **kwargs)
+        raise RuntimeError("simulated cap: the repair attempt could not be reserved")
+
+    monkeypatch.setattr(deliberation.gateway, "call_model", flaky_call_model)
+
+    result = _deliberate(conn, cell, "not json")
+
+    assert result.status == deliberation.DeliberationStatus.UNPARSEABLE
+    assert result.repair_model_call_id is None, "no call was ever made, so nothing to point at"
+    assert "repair not attempted" in result.failure_reason
     assert _model_call_count(conn) == 1
+
+
+def test_ledger_conservation_holds_across_a_repaired_wake(conn):
+    """Two billed calls in one wake must not desynchronise the books — the
+    same guarantee every other gateway path already carries, exercised here
+    specifically because this is the first caller that can make two calls
+    from one `deliberate()` invocation."""
+    cell = _make_cell(conn)
+    provider = _SequencedProvider(["not json", _valid_reply()])
+    deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=provider, wake_key="w1", model="mock-1",
+    )
+    assert ledger.verify_conservation(conn, Book.USD_REAL)
+    assert ledger.verify_conservation(conn, Book.RESOURCE)
+    assert ledger.verify_chain(conn)
 
 
 def test_a_fenced_json_reply_is_accepted(conn):

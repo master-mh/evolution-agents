@@ -1,5 +1,5 @@
 {
-  "expectation_version": 36,
+  "expectation_version": 37,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "83d7fe66dc1c5baae09966124cd541e1b003160a9230aa16c2ec2dcc0d645f24",
+  "semantic_hash": "9fd00cce73cef50756a065abb8907ae135458b045f4236265c6fa131c5643961",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -380,6 +380,7 @@
         "context_tokens": 554,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "scheduled research cycle"
       },
@@ -389,6 +390,7 @@
         "context_tokens": 615,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "capital allocation"
       },
@@ -398,6 +400,7 @@
         "context_tokens": 625,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "scheduled research cycle"
       },
@@ -407,6 +410,7 @@
         "context_tokens": 809,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "tool result available"
       },
@@ -416,6 +420,7 @@
         "context_tokens": 992,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "scheduled research cycle"
       },
@@ -425,6 +430,7 @@
         "context_tokens": 552,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "scheduled research cycle"
       },
@@ -434,6 +440,7 @@
         "context_tokens": 1020,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "scheduled research cycle"
       },
@@ -443,6 +450,7 @@
         "context_tokens": 1052,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "scheduled research cycle"
       },
@@ -452,6 +460,7 @@
         "context_tokens": 580,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "scheduled research cycle"
       },
@@ -461,6 +470,7 @@
         "context_tokens": 1080,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "scheduled research cycle"
       },
@@ -470,6 +480,7 @@
         "context_tokens": 1080,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "scheduled research cycle"
       },
@@ -479,6 +490,7 @@
         "context_tokens": 1016,
         "failure_reason": null,
         "made_model_call": true,
+        "made_repair_call": false,
         "status": "proposed",
         "wake_reason": "scheduled research cycle"
       }

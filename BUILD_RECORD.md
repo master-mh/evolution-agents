@@ -16,55 +16,61 @@ the +15% that did not survive honesty, §13.4's concreteness measure,
 §13.2's selector, §12's novelty archive, the inbound counterparty key,
 §12.1's declared third dimension, rung 8, §12.3's `P(next stage)`, the
 Auditor path for §13.3/§13.4's content judgments, the software_native_advantage
-gate reading a resolved content audit, and model_policy's temperature socket,
+gate reading a resolved content audit, model_policy's temperature socket, and
+risk_tier becoming optional for abstain,
 2026-07-21 through 2026-09-03):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-03 — `risk_tier` is optional for exactly one kind: `abstain`
+## 2026-09-03 — A bounded, single parse-repair retry
 
-`proposal.py` + migration 0032 + `deliberation.py` + 8 new tests across three files + golden
-35 -> 36 (ADR-068). **Two models independently produced the same failure shape on `abstain`
-replies** — `qwen2.5` dropped `risk_tier` outright at t=0, `llama3.2` sent `"risk_tier": null` —
-and PRIORITIES read it correctly: a stronger model reaching the same objection is evidence the
-schema asked for something indefensible. §23.1 classifies *actions*; a Cell that proposes none has
-nothing to classify.
+`deliberation.py` + migration 0033 + `cli.py` + 7 new tests + golden 36 -> 37 (ADR-069). **An
+unparseable reply now gets exactly one re-prompt, naming the specific validation error, before the
+wake is recorded as a loss.** PRIORITIES had carried this since ADR-049 as "the standard remedy,
+deliberately unbuilt" — gated on "the model question above" being settled. It settled in the
+negative (`qwen2.5` unusable on this hardware), which is what unblocked the gate.
 
-### Two layers, each teeth-checked independently
+### Not the retry `gateway.py` already scoped and declined
 
-`Proposal._risk_tier_matches_kind` (a `model_validator`, mirroring `_experiment_matches_kind`'s
-shape) rejects a null `risk_tier` on every kind but `abstain` at parse time. Migration 0032 rebuilds
-`proposals` with `CHECK (risk_tier IS NOT NULL OR kind = 'abstain')` — ADR-047's "unrepresentable,
-not merely refused" applied again: a constraint with no layer belongs in the schema when the schema
-can express it, binding every future caller regardless of whether it imports `proposal.py`.
-Disabling either layer alone produces its own clean `DID NOT RAISE`/assertion failure, confirming
-neither is redundant with the other.
+`gateway.py`'s docstring already ruled out one kind of retry — re-attempting a call whose *billing
+status* is ambiguous (`execution_unknown`), which risks double-billing and needs reconciliation
+this kernel does not have. A parse-repair retry is a different thing: the first call is known to
+have succeeded and been billed (it returned text; `ProposalError` only fires after that), so what
+needs fixing is the *reply*, not the call. It is therefore a wholly new, separately-priced,
+separately-capped `gateway.call_model` invocation — the same category §24's intro line also names
+("validates structured output"), which already lives in `deliberation.py`/`proposal.py` rather
+than the gateway.
 
-### Scoped to exactly the defensible field
+### Bounded to exactly one attempt, and best-effort by construction
 
-`qwen2.5`'s collapse dropped three fields, not one — `summary` and `estimated_cost_minor_units`
-stay required. An abstaining Cell still has something to say, and its cost is trivially 0 (the
-prompt already says so). Widening either would fix a different, unargued failure under cover of
-this one.
+`MAX_PARSE_REPAIR_ATTEMPTS = 1` — PRIORITIES' own "it pays twice for a prompt bug" is the accepted,
+bounded cost; unbounded would turn a persistently broken prompt into an unbounded per-wake cost
+multiplier. `_attempt_parse_repair` wraps the whole attempt in a broad `except Exception`: any
+failure of the attempt itself (an exhausted cap, an unpriced model) degrades to exactly the
+pre-repair UNPARSEABLE outcome — `deliberate()` never raises where it did not raise before this
+existed, mirroring `_unfunded_books`' own "a refusal costs nothing and is recorded" reasoning.
 
-### The "§23.1 implications" PRIORITIES flagged never materialised
+### One nullable column, not a second `model_call_id`
 
-`approval._enqueue_locked` already returns `None` for `kind == 'abstain'` before it ever reads
-`risk_tier` — abstaining proposals have never reached the approval queue. The one place §23.1's
-tier is read as a classification (`approval._assessed_tier`) is structurally unreachable for a row
-that could carry NULL. `deliberation.py`'s two `.value` accesses were the only real call sites
-needing a change.
+A repaired deliberation genuinely makes two billed calls. `deliberations.repair_model_call_id`
+(migration 0033) is `NULL` for the overwhelming majority — every deliberation that parses first
+try — and named only when a second call was made. A plain nullable `TEXT REFERENCES` column is a
+legal SQLite `ALTER TABLE ADD COLUMN`, so this needed no rebuild the way migration 0032
+(`proposals.risk_tier`) did.
 
 ### Verification
 
-- **8 new tests across `test_prompt_shape.py` and `test_deliberation.py`; teeth-checked twice, once
-  per layer.** Neutralising the Pydantic validator failed the parametrized "every other kind still
-  requires a risk tier" test with a clean `DID NOT RAISE`. Dropping migration 0032's CHECK failed
-  the schema-level `sqlite3.IntegrityError` test the same clean way.
-- **1168 tests and the golden run green.** Golden expectations moved 35 -> 36: no scenario Cell
-  ever proposes `abstain`, so the only diff is `input_tokens` shifting by a constant +30 on every
-  deliberation-loop call — the rendered prompt hint describing the new exception is longer text,
-  and `MockProvider`'s token estimate is a pure function of prompt length. `output_tokens`, cost,
-  and every ledger balance are byte-identical.
-- Next: a parse-repair retry (re-prompting with the validation error on an `UNPARSEABLE` reply) is
-  the standard remedy still deliberately unbuilt — PRIORITIES flags it as worth arguing once the
-  model question is settled, since a better model may make it unnecessary.
+- **7 new tests in `test_deliberation.py`; teeth-checked.** Disabling the wiring in `deliberate()`'s
+  except-branch failed the two tests defending the headline behaviour (a repaired PROPOSED outcome,
+  and the two-call bound on a persistently bad reply) with clean, specific assertion failures.
+- **1172 tests and the golden run green.** Golden expectations moved 36 -> 37: one added boolean
+  field (`made_repair_call`) on every `deliberations` row, `False` everywhere — no scenario reply is
+  malformed, so nothing in the fixture ever reaches this mechanism. Confirmed by a full
+  section-by-section diff before regenerating, not assumed from the hash mismatch alone.
+- No live measurement of the actual parse-rate lift was run — logged in FUTURE_BUILD_HOOKS as a
+  separate, reviewable act with its own arms and sample size, matching ADR-067's precedent for the
+  temperature socket.
+- Next: `auditor.py`/`content_audit.py`/`cli.py`'s `call-model` get no parse-repair retry (scoped
+  out the same way ADR-067 scoped temperature to `deliberation.py` only) — an unargued follow-up,
+  not a gap in this slice. Otherwise, Phase 2 proper: synthetic customers, marketplace, MAP-Elites,
+  regime shifts, chaos drills — Phases 2 and 3 remain deliberately skipped, so the selection
+  machinery is still unvalidated.

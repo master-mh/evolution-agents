@@ -1,0 +1,28 @@
+-- A bounded, single re-prompt when a deliberation's reply fails to validate
+-- (SPEC.md §24's "retries controlled failures"; ADR-069).
+--
+-- `deliberation.py` recorded every unparseable reply and stopped there — the
+-- Cell's own tokens were already spent, and nothing tried again. §24's intro
+-- paragraph names "retries controlled failures" as a gateway capability; this
+-- is deliberately not that clause's *other* meaning. `gateway.py`'s own
+-- docstring already scoped and declined one kind of retry: re-attempting a
+-- call whose *execution* status is ambiguous (`execution_unknown`), which
+-- risks double-billing a call that may already have succeeded, and needs
+-- reconciliation this kernel does not have. A parse-repair retry is not that
+-- — the first call **definitely succeeded and was billed**; what failed is
+-- that the *reply text* did not validate. The repair is therefore a wholly
+-- new, separately-priced, separately-capped `gateway.call_model` call, not a
+-- retry of the first reservation.
+--
+-- **One column, nullable, no rebuild.** `deliberations.model_call_id` already
+-- names "the gateway call that did the thinking" for the ordinary one-call
+-- case; a repaired deliberation genuinely made two calls, and collapsing that
+-- into one column would either drop the first call's cost from the record or
+-- silently overwrite which one "did the thinking". `repair_model_call_id` is
+-- NULL whenever no repair was attempted — the overwhelming majority of
+-- deliberations, unchanged — and named only when a second, billed call was
+-- made. A plain nullable column with a foreign key is a legal SQLite
+-- `ALTER TABLE ADD COLUMN` (no CHECK, no NOT NULL, no computed default), so
+-- this needs no rebuild the way `proposals.risk_tier` (migration 0032) did.
+ALTER TABLE deliberations
+    ADD COLUMN repair_model_call_id TEXT REFERENCES model_calls(model_call_id);

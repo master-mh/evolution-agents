@@ -1611,3 +1611,20 @@ actually queued for building — this file is memory, not a backlog to work thro
   reasoning-budget mutation) are unbuilt. `MODEL_POLICY_FIELDS` is deliberately closed to just
   `temperature` for now rather than pre-declaring keys nothing reads yet — each is its own
   argued slice when a reason to want one arrives.
+
+<!-- 2026-09-03, ADR-069 (parse-repair retry) -->
+- **No live measurement of the actual parse-rate lift.** PRIORITIES' original entry said a
+  parse-repair retry "would probably lift the rate a lot" — ADR-069 ships the mechanism, not a
+  measurement of whether that's true. Running one is `scripts/measure_parse_compliance.py`-shaped:
+  arms with and without the repair enabled, same model, same scenario, counting distinct parseable
+  proposals per wake alongside raw parse rate (the ADR-050 lesson about not optimising toward a mute
+  colony applies here too — a repair that "fixes" every reply into the same boilerplate proposal
+  would raise parse rate while making the diversity problem worse).
+- **`auditor.py`/`content_audit.py`/`cli.py`'s `call-model` get no parse-repair retry.** Scoped the
+  same way ADR-067 scoped the temperature socket to `deliberation.py` only — those are
+  operator-composed §10.4 judgments, not the agent loop this mechanism was built for. Auditor
+  replies already go through a comparable strict parse (`content_audit._parse`); whether they'd
+  benefit from the same repair is an open, unargued question.
+- **No `mitosis`-level report of how often a wake needed a repair.** `deliberations.
+  repair_model_call_id IS NOT NULL` already answers "how many" from the CLI or a direct query; a
+  dedicated `mitosis repair-rate`-style verb is additive and not built ahead of a reason to want one.

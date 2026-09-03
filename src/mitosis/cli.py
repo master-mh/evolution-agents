@@ -853,6 +853,8 @@ def _print_deliberation(conn, result) -> None:
     print(f"  cell:    {result.cell_id}")
     print(f"  woken:   {result.wake_reason}")
     print(f"  context: {result.context_tokens} tokens")
+    if result.repair_model_call_id:
+        print(f"  repaired: yes (second call {result.repair_model_call_id}, ADR-069)")
     if result.failure_reason:
         print(f"  reason:  {result.failure_reason}")
     if result.proposal_id:

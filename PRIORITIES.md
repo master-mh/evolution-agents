@@ -465,11 +465,23 @@
   byte-identical, converging on the `abstain` shape the schema rejects. The collapse is universal
   (greedy decoding, not a small-model artifact) and the *direction* of its effect on parse rate is
   arbitrary. Completed the 2×2 and triggered ADR-050's correction.
-- [ ] **A parse-repair retry is the standard remedy and is deliberately unbuilt.** Re-prompting with
-  the validation error would probably lift the rate a lot. It is a second model call per failure, it
-  is §24.3's "controlled retries" (still unbuilt), and it pays twice for a prompt bug. Worth arguing
-  once the model question above is settled, because a better model may make it unnecessary.
-  *Disproved by:* anything in `deliberation` re-calling the gateway after a `ProposalError`.
+- [x] **A parse-repair retry — DONE** (2026-09-03), ADR-069, migration 0033, 7 new tests, golden
+  36 -> 37. `deliberation._attempt_parse_repair`: one bounded re-prompt (`MAX_PARSE_REPAIR_ATTEMPTS
+  = 1`) after an unparseable reply, naming the specific validation error rather than restating the
+  schema. **Not** `gateway.py`'s declined `execution_unknown` retry — the first call is known to
+  have succeeded and been billed, so this is a wholly new, separately-priced, separately-capped
+  `gateway.call_model` call, the same category §24's intro line ("validates structured output")
+  already put in `deliberation.py`/`proposal.py` rather than the gateway. `deliberations.
+  repair_model_call_id` (a plain nullable `ALTER TABLE ADD COLUMN`, no rebuild) traces the second
+  call distinctly from `model_call_id` rather than overwriting which call "did the thinking."
+  Best-effort by construction: any failure of the attempt itself (an exhausted cap, an unpriced
+  model) is caught and degrades to the exact pre-repair UNPARSEABLE outcome — `deliberate()` never
+  raises where it did not raise before this existed. **The model question this entry was gated on
+  settled in the negative** (`qwen2.5` unusable on this hardware), which is what unblocked it.
+  **No live measurement of the actual parse-rate lift was run** — logged in FUTURE_BUILD_HOOKS as a
+  separate, reviewable act with its own arms and sample size, matching ADR-067's precedent.
+  *Disproved by:* a third repair attempt on a persistently bad reply, or a repair attempt whose
+  failure raises out of `deliberate()` instead of degrading to UNPARSEABLE.
 - [x] **Drive the loop with a real model — local half DONE** (2026-08-06). Ollama installed,
   `llama3.2` (3B), nine live wakes. **The first one failed to parse, and the bug was the prompt's,
   not the model's:** the schema hint rendered enum choices as JSON arrays, so the model returned
