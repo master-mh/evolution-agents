@@ -122,6 +122,72 @@ def test_model_request_carries_no_credential_field():
     assert "credential" not in providers.ModelRequest.model_fields
 
 
+def test_model_request_bounds_temperature_regardless_of_caller():
+    """§14.1's socket, defended at the type too, not only in `genome.py`
+    (ADR-067): a bad value must never reach a provider no matter which caller
+    built the request."""
+    providers.ModelRequest(
+        model="mock-1", messages=({"role": "user", "content": "x"},), max_tokens=8,
+        temperature=1.0,
+    )
+    for bad in (1.5, -0.1):
+        with pytest.raises(Exception):
+            providers.ModelRequest(
+                model="mock-1", messages=({"role": "user", "content": "x"},), max_tokens=8,
+                temperature=bad,
+            )
+
+
+def test_model_request_temperature_defaults_to_none_not_zero():
+    """`None` means "no opinion" — a genome that declares no `model_policy`
+    must not be read as requesting greedy decoding (ADR-050, ADR-067)."""
+    request = providers.ModelRequest(
+        model="mock-1", messages=({"role": "user", "content": "x"},), max_tokens=8
+    )
+    assert request.temperature is None
+
+
+class _FakeAnthropicResponse:
+    def __init__(self):
+        self.content = [type("Block", (), {"type": "text", "text": "ok"})()]
+        self.model = "claude-haiku-4-5"
+        self.usage = type("Usage", (), {"input_tokens": 3, "output_tokens": 1})()
+        self.stop_reason = "end_turn"
+
+
+class _FakeAnthropicClient:
+    def __init__(self):
+        self.seen_kwargs = None
+        self.messages = self
+
+    def create(self, **kwargs):
+        self.seen_kwargs = kwargs
+        return _FakeAnthropicResponse()
+
+
+def test_anthropic_provider_sends_temperature_only_when_the_request_carries_one(monkeypatch):
+    """§14.1's mutation reaches the real API surface — and its absence must
+    not send `temperature: null` to a provider that has its own default."""
+    provider = providers.AnthropicProvider()
+    client = _FakeAnthropicClient()
+    monkeypatch.setattr(provider, "_client", lambda: client)
+
+    provider.complete(
+        providers.ModelRequest(
+            model="claude-haiku-4-5", messages=({"role": "user", "content": "x"},),
+            max_tokens=8, temperature=0.3,
+        )
+    )
+    assert client.seen_kwargs["temperature"] == 0.3
+
+    provider.complete(
+        providers.ModelRequest(
+            model="claude-haiku-4-5", messages=({"role": "user", "content": "x"},), max_tokens=8,
+        )
+    )
+    assert "temperature" not in client.seen_kwargs
+
+
 def test_token_estimate_is_an_over_estimate():
     """The gateway reserves against this figure, so it must sit above any
     plausible real tokenization (~4 chars/token) — under-reserving would let a

@@ -32,7 +32,7 @@ import re
 import time
 from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 MOCK_PROVIDER = "mock"
 ANTHROPIC_PROVIDER = "anthropic"
@@ -95,6 +95,14 @@ class ModelRequest(BaseModel):
     messages: tuple[dict[str, Any], ...]
     max_tokens: int
     system: str | None = None
+    #: §14.1's sampling temperature, read from a Cell's own genome
+    #: (`genome.temperature_of`) rather than set here as a kernel constant —
+    #: ADR-050/ADR-067. `None` means "no opinion, use the provider's own
+    #: default", never 0: a genome that has not mutated `model_policy` is not
+    #: thereby claiming greedy decoding. Bounded to [0.0, 1.0] at this layer
+    #: too, not only in `genome.py` — a bad value must never reach a provider
+    #: regardless of which caller built the request.
+    temperature: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class ModelResponse(BaseModel):
@@ -182,6 +190,8 @@ class AnthropicProvider:
         }
         if request.system is not None:
             kwargs["system"] = request.system
+        if request.temperature is not None:
+            kwargs["temperature"] = request.temperature
 
         started = time.monotonic()
         try:
@@ -292,6 +302,8 @@ class OllamaProvider:
             # overrun its metered RESOURCE budget.
             "options": {"num_predict": request.max_tokens},
         }
+        if request.temperature is not None:
+            payload["options"]["temperature"] = request.temperature
 
         started = time.monotonic()
         body = self._post("/api/chat", payload)

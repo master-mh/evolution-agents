@@ -76,7 +76,10 @@ def _fund(conn, cell, amount: int = 5_000) -> None:
         )
 
 
-def _make_cell(conn, *, key: str = "a", cell_type: CellType = CellType.EXPLORER, fund: bool = True):
+def _make_cell(
+    conn, *, key: str = "a", cell_type: CellType = CellType.EXPLORER, fund: bool = True,
+    extra_genome: dict | None = None,
+):
     cell = lifecycle.create_cell(
         conn,
         cell_type=cell_type,
@@ -84,9 +87,9 @@ def _make_cell(conn, *, key: str = "a", cell_type: CellType = CellType.EXPLORER,
         book=Book.USD_SIM,
         idempotency_key=key,
     )
+    content = {**GENOME, **(extra_genome or {})}
     # Give the genome real content, so the loop has something to interpret.
-    lifecycle._get_or_create_genome(conn, cell_type, mutation=GENOME)
-    genome_hash = lifecycle._get_or_create_genome(conn, cell_type, mutation=GENOME)
+    genome_hash = lifecycle._get_or_create_genome(conn, cell_type, mutation=content)
     conn.execute(
         "UPDATE cells SET genome_hash = ? WHERE cell_id = ?", (genome_hash, cell.cell_id)
     )
@@ -324,6 +327,48 @@ def test_the_loop_never_executes_anything():
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
         assert not (called & dangerous), f"{module} calls {called & dangerous}"
+
+
+def test_a_genomes_model_policy_temperature_reaches_the_gateway_request(conn):
+    """§14.1's sampling-mutation operator, read from the Cell's own genome
+    rather than a kernel constant (ADR-050, ADR-067) — the wiring this test
+    defends end to end, not just `genome.temperature_of` in isolation."""
+    cell = _make_cell(conn, extra_genome={"model_policy": {"temperature": 0.3}})
+
+    seen: list = []
+
+    class RecordingProvider:
+        name = providers.MOCK_PROVIDER
+
+        def complete(self, request):
+            seen.append(request)
+            return providers.MockProvider(reply=_valid_reply()).complete(request)
+
+    deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=RecordingProvider(), wake_key="w1", model="mock-1",
+    )
+    assert seen[0].temperature == 0.3
+
+
+def test_a_silent_genome_sends_no_temperature_opinion(conn):
+    """A Cell that has never mutated `model_policy` must not be read as
+    requesting temperature 0 — that is the exact kernel default ADR-050
+    refused. `None` reaches the provider, which then applies its own
+    default."""
+    cell = _make_cell(conn)
+    seen: list = []
+
+    class RecordingProvider:
+        name = providers.MOCK_PROVIDER
+
+        def complete(self, request):
+            seen.append(request)
+            return providers.MockProvider(reply=_valid_reply()).complete(request)
+
+    deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=RecordingProvider(), wake_key="w1", model="mock-1",
+    )
+    assert seen[0].temperature is None
 
 
 def test_genome_content_reaches_the_prompt_as_data(conn):

@@ -78,6 +78,7 @@ import hashlib
 import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from . import (
     audit,
@@ -895,7 +896,7 @@ def _insert_model_call(
                     )
                 ),
                 "[]",
-                json.dumps({"max_tokens": request.max_tokens}, sort_keys=True),
+                json.dumps(_request_parameters(request), sort_keys=True),
                 cost_estimate_micro_usd,
                 real_reservation_id,
                 resource_reservation_id,
@@ -911,6 +912,20 @@ def _insert_model_call(
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _request_parameters(request: ModelRequest) -> dict[str, Any]:
+    """§24.1's `parameters` — request-level settings, not response data.
+
+    `temperature` is included only when the request actually carries one:
+    most genomes declare no `model_policy` yet (ADR-067), and a stored `null`
+    on every historical row would read as "the provider was asked for
+    temperature 0" rather than "nobody asked". Absence stays absence.
+    """
+    parameters: dict[str, Any] = {"max_tokens": request.max_tokens}
+    if request.temperature is not None:
+        parameters["temperature"] = request.temperature
+    return parameters
 
 
 def _row_to_model_call(row: sqlite3.Row) -> ModelCall:

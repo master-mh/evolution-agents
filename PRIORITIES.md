@@ -427,20 +427,25 @@
   collapsed 100% → 5%. **The residual ~1.8–2.0 effective ideas per run of 8 is the model's ceiling**;
   context assembly is measured ground, so reopen from ADR-050's model question or §14's mutation
   operators instead.
-- [ ] **`temperature` belongs in the genome, not the kernel — and the socket is already there.**
-  §14.1 lists "temperature/sampling mutation" as a prompt-mutation operator, putting sampling in the
-  *mutable Cell* column, so a provider constant would delete a mutation dimension the spec
-  enumerates. `model_policy` is a §16.2 genome field, hashed to `cells.model_policy_hash`, **written
-  at birth and read by nothing** — the fourteenth reserved socket. The slice carries §14.2's
-  counterfactual-twin obligation ("same task, environment, seed where possible, and budget, differing
-  by one prompt-level change"), and the first real decision is whether sampling is inherited,
-  mutated, or both. **Report distinct parseable proposals per wake alongside parse rate**, or the
-  slice will optimise toward a mute colony. **Note which half of this argument survived:** ADR-050's
-  third correction weakened the diversity half — the t=0.8 vs t=0 gap is **~5%, not the 3.6×**
-  distinct-summary-strings claimed — so **§14.1 conformance is the reason that stands**, together
-  with t=0 not reliably buying compliance (32/32 on one model, 0/32 on another). Do not re-argue this
-  slice on a diversity number.
-  *Disproved by:* anything in `providers.py` or `deliberation.py` that sets a temperature.
+- [x] **`temperature` belongs in the genome, not the kernel — DONE** (2026-09-03), ADR-067, 11 new
+  tests across five files, golden run unchanged. `model_policy` — §16.2's reserved socket, written at
+  birth and read by nothing — is now a closed dict, `{"temperature": 0.0-1.0}`, validated in
+  `genome.py`, re-bounded at the `providers.ModelRequest` type itself, and read into every
+  deliberation wake (`deliberation.deliberate`) from the Cell's own genome rather than a kernel
+  constant. **The "inherited, mutated, or both" question this entry flagged turned out to already be
+  answered**: `model_policy` already sat in `INHERITABLE_FIELDS`, so `inherit()`'s existing overlay
+  mechanism is both at once, with no new code path. `None` (no declared policy) is read as "no
+  opinion" throughout — never as temperature 0, which ADR-050 measured as the worst outcome — reaching
+  the provider by omitting the key entirely, including in `model_calls.parameters_json`'s new
+  `temperature` entry (also omitted when absent, so the golden run's parameters stay `{"max_tokens":
+  ...}` unchanged). **Scoped to `deliberation.py` only** — `auditor.py`, `content_audit.py`, and
+  `cli.py`'s `call-model` still send no temperature, logged in FUTURE_BUILD_HOOKS as an unargued
+  follow-up rather than bundled in. **No live counterfactual-twin measurement was run** against the
+  new socket (also logged) — this slice ships the mechanism ADR-050's kind of measurement would need,
+  not a repeat of that measurement itself.
+  *Disproved by:* a silent genome (no `model_policy`) reaching a provider as temperature 0 rather
+  than `None`, or any caller setting `ModelRequest.temperature` from something other than
+  `genome.temperature_of`.
 - [ ] **`risk_tier` on `abstain` — two models now independently refuse it.** `qwen2.5`'s only two
   failures in 16 were `abstain` replies carrying `kind` + `rationale` alone, dropping `summary`,
   `risk_tier` and `estimated_cost_minor_units`; `llama3.2` returned `"risk_tier": null` on the same

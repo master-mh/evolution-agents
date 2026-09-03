@@ -1592,3 +1592,22 @@ actually queued for building — this file is memory, not a backlog to work thro
   argued whether the fourth flag should migrate from the script into an Auditor claim now that a
   live judge exists, or stay a research instrument permanently. Worth a deliberate call rather than
   a silent drift toward one or the other.
+
+<!-- 2026-09-03, ADR-067 (model_policy's temperature socket) -->
+- **`auditor.py`, `content_audit.py`, and `cli.py`'s `call-model` still build every `ModelRequest`
+  with `temperature` unset**, even when the Cell doing the judging (an Auditor's own genome, or the
+  cell named on the CLI) has a `model_policy`. ADR-067 scoped the wiring to `deliberation.py` only,
+  because ADR-050's argument (parse rate / diversity trade-off) is specifically about the agent
+  loop; Auditor/content-audit calls are operator-composed §10.4 judgments with the model already
+  chosen by the caller. Whether an Auditor's own sampling temperature should also come from its
+  genome is a real question nobody has argued yet — logged rather than bundled in.
+- **No live counterfactual-twin measurement has been run against the new socket.** ADR-050 measured
+  temperature's effect on parse rate and diversity by hand, with real Ollama arms; ADR-067 only
+  wires the mechanism a repeat of that measurement — now driven by a genome mutation instead of a
+  bespoke script flag — would use. Running it is a separate, reviewable act with its own arms and
+  sample size (see `scripts/measure_parse_compliance.py`'s existing shape), not a byproduct of
+  shipping the wiring.
+- **§14.1's other named operators sharing the `model_policy` socket** (model-route mutation,
+  reasoning-budget mutation) are unbuilt. `MODEL_POLICY_FIELDS` is deliberately closed to just
+  `temperature` for now rather than pre-declaring keys nothing reads yet — each is its own
+  argued slice when a reason to want one arrives.

@@ -4054,3 +4054,80 @@ only added an import *from* `selection.py` *of* `content_audit` — the directio
 consumes_a_content_audit` (renamed `test_only_selection_consumes_a_content_audit`) already governs.
 The claim was written before the wiring was designed and never checked against the two tests' actual
 axes; logged here rather than left to drift further (`feedback-mitosis-claim-drift`'s pattern).
+
+---
+
+## ADR-067: `model_policy`'s temperature socket is filled — a closed dict, read by `providers.py`, never a kernel constant
+
+- **Status:** Accepted; `genome.py`, `providers.py`, `deliberation.py`, `gateway.py`, 11 new tests
+  across five files, golden run unchanged (no scenario Cell declares `model_policy`)
+- **Spec ref:** §14.1, §14.2, §16.2, §16.3, §24; ADR-050
+
+- **Context:** ADR-050 measured that sampling temperature dominates parse rate more than model
+  choice does, and refused the one-line fix (`temperature: 0` as a provider constant) because §14.1
+  names "temperature/sampling mutation" as a prompt-mutation operator — sampling belongs in the
+  *mutable Cell* column, not the kernel's. It named the socket already reserved for this:
+  `model_policy` is a §16.2 genome field, hashed into `cells.model_policy_hash`, written at birth and
+  read by nothing. This slice fills it.
+
+### A closed dict inside an already-inheritable field, not a new top-level field
+
+`model_policy` was already in `INHERITABLE_FIELDS` and already flowed through `inherit()`'s
+overlay — the "first real decision" PRIORITIES flagged ("is sampling inherited, mutated, or both?")
+turned out to already be answered by the existing mechanism every other genome field uses: a child
+keeps its parent's `model_policy` unless a mutation overlays it, which is both inheritance and
+mutability at once, with no new code path. What needed a decision was `model_policy`'s *content*
+shape, which had none — any JSON-serializable value passed validation, including the free-text
+string one pre-existing test (`test_a_model_policy_change_is_not_a_new_idea`) used as a placeholder.
+
+`MODEL_POLICY_FIELDS = {"temperature": ...}` closes it the same way the top-level genome schema is
+closed: an unknown key is refused by name. §14.1 names two more mutation operators that could occupy
+this socket later (model-route, reasoning-budget), so a misspelled or half-built key must fail
+loudly now rather than being silently ignored by whichever provider doesn't recognise it later.
+
+### Bounded to `[0.0, 1.0]`, not the union of every provider's range
+
+Anthropic's Messages API hard-limits `temperature` to `[0.0, 1.0]`; Ollama accepts a wider range by
+convention (its own default is 0.8, and callers regularly pass up to 2.0). The genome validates
+against the *tighter* range rather than the union of both, because §14.2 requires mutations to be
+evaluated as "counterfactual twins... differing by one prompt-level change" — a temperature valid on
+Ollama but rejected outright by Anthropic would make a cross-provider twin comparison undefined
+rather than merely inconvenient. The same bound is repeated at the `providers.ModelRequest` pydantic
+field (`ge=0.0, le=1.0`), deliberately redundant with `genome.py`'s check: a bad value must never
+reach a provider regardless of which caller built the request — `cli.py`'s `call-model` and any
+future caller besides `deliberation.py` included.
+
+### `None` means "no opinion", and is never conflated with 0
+
+A genome that has never mutated `model_policy` reports `temperature_of() is None`, not `0.0`. This
+matters concretely: ADR-050's finding was that temperature 0 (greedy decoding) collapses a colony to
+one repeated idea per run — the *worst* outcome measured. Reading absence as 0 would have silently
+reproduced the exact failure mode this slice exists to keep out of the kernel's hands. `None` reaches
+`providers.py` and is read there as "use the provider's own default" — Ollama's 0.8, Anthropic's
+own — by omitting the key entirely from the request sent to the SDK/HTTP layer, not by sending
+`temperature: null`. The same omission-not-null discipline extends to `gateway.py`'s
+`model_calls.parameters_json`: a stored `null` on every historical row (most genomes declare no
+policy) would read as "temperature 0 was requested" rather than "nobody asked", and no scenario Cell
+in the golden run declares a `model_policy`, so the golden hash stays unchanged only because absence
+stays absent all the way through.
+
+### What it displaced
+
+- **Deriving "inherited or mutated" as a new design question.** Considered and dropped once
+  `INHERITABLE_FIELDS` was re-read: `model_policy` already sat there, so the question was already
+  answered by the mechanism every sibling field uses. No special-casing was added.
+- **Wiring `auditor.py`/`content_audit.py`/`cli.py`'s `call-model` to the same socket.** ADR-050's
+  entire argument is about the deliberation loop's parse-rate/diversity trade-off (§14.1, §14.2);
+  Auditor and content-audit calls are operator-composed judgments (§10.4) with a different
+  provider/model already chosen by the caller, not a Cell acting from its own mutable genome. Logged
+  in FUTURE_BUILD_HOOKS as a plausible follow-up rather than bundled in here without its own argument.
+- **A live counterfactual-twin measurement using the new socket**, the way ADR-050 itself ran one.
+  This slice wires the mechanism the measurement would need; running that measurement is a separate,
+  reviewable act with its own arms and sample size, not a byproduct of shipping the wiring. Logged in
+  FUTURE_BUILD_HOOKS.
+- **Allowing `model_policy` to keep carrying free-form descriptive text alongside the structured
+  key.** `test_a_model_policy_change_is_not_a_new_idea` (`test_novelty.py`) used a string as a stand-in
+  before this field had any validation at all; its fixture is now a dict (`{"temperature": 0.9}`) and
+  its actual subject — that `model_policy` changes never count toward novelty distance — is unchanged.
+  A `notes`/description key was considered and rejected: nothing reads free text today, and an unread
+  field is exactly the kind of silent-drift risk `MODEL_POLICY_FIELDS`' closure exists to prevent.

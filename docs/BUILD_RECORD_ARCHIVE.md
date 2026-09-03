@@ -4342,3 +4342,49 @@ modification — no new direction to get backwards.
   it that way). `selection.py`'s `software_native_advantage` gate is the natural first consumer —
   reading a *resolved* audit only, never an unresolved one, which would be exactly the "estimated
   negative EV" shape §10.5 forbids acting on automatically.
+
+## 2026-09-03 — §13.2's `software_native_advantage` gate reads a resolved content audit
+
+`selection._software_native_advantage` + 3 new tests + golden run unchanged (ADR-066). **The gate
+ADR-065 deliberately left `UNMEASURABLE` is now conditionally measurable**, the same way ADR-060
+gave `structural_novelty` a live prior: `content_audit.py`'s Auditor path is this gate's one
+consumer, and `test_only_selection_consumes_a_content_audit` (renamed from `test_nothing_yet_
+consumes_a_content_audit`) keeps it that way.
+
+### Only a resolved prediction may gate — an unresolved one is exactly §10.5's forbidden shape
+
+An audit's `probability` is registered before the outcome is known; reading it into an automatic
+gate would be gating a candidate on an *estimate*. The gate instead reads `prediction.get(conn,
+audit.prediction_id).outcome` — set only once the register has resolved the claim against what was
+actually observed. No audit at all is `UNMEASURABLE`, unchanged; an audit that exists but has not
+resolved is `UNEVALUABLE`, not a rejection — the same distinction `_evidence_quality` already draws
+for a Cell with no resolved forecasts.
+
+### Any single resolved, vindicated concern rejects — no quorum across Auditors
+
+§10.5's "an independent Auditor must concur" bar is written for *killing* a Cell. This gate does
+not kill — a rejected candidate can be re-proposed once the concern is addressed, and more than one
+Auditor may record an opinion about the same genome (migration 0031's partial unique index only
+stops the *same* Auditor opining twice). Requiring unanimity would let a vindicated "ordinary
+freelancing" flag be outvoted by Auditors who never looked closely, so the rule mirrors
+`_policy_compliance`'s existing posture: any one resolved, vindicated concern rejects; the register
+scoring the Auditor who raised it is the check on carelessness, not a second gate reading their
+track record.
+
+### A stale PRIORITIES claim, corrected rather than left to drift
+
+PRIORITIES said `test_no_kernel_path_acts_on_a_frontier`'s allowed-importers list would also need
+an edit. It did not — that test scans who imports `selection`, not what `selection` imports, and
+this slice only added the latter. Logged and corrected in ADR-066 rather than left stale for the
+next reader.
+
+### Verification
+
+- **3 new tests, teeth-checked.** Reverting the gate's wiring in `evaluate()` back to
+  `_unmeasurable_gate("software_native_advantage")` failed the new PASSED test with the expected
+  assertion (`UNMEASURABLE` where `PASSED` was expected) — a real MISS, not a false CAUGHT.
+- **1143 tests and the golden run green, hash unchanged.** No fixture Cell has ever had a content
+  audit (ADR-065's own golden note), so this slice's diff is nowhere in the replay — additive over
+  a gate nothing in the scenario reaches yet.
+- Next: `selection.py`'s frontier still carries two dimensions with no data at all
+  (`economic_potential`, `reproducibility`) — see PRIORITIES `Next` for what each is blocked on.

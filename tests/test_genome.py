@@ -8,6 +8,7 @@ import pytest
 from mitosis import db, genome, ledger, lifecycle, lineage, population
 from mitosis.genome import (
     GENOME_FIELDS,
+    MODEL_POLICY_FIELDS,
     NON_INHERITABLE_SENSE,
     RISK_CLASSES,
     canonical_genome_json,
@@ -15,6 +16,7 @@ from mitosis.genome import (
     inherit,
     requested_tools,
     risk_class_of,
+    temperature_of,
     unclassified_fields,
 )
 from mitosis.models import Book, CellType, EntrySpec, PopulationLimits
@@ -326,6 +328,75 @@ def test_risk_class_of_and_requested_tools_tolerate_an_empty_genome():
     assert risk_class_of(None) is None
     assert risk_class_of({}) is None
     assert requested_tools(None) == ()
+
+
+# --- §14.1's model_policy socket (ADR-067) -------------------------------------
+
+
+def test_model_policy_temperature_round_trips():
+    content = canonical_genome_json(CellType.EXPLORER, {"model_policy": {"temperature": 0.4}})
+    assert temperature_of(content) == 0.4
+
+
+def test_model_policy_temperature_must_be_in_range():
+    with pytest.raises(genome.GenomeError, match="between 0.0 and 1.0"):
+        canonical_genome_json(CellType.EXPLORER, {"model_policy": {"temperature": 1.5}})
+    with pytest.raises(genome.GenomeError, match="between 0.0 and 1.0"):
+        canonical_genome_json(CellType.EXPLORER, {"model_policy": {"temperature": -0.1}})
+
+
+def test_model_policy_temperature_must_be_a_number():
+    with pytest.raises(genome.GenomeError, match="temperature must be a number"):
+        canonical_genome_json(CellType.EXPLORER, {"model_policy": {"temperature": "hot"}})
+    with pytest.raises(genome.GenomeError, match="temperature must be a number"):
+        canonical_genome_json(CellType.EXPLORER, {"model_policy": {"temperature": True}})
+
+
+def test_model_policy_must_be_a_dict():
+    with pytest.raises(genome.GenomeError, match="model_policy must be a dict"):
+        canonical_genome_json(CellType.EXPLORER, {"model_policy": 0.7})
+
+
+def test_model_policy_rejects_an_unknown_key():
+    """§14.1's other named operators (model-route, reasoning-budget mutation)
+    are not yet built. A misspelled or half-built key must fail loudly rather
+    than being silently ignored by whichever provider does not recognise it."""
+    with pytest.raises(genome.GenomeError, match="unknown model_policy field"):
+        canonical_genome_json(CellType.EXPLORER, {"model_policy": {"model_route": "opus"}})
+    assert set(MODEL_POLICY_FIELDS) == {"temperature"}
+
+
+def test_temperature_of_is_none_not_zero_for_a_silent_genome():
+    """No declared policy is "no opinion", never greedy decoding. A provider
+    reading `None` must fall back to its own default, not to temperature 0 —
+    the exact `temperature: 0` kernel default ADR-050 refused."""
+    assert temperature_of(None) is None
+    assert temperature_of({}) is None
+    assert temperature_of({"cell_type": "explorer"}) is None
+    assert temperature_of({"model_policy": {}}) is None
+
+
+def test_model_policy_is_inherited_and_mutable_like_every_other_field(conn):
+    """§14.2's counterfactual-twin obligation needs both halves: a child must
+    keep its parent's policy unless a mutation overlays it — the identical
+    inherit/mutate mechanism every other genome field already uses, not a new
+    one built for this field."""
+    parent = _colony(conn, genome_content={**SEEDED, "model_policy": {"temperature": 0.6}})
+    unmutated = lineage.reproduce(
+        conn, parent_cell_id=parent.cell_id, budget_minor_units=100, idempotency_key="c1"
+    )
+    assert temperature_of(_content_of(conn, unmutated.genome_hash)) == 0.6
+
+    mutated = lineage.reproduce(
+        conn,
+        parent_cell_id=parent.cell_id,
+        budget_minor_units=100,
+        idempotency_key="c2",
+        mutation={"model_policy": {"temperature": 0.1}},
+    )
+    content = _content_of(conn, mutated.genome_hash)
+    assert temperature_of(content) == 0.1
+    assert content["market"] == SEEDED["market"], "the mutation overlays, it does not replace"
 
 
 # --- founders -----------------------------------------------------------------

@@ -14,53 +14,66 @@ measurement, §15.1 anchoring and the twins that chose the fix, the proposal log
 shows no wording, the §23.4 repeat, the wake reason, the genome, the human-decision wake,
 the +15% that did not survive honesty, §13.4's concreteness measure,
 §13.2's selector, §12's novelty archive, the inbound counterparty key,
-§12.1's declared third dimension, rung 8, §12.3's `P(next stage)`, and the
-Auditor path for §13.3/§13.4's content judgments,
-2026-07-21 through 2026-08-31):
+§12.1's declared third dimension, rung 8, §12.3's `P(next stage)`, the
+Auditor path for §13.3/§13.4's content judgments, and the software_native_advantage
+gate reading a resolved content audit,
+2026-07-21 through 2026-09-03):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-03 — §13.2's `software_native_advantage` gate reads a resolved content audit
+## 2026-09-03 — `model_policy`'s temperature socket is filled
 
-`selection._software_native_advantage` + 3 new tests + golden run unchanged (ADR-066). **The gate
-ADR-065 deliberately left `UNMEASURABLE` is now conditionally measurable**, the same way ADR-060
-gave `structural_novelty` a live prior: `content_audit.py`'s Auditor path is this gate's one
-consumer, and `test_only_selection_consumes_a_content_audit` (renamed from `test_nothing_yet_
-consumes_a_content_audit`) keeps it that way.
+`genome.py` + `providers.py` + `deliberation.py` + `gateway.py` + 11 new tests across five files +
+golden run unchanged (ADR-067). **§16.2's reserved socket — `model_policy`, written at birth and
+read by nothing since ADR-050 named it — now carries a validated `{"temperature": 0.0-1.0}`, read
+into every deliberation wake from the Cell's own genome, never a kernel constant.**
 
-### Only a resolved prediction may gate — an unresolved one is exactly §10.5's forbidden shape
+### The "inherited, mutated, or both" question was already answered
 
-An audit's `probability` is registered before the outcome is known; reading it into an automatic
-gate would be gating a candidate on an *estimate*. The gate instead reads `prediction.get(conn,
-audit.prediction_id).outcome` — set only once the register has resolved the claim against what was
-actually observed. No audit at all is `UNMEASURABLE`, unchanged; an audit that exists but has not
-resolved is `UNEVALUABLE`, not a rejection — the same distinction `_evidence_quality` already draws
-for a Cell with no resolved forecasts.
+`model_policy` already sat in `INHERITABLE_FIELDS`, flowing through `inherit()`'s overlay like every
+other genome field — a child keeps its parent's policy unless a mutation overrides it, which is both
+inheritance and mutability at once, with no new mechanism built. What actually needed a decision was
+the field's *content* shape, which had none: any JSON-serializable value passed before this slice,
+including the free-text string one pre-existing test used as a stand-in
+(`test_a_model_policy_change_is_not_a_new_idea`, now a dict). `MODEL_POLICY_FIELDS` closes it the
+same way the top-level genome schema is closed — an unknown key is refused by name, because §14.1
+names two more mutation operators (model-route, reasoning-budget) that could occupy this socket
+later.
 
-### Any single resolved, vindicated concern rejects — no quorum across Auditors
+### Bounded to `[0.0, 1.0]` — the tighter of two providers' ranges, not their union
 
-§10.5's "an independent Auditor must concur" bar is written for *killing* a Cell. This gate does
-not kill — a rejected candidate can be re-proposed once the concern is addressed, and more than one
-Auditor may record an opinion about the same genome (migration 0031's partial unique index only
-stops the *same* Auditor opining twice). Requiring unanimity would let a vindicated "ordinary
-freelancing" flag be outvoted by Auditors who never looked closely, so the rule mirrors
-`_policy_compliance`'s existing posture: any one resolved, vindicated concern rejects; the register
-scoring the Auditor who raised it is the check on carelessness, not a second gate reading their
-track record.
+Anthropic hard-limits `temperature` to `[0.0, 1.0]`; Ollama accepts wider. Validating against the
+tighter range is what §14.2's "counterfactual twins... differing by one prompt-level change" needs —
+a value valid on one provider and rejected outright by the other would make a cross-provider
+comparison undefined. The bound is enforced twice: once in `genome.py`, again at the
+`providers.ModelRequest` pydantic field, so a bad value can never reach a provider regardless of
+which caller built the request.
 
-### A stale PRIORITIES claim, corrected rather than left to drift
+### `None` means "no opinion" and is never conflated with 0, end to end
 
-PRIORITIES said `test_no_kernel_path_acts_on_a_frontier`'s allowed-importers list would also need
-an edit. It did not — that test scans who imports `selection`, not what `selection` imports, and
-this slice only added the latter. Logged and corrected in ADR-066 rather than left stale for the
-next reader.
+A silent genome reports `temperature_of() is None`; `providers.py` omits the key entirely rather
+than sending `temperature: null`; `gateway.py`'s new `model_calls.parameters_json` entry does the
+same. This is not cosmetic — ADR-050 measured that temperature 0 (greedy decoding) collapses a
+colony to one repeated idea per run, the worst outcome the earlier measurement found. Reading
+absence as 0 anywhere in this chain would have silently reproduced exactly that failure mode.
+
+### Scope: `deliberation.py` only
+
+`auditor.py`, `content_audit.py`, and `cli.py`'s `call-model` still send no temperature. ADR-050's
+argument is specifically about the agent loop's parse-rate/diversity trade-off; Auditor and
+content-audit calls are operator-composed §10.4 judgments with the model already chosen by the
+caller. Whether an Auditor's own genome should set its own sampling temperature is a real,
+unargued question — logged in FUTURE_BUILD_HOOKS rather than bundled in here.
 
 ### Verification
 
-- **3 new tests, teeth-checked.** Reverting the gate's wiring in `evaluate()` back to
-  `_unmeasurable_gate("software_native_advantage")` failed the new PASSED test with the expected
-  assertion (`UNMEASURABLE` where `PASSED` was expected) — a real MISS, not a false CAUGHT.
-- **1143 tests and the golden run green, hash unchanged.** No fixture Cell has ever had a content
-  audit (ADR-065's own golden note), so this slice's diff is nowhere in the replay — additive over
-  a gate nothing in the scenario reaches yet.
-- Next: `selection.py`'s frontier still carries two dimensions with no data at all
-  (`economic_potential`, `reproducibility`) — see PRIORITIES `Next` for what each is blocked on.
+- **11 new tests across `test_genome.py`, `test_providers.py`, `test_ollama_provider.py`,
+  `test_gateway.py`, `test_deliberation.py`; teeth-checked twice.** Reverting
+  `deliberation.py`'s wiring to `temperature=None` failed the end-to-end wake test with the exact
+  expected assertion (`None == 0.3` where `0.3` was expected). Reverting `gateway.py`'s conditional
+  `parameters["temperature"]` line failed the parameters test the same clean way. Both are real
+  MISSes, not false CAUGHTs.
+- **1157 tests and the golden run green, hash unchanged.** No scenario Cell declares a
+  `model_policy`, so `parameters_json` stays `{"max_tokens": ...}` everywhere in the replay —
+  absence stayed absent through the whole chain, exactly as designed.
+- Next: `risk_tier` on `abstain` — PRIORITIES' next `Next` item, cheap and well-evidenced by two
+  models independently refusing to state a risk tier for declining to act.

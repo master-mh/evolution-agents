@@ -196,10 +196,12 @@ def test_a_model_policy_change_is_not_a_new_idea(conn):
 
     A cheaper drafting model is a change to how the work is done, not to what
     the work is. `model_policy` and `mutation_rate` are excluded for that reason
-    and this is what fails if either quietly joins the distance.
+    and this is what fails if either quietly joins the distance. `model_policy`
+    is a structured `{"temperature": ...}` dict as of ADR-067 (§14.1's sampling
+    socket) rather than free text — the shape changed, the exclusion did not.
     """
     _founder(conn, "first")
-    second = _founder(conn, "second", model_policy="prefer the cheapest local model",
+    second = _founder(conn, "second", model_policy={"temperature": 0.9},
                       mutation_rate=0.9)
     found = _distance(conn, second)
     assert found.bin == "adjacent"

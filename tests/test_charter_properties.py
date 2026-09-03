@@ -722,11 +722,15 @@ def test_charter_no_secret_in_cell_request_type_cannot_carry_a_credential(conn):
     # An exact field set, not a keyword blocklist: the point is that adding
     # *any* new field to the Cell-facing request type is a decision someone
     # has to make deliberately, which is where a credential would slip in.
+    # `temperature` (ADR-067) is exactly such a deliberate addition: a bounded
+    # float read from a Cell's own genome (`genome.temperature_of`), never
+    # from anything a Cell supplies directly to this type.
     assert set(providers.ModelRequest.model_fields) == {
         "model",
         "messages",
         "max_tokens",
         "system",
+        "temperature",
     }
 
 

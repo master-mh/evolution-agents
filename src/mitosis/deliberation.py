@@ -57,6 +57,7 @@ from . import (
     events,
     experiments,
     gateway,
+    genome,
     ids,
     ledger,
     lifecycle,
@@ -380,6 +381,11 @@ def deliberate(
                 {"role": "user", "content": f"{_system_prompt()}\n\n{assembled.render()}"},
             ),
             max_tokens=max_tokens,
+            # §14.1's sampling-temperature mutation operator, read from this
+            # Cell's own genome rather than pinned as a kernel constant
+            # (ADR-050, ADR-067). `None` when the genome declares no policy —
+            # the provider's own default, not a kernel opinion.
+            temperature=genome.temperature_of(canonical_genome),
         ),
         experiment_id=experiment_id,
         idempotency_key=f"deliberation:{wake_key}",

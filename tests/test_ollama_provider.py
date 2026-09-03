@@ -95,6 +95,22 @@ def test_max_tokens_becomes_num_predict():
     assert seen[0]["payload"]["stream"] is False
 
 
+def test_temperature_reaches_ollamas_options_only_when_the_request_carries_one():
+    """§14.1's sampling mutation, read from a Cell's genome (ADR-067), maps
+    onto Ollama's `options` the same way `max_tokens` already does. Its
+    absence must not send a `temperature: null` that overrides Ollama's own
+    default (0.8) with something that reads as 0."""
+    seen: list = []
+    with _ollama_returns(_OK_BODY, capture=seen):
+        providers.OllamaProvider().complete(_request(temperature=0.2))
+    assert seen[0]["payload"]["options"]["temperature"] == 0.2
+
+    seen.clear()
+    with _ollama_returns(_OK_BODY, capture=seen):
+        providers.OllamaProvider().complete(_request())
+    assert "temperature" not in seen[0]["payload"]["options"]
+
+
 def test_system_prompt_is_prepended_as_a_message():
     seen: list = []
     with _ollama_returns(_OK_BODY, capture=seen):

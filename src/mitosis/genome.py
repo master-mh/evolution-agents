@@ -64,6 +64,22 @@ the account; no policy posts to it), so this slice cannot honestly enforce that
 rule — and rather than fake the check, the v0.1 field set simply carries no
 field denoting a transferable revenue-producing asset. See
 `NON_INHERITABLE_SENSE["revenue_producing_asset"]`.
+
+**`model_policy` was written at birth and read by nothing until ADR-067.**
+ADR-050 measured that sampling temperature dominates parse rate more than
+model choice does, and refused the obvious one-line fix — `temperature: 0` as
+a provider constant — because §14.1 names "temperature/sampling mutation" as a
+prompt-mutation operator: that puts sampling in the *mutable Cell* column, not
+the kernel's. `model_policy` was already §16.2's reserved socket for exactly
+this. ADR-067 gives it a first, single-key shape: `{"temperature": 0.0-1.0}`,
+validated and read by `providers.py` the same way every other genome field is
+inherited and mutated — `inherit()`'s overlay needs no new mechanism, because
+answering "inherited, mutated, or both" was already the standing answer for
+every field in `INHERITABLE_FIELDS`. `MODEL_POLICY_FIELDS` is closed the same
+way the top-level schema is, because §14.1 lists model-route and
+reasoning-budget mutation as future occupants of this same socket, and a
+misspelled or half-built key should fail loudly rather than being silently
+ignored by whichever provider does not recognise it.
 """
 
 from __future__ import annotations
@@ -165,6 +181,21 @@ NON_INHERITABLE_SENSE: dict[str, str] = {
     ),
 }
 
+#: §14.1's mutation operators, given a concrete shape inside `model_policy`.
+#: Closed the same way the top-level genome schema is closed: an unknown key
+#: is refused by name, so a future occupant of this socket (§14.1 also names
+#: model-route and reasoning-budget mutation) is a deliberate decision rather
+#: than a field that quietly starts being ignored by whichever provider
+#: doesn't recognise it.
+MODEL_POLICY_FIELDS: dict[str, str] = {
+    "temperature": (
+        "§14.1 temperature/sampling mutation. Bounded to [0.0, 1.0] — the "
+        "tighter of the two providers' accepted ranges, so a genome mutated "
+        "once stays valid on every provider it might run against (§14.2's "
+        "counterfactual-twin obligation)"
+    ),
+}
+
 #: Valid `risk_class` values. Held as plain strings rather than importing
 #: `proposal.RiskTier`, because `proposal` sits far above `genome` in the
 #: dependency order and a back-edge here would invert the layering the kernel
@@ -254,6 +285,24 @@ def risk_class_of(content: dict[str, Any] | None) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def temperature_of(content: dict[str, Any] | None) -> float | None:
+    """§14.1's sampling temperature, as declared in this genome's
+    `model_policy` — or `None` if the genome declares no policy at all.
+
+    `None` here means "no opinion", never "zero" — a genome that has not
+    mutated `model_policy` is not thereby claiming greedy decoding, so a
+    provider reads `None` as "use your own default" (`providers.py`), not as
+    a temperature of 0.
+    """
+    if not content:
+        return None
+    policy = content.get("model_policy")
+    if not isinstance(policy, dict):
+        return None
+    value = policy.get("temperature")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
 def requested_tools(content: dict[str, Any] | None) -> tuple[str, ...]:
     """Tools this genome *requests*. Grants nothing (§0.4).
 
@@ -320,9 +369,36 @@ def _validate_content(content: dict[str, Any]) -> None:
         if not 0.0 <= float(rate) <= 1.0:
             raise GenomeError(f"mutation_rate must be between 0 and 1, got {rate}")
 
+    policy = content.get("model_policy")
+    if policy is not None:
+        _validate_model_policy(policy)
+
     try:
         # The hash is computed over json.dumps output, so anything that can't
         # serialize deterministically can't be part of a genome (Charter C11).
         json.dumps(content, sort_keys=True)
     except (TypeError, ValueError) as exc:
         raise GenomeError(f"genome content must be JSON-serializable: {exc}") from exc
+
+
+def _validate_model_policy(policy: Any) -> None:
+    """§14.1's sampling policy, given a concrete, closed shape. See
+    `MODEL_POLICY_FIELDS` and the module docstring for why this is closed the
+    same way the top-level genome schema is."""
+    if not isinstance(policy, dict):
+        raise GenomeError("model_policy must be a dict")
+    for key in policy:
+        if key not in MODEL_POLICY_FIELDS:
+            raise GenomeError(
+                f"unknown model_policy field {key!r}. model_policy is closed "
+                f"(§14.1): known fields: {', '.join(sorted(MODEL_POLICY_FIELDS))}"
+            )
+
+    temperature = policy.get("temperature")
+    if temperature is not None:
+        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)):
+            raise GenomeError("model_policy.temperature must be a number between 0.0 and 1.0")
+        if not 0.0 <= float(temperature) <= 1.0:
+            raise GenomeError(
+                f"model_policy.temperature must be between 0.0 and 1.0, got {temperature}"
+            )

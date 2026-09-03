@@ -190,6 +190,25 @@ def test_records_the_required_call_metadata(conn, cell):
     assert call.reconciled_micro_usd is None
 
 
+def test_parameters_records_temperature_only_when_the_request_carries_one(conn, cell):
+    """§24.1's `parameters` gains its second key (ADR-067). A silent request
+    (no `model_policy` mutation) must not persist `temperature: null` on every
+    historical row — that would read as "0 was requested" rather than
+    "nobody asked", and would move the golden run for every existing scenario
+    Cell (none of which declare a `model_policy`)."""
+    with_temp = _call(
+        conn, cell, StubProvider(), key="with-temp",
+        request=providers.ModelRequest(
+            model=PRICED_MODEL, messages=({"role": "user", "content": "hi"},),
+            max_tokens=1000, temperature=0.5,
+        ),
+    )
+    assert with_temp.parameters == {"max_tokens": 1000, "temperature": 0.5}
+
+    without_temp = _call(conn, cell, StubProvider(), key="without-temp")
+    assert without_temp.parameters == {"max_tokens": 1000}
+
+
 def test_system_prompt_hash_recorded_only_when_a_system_prompt_is_sent(conn, cell):
     without = _call(conn, cell, StubProvider(), key="a")
     assert without.system_prompt_hash is None
