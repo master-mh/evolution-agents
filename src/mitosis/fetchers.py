@@ -22,6 +22,15 @@ not imply the right to store, resell, or train on something. `unknown` is the
 honest value and forces the question to be answered by a person before any
 commercial use; a fetcher that wrote `permitted` would be manufacturing a
 rights position the colony does not have.
+
+**The robots.txt fetch goes through the same transport as the page, not
+`RobotFileParser.read()`.** That stdlib method opens its own plain
+`urllib.request.urlopen()` — no `_NoRedirects`, no timeout, no byte cap — so a
+robots.txt that 302s carries the *policy check* off the allowlist even though
+the page fetch itself never would, and an unbounded or hanging robots
+response could stall a wake or exhaust memory. `_robots_allow` builds the
+same bounded, no-redirect request `fetch` does and feeds the result to
+`RobotFileParser.parse()` instead.
 """
 
 from __future__ import annotations
@@ -40,6 +49,12 @@ USER_AGENT = "MitosisColony/0.2 (autonomous research agent; read-only)"
 
 #: §19.3 runtime limit.
 TIMEOUT_SECONDS = 20
+
+#: A robots.txt this large is unusual enough to treat as indeterminate rather
+#: than parse a truncated file. Real ones are a few KB at most, and cutting a
+#: line like "Disallow: /admin" mid-string can turn a restriction into an
+#: empty, permissive directive — a truncated policy is not a smaller policy.
+MAX_ROBOTS_BYTES = 8_000
 
 
 class _NoRedirects(urllib.request.HTTPRedirectHandler):
@@ -103,14 +118,35 @@ class UrlLibFetcher:
 
     def _robots_allow(self, url: str) -> bool:
         parsed = urlparse(url)
+        if not parsed.hostname:
+            return False
         robots_url = urlunparse((parsed.scheme, parsed.netloc, "/robots.txt", "", "", ""))
+        request = urllib.request.Request(robots_url, headers={"User-Agent": USER_AGENT})
+        try:
+            with self._opener.open(request, timeout=TIMEOUT_SECONDS) as response:
+                raw = response.read(MAX_ROBOTS_BYTES + 1)
+                charset = response.headers.get_content_charset() or "utf-8"
+        except ToolError:
+            # _NoRedirects turned a redirect into a refusal. The allowlist was
+            # checked against the page URL, not wherever robots.txt redirects
+            # to — indeterminate, so fail closed the same way a timeout does.
+            return False
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                return False  # explicit disallow: common robots.txt convention
+            if exc.code == 404:
+                return True  # no robots.txt published: nothing has restricted us
+            return False  # any other definite failure: indeterminate, fail closed
+        except OSError:
+            # Timeout, DNS failure, connection reset: all indeterminate. §19.4
+            # asks for compliance "where applicable"; where it cannot be
+            # determined, the safe reading is the restrictive one.
+            return False
+
+        if len(raw) > MAX_ROBOTS_BYTES:
+            return False
+
         parser = urllib.robotparser.RobotFileParser()
         parser.set_url(robots_url)
-        try:
-            parser.read()
-        except Exception:
-            # An unreadable robots.txt is not permission. §19.4 asks for
-            # compliance "where applicable"; where it cannot be determined,
-            # the safe reading is the restrictive one.
-            return False
+        parser.parse(raw.decode(charset, errors="replace").splitlines())
         return parser.can_fetch(USER_AGENT, url)

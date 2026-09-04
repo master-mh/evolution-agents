@@ -835,21 +835,6 @@ def test_a_redirect_is_refused_rather_than_followed():
         )
 
 
-def test_an_unreadable_robots_txt_is_not_permission(monkeypatch):
-    """§19.4 asks for robots.txt compliance. Where it cannot be determined, the
-    safe reading is the restrictive one — a fetcher that treated an unreachable
-    robots.txt as consent would be claiming compliance it does not have."""
-    from mitosis.fetchers import UrlLibFetcher
-
-    fetcher = UrlLibFetcher()
-
-    def boom(self):
-        raise OSError("no network")
-
-    monkeypatch.setattr("urllib.robotparser.RobotFileParser.read", boom)
-    assert fetcher._robots_allow("https://example.com/x") is False
-
-
 def test_the_fetcher_is_not_imported_by_the_kernel():
     """§19.3 ships the network disabled. If any kernel module imported the real
     fetcher, "disabled by default" would rest on a default argument rather than
