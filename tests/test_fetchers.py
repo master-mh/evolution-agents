@@ -75,7 +75,13 @@ class _Server:
 
 
 @pytest.fixture
-def server_factory():
+def server_factory(monkeypatch):
+    # Every test server here is necessarily on loopback, which the SSRF guard
+    # (added below) now correctly refuses on its own -- these tests are about
+    # robots/redirect/timeout handling, not the guard, so bypass it here. The
+    # guard itself is tested directly, unpatched, further down.
+    monkeypatch.setattr(fetchers, "_check_destination_safe", lambda hostname: None)
+
     servers: list[_Server] = []
 
     def make(routes: dict[str, object]) -> _Server:
@@ -215,3 +221,81 @@ def test_respect_robots_false_skips_the_check_entirely(server_factory):
     fetcher = fetchers.UrlLibFetcher(respect_robots=False)
     result = fetcher.fetch(f"{origin.base_url}/page", max_bytes=1000)
     assert result.text == "hi"
+
+
+# --- _check_destination_safe: a hostname on the allowlist is not a promise
+# about the address it resolves to ---------------------------------------------
+
+
+def test_a_loopback_destination_is_refused_before_any_connection():
+    """The positive case for the whole guard, deliberately not using
+    `server_factory` (which bypasses this exact check for its own,
+    unrelated tests): a real local server runs on loopback, and the fetch
+    must be refused without ever contacting it."""
+    server = _Server({"/page": (200, b"hi", None)})
+    try:
+        fetcher = fetchers.UrlLibFetcher()
+        with pytest.raises(ToolError, match="not a public address"):
+            fetcher.fetch(f"{server.base_url}/page", max_bytes=1000)
+        assert server.hits == []
+    finally:
+        server.close()
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "127.0.0.1",  # loopback
+        "127.0.0.53",  # loopback, non-standard address in the /8
+        "::1",  # loopback, IPv6
+        "10.1.2.3",  # private
+        "172.16.0.5",  # private
+        "192.168.1.1",  # private
+        "169.254.169.254",  # link-local -- the AWS/GCP/Azure/Alibaba metadata IP
+        "169.254.1.1",  # link-local
+        "224.0.0.1",  # multicast
+        "0.0.0.0",  # unspecified
+        "fc00::1",  # unique local, IPv6's private range
+        "fe80::1",  # link-local, IPv6
+        "ff02::1",  # multicast, IPv6
+    ],
+)
+def test_check_destination_safe_refuses_every_non_public_range(address, monkeypatch):
+    monkeypatch.setattr(
+        fetchers.socket, "getaddrinfo", lambda *a, **k: [(None, None, None, "", (address, 0))]
+    )
+    with pytest.raises(ToolError, match="not a public address"):
+        fetchers._check_destination_safe("whatever.test")
+
+
+def test_check_destination_safe_allows_a_public_address(monkeypatch):
+    monkeypatch.setattr(
+        fetchers.socket, "getaddrinfo", lambda *a, **k: [(None, None, None, "", ("8.8.8.8", 0))]
+    )
+    fetchers._check_destination_safe("whatever.test")  # does not raise
+
+
+def test_check_destination_safe_refuses_if_any_resolved_address_is_unsafe(monkeypatch):
+    """A hostname that resolves to multiple addresses (round-robin DNS, or a
+    dual-stack A + AAAA answer) is refused if even one of them is unsafe --
+    the caller has no control over which address `urllib` picks to connect
+    to next."""
+    monkeypatch.setattr(
+        fetchers.socket,
+        "getaddrinfo",
+        lambda *a, **k: [
+            (None, None, None, "", ("8.8.8.8", 0)),
+            (None, None, None, "", ("127.0.0.1", 0)),
+        ],
+    )
+    with pytest.raises(ToolError, match="not a public address"):
+        fetchers._check_destination_safe("whatever.test")
+
+
+def test_check_destination_safe_wraps_a_resolution_failure(monkeypatch):
+    def boom(*_a, **_k):
+        raise fetchers.socket.gaierror("nope")
+
+    monkeypatch.setattr(fetchers.socket, "getaddrinfo", boom)
+    with pytest.raises(ToolError, match="could not resolve"):
+        fetchers._check_destination_safe("whatever.test")

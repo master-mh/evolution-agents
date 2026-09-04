@@ -31,10 +31,25 @@ the page fetch itself never would, and an unbounded or hanging robots
 response could stall a wake or exhaust memory. `_robots_allow` builds the
 same bounded, no-redirect request `fetch` does and feeds the result to
 `RobotFileParser.parse()` instead.
+
+**A hostname on the Charter C12 allowlist is a string a human approved, not a
+promise about the address it resolves to.** `tool_registry._check_egress_locked`
+only ever compares hostnames; nothing before this module resolves one. So
+before either request, `_check_destination_safe` resolves the hostname and
+refuses a loopback, private, link-local, multicast, unspecified or reserved
+address — cloud-metadata endpoints included, since AWS/GCP/Azure/Alibaba all
+serve theirs from the link-local range. **This is a check, not a bound**:
+`urllib` re-resolves the hostname itself when it actually connects, a few
+instructions later, so a DNS answer that differs between the two lookups (DNS
+rebinding) is not covered. Closing that fully needs a fetcher that connects to
+the address it just validated instead of a hostname a second resolution could
+change — not built here.
 """
 
 from __future__ import annotations
 
+import ipaddress
+import socket
 import urllib.error
 import urllib.request
 import urllib.robotparser
@@ -69,6 +84,36 @@ class _NoRedirects(urllib.request.HTTPRedirectHandler):
         )
 
 
+def _check_destination_safe(hostname: str) -> None:
+    """Refuse a hostname that resolves to a non-public address.
+
+    See the module docstring for why this exists and its DNS-rebinding
+    limitation. `getaddrinfo` with no port/family/socktype filters resolves
+    both A and AAAA records, so both IPv4 and IPv6 destinations are checked.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as exc:
+        raise ToolError(f"could not resolve {hostname!r}: {exc}") from exc
+
+    for _family, _kind, _proto, _canon, sockaddr in infos:
+        address = ipaddress.ip_address(sockaddr[0])
+        if (
+            address.is_loopback
+            or address.is_private
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_unspecified
+            or address.is_reserved
+        ):
+            raise ToolError(
+                f"refused to reach {hostname!r}: resolves to {address}, which is "
+                "not a public address (Charter C12 — loopback, private, "
+                "link-local, multicast, unspecified and reserved ranges are all "
+                "refused; cloud-metadata endpoints are covered by link-local)"
+            )
+
+
 class UrlLibFetcher:
     """A minimal, read-only HTTP GET.
 
@@ -84,6 +129,11 @@ class UrlLibFetcher:
         self._opener = urllib.request.build_opener(_NoRedirects())
 
     def fetch(self, url: str, *, max_bytes: int) -> FetchResult:
+        hostname = urlparse(url).hostname
+        if not hostname:
+            raise ToolError(f"no hostname in {url!r}")
+        _check_destination_safe(hostname)
+
         if self.respect_robots and not self._robots_allow(url):
             # §19.4: "robots.txt compliance where applicable". A refusal, not a
             # warning — a colony that logged this and proceeded would be
@@ -119,6 +169,10 @@ class UrlLibFetcher:
     def _robots_allow(self, url: str) -> bool:
         parsed = urlparse(url)
         if not parsed.hostname:
+            return False
+        try:
+            _check_destination_safe(parsed.hostname)
+        except ToolError:
             return False
         robots_url = urlunparse((parsed.scheme, parsed.netloc, "/robots.txt", "", "", ""))
         request = urllib.request.Request(robots_url, headers={"User-Agent": USER_AGENT})
