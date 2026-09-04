@@ -27,3 +27,6 @@ jobs:
 
       - name: Check README facts against the repository
         run: python scripts/check_docs_facts.py
+
+      - name: Lint gate — runtime-defect classes only
+        run: ruff check .

@@ -910,3 +910,21 @@ def test_the_review_payload_flags_a_proposal_made_from_external_content(conn):
     pending = [r for r in approval.queue(conn) if r.status == approval.RequestStatus.PENDING]
     payload = approval.payload(conn, request_id=pending[0].request_id)
     assert payload.derived_from_untrusted is True
+
+
+# --- the public API's type hints are actually resolvable ---------------------
+
+
+def test_public_type_hints_resolve(conn):
+    """`from __future__ import annotations` makes every annotation a string
+    until something calls `typing.get_type_hints()` -- so a name used in an
+    annotation but never imported (implementation brief, Slice D: `Any` used
+    in `ToolCall`/`tool_request_of` with no `from typing import Any`) passes
+    every normal test and only breaks the moment introspection actually runs.
+    Structural rather than behavioural on purpose: nothing in this suite
+    otherwise calls `get_type_hints` on these objects, so nothing else would
+    have caught it."""
+    import typing
+
+    typing.get_type_hints(tools.ToolCall)
+    typing.get_type_hints(tools.tool_request_of)

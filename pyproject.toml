@@ -14,6 +14,7 @@ mitosis = "mitosis.cli:main"
 dev = [
     "pytest>=8.0",
     "hypothesis>=6.100",
+    "ruff>=0.16",
 ]
 # The paid provider. Optional on purpose: the kernel, the full test suite, and
 # `mitosis verify-golden-run` all run without it — nothing in Phase 1–3 needs
@@ -35,3 +36,15 @@ mitosis = ["migrations/*.sql", "golden_expectations.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Deliberately narrow: runtime-defect classes only (undefined names E9/F82,
+# syntax-shaped errors F63/F7) rather than the ~339 findings a broad/default
+# Ruff run reports across this repo, predominantly import ordering and
+# Python-modernisation suggestions. Broadening this selection is a separate,
+# mechanical change, not bundled with behavioural work (implementation
+# brief, Slice D).
+select = ["E9", "F63", "F7", "F82"]

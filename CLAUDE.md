@@ -88,8 +88,20 @@ The CLI is a console script (`mitosis`), argparse-based, and takes `--db` before
 .venv/bin/mitosis --db /tmp/colony.db init
 ```
 
-There is no linter or formatter configured. CI (`.github/workflows/ci.yml`) runs the suite plus
-the golden run on every push/PR to `main`.
+There is no formatter configured. A narrow Ruff gate checks runtime-defect classes only —
+undefined names, syntax-shaped errors — not general style; a broad run reports ~339 findings,
+mostly import ordering and modernisation suggestions, deliberately not chased in one commit:
+
+```bash
+.venv/bin/ruff check .
+```
+
+```bash
+.venv/bin/python scripts/check_docs_facts.py
+```
+
+CI (`.github/workflows/ci.yml`) runs the suite, the golden run, the docs-facts check, and the lint
+gate on every push/PR to `main`.
 
 **`anthropic` is an optional dependency on purpose** — the kernel, the full suite, and the golden
 run all work without it. CI installs `.[dev]` only, so CI reports one extra skip versus a local
