@@ -192,6 +192,25 @@ instead, tell it how often cron actually runs:
 
 ---
 
+## Distributing the source
+
+```bash
+.venv/bin/python scripts/build_source_archive.py
+```
+
+Writes `dist/mitosis-source.zip` from `git archive` — tracked content only. Credentials, the
+working database, `.venv`, and every cache directory are absent because they were never tracked,
+not because the script guessed a pattern to skip while walking the directory. The build then opens
+its own output and refuses to write it if a forbidden path (`.env`, `*.db`, `.git/`, a virtual
+environment, a cache directory, macOS metadata) is present anyway — a second, independent check in
+case something was ever force-tracked by mistake.
+
+`.env` and the runtime database are never source-distribution artifacts. They are supplied
+separately, per deployment, and are not something this command — or any commit — should ever
+include.
+
+---
+
 ## Licence
 
 All rights reserved — see [`LICENSE`](LICENSE). MITOSIS is a personal research project and is not
