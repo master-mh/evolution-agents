@@ -24,3 +24,6 @@ jobs:
 
       - name: Verify golden run (SPEC.md §26)
         run: mitosis verify-golden-run
+
+      - name: Check README facts against the repository
+        run: python scripts/check_docs_facts.py

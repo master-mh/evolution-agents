@@ -13,16 +13,31 @@ human said it could.
 
 ## Status
 
-Phase 1 of ten. The kernel is real and the core loop closes: a Cell thinks, proposes, is reviewed
-by a human, is allocated capital, and is measured on what it forecast. Nothing runs unattended
-without a human having enabled it, and the ladder that would remove those humans is deliberately
-not climbed.
+The kernel is real and the core loop closes: a Cell thinks, proposes, is reviewed by a human, is
+allocated capital, and is measured on what it forecast. Nothing runs unattended without a human
+having enabled it, and the ladder that would remove those humans is deliberately not climbed.
+
+That is not the whole of the ten-phase directive, and this table says which parts are which —
+implemented plumbing is not empirical validation:
+
+| Phase (directive §28) | State |
+|---|---|
+| 0–1 — kernel, governance | substantially complete |
+| 2–3 — flight simulator, evolutionary validation | **not built or validated** |
+| 4 — LLM deliberation loop | substantially implemented |
+| 5–6 — sandboxed execution, richer web observation | absent |
+| 7–8 — human approval ladder, external actions | partial |
+| 9–10 — commercial autonomy, multi-colony | control-plane fragments only, not live commercial autonomy |
+
+The honest present description: *a well-tested governance and accounting kernel for bounded
+economic agents, with an LLM proposal loop and partial evolutionary data structures* — not yet a
+validated self-evolving business colony. [`PRIORITIES.md`](PRIORITIES.md) is candid about the rest.
 
 | | |
 |---|---|
-| Tests | 696, including Hypothesis property tests for the Colony Charter |
-| Golden-run replay | expectation version 12, verified in CI |
-| Schema | 18 numbered migrations |
+| Tests | full suite (`pytest`), including Hypothesis property tests for the Colony Charter |
+| Golden-run replay | expectation version 38, verified in CI |
+| Schema | 34 numbered migrations |
 | Python | 3.11+ |
 | Real money spent to date | 0.19¢, once, deliberately |
 
@@ -103,10 +118,13 @@ any row invalidates every row after it. History is never corrected by editing it
 a new, signed adjustment.
 
 **A ladder that is climbed deliberately.** §25.1 defines nine rungs from flight simulator to bounded
-autonomy. The colony currently sits at rung 7, "tiny capped live experiment": two separate humans
-stand in every allocation of capital, and structural tests forbid the scheduler from reaching the
-allocation path at all. Each step up has cost an explicit, argued edit to a named test — which is
-what those tests are for.
+autonomy. The colony currently sits at rung 7, "tiny capped live experiment": every allocation of
+capital requires two explicit steps — a decision, then a separate allocation — and structural tests
+forbid the scheduler from reaching the allocation path at all. `decided_by` and `allocated_by` are
+free-text audit labels, not authenticated identities, so this is a two-step workflow rather than an
+enforced two-person control until real separation of duties exists
+([`FUTURE_BUILD_HOOKS.md`](FUTURE_BUILD_HOOKS.md)). Each step up has cost an explicit, argued edit to
+a named test — which is what those tests are for.
 
 **Deterministic replay.** A fixed scenario is driven through the kernel and reduced to a semantic
 snapshot, then hashed. Changing what the colony does economically requires regenerating the

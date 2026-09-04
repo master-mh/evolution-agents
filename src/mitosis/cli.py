@@ -3587,7 +3587,7 @@ def build_parser() -> argparse.ArgumentParser:
     ack_parser.set_defaults(func=cmd_ack_alarm)
 
     proposals_parser = subparsers.add_parser(
-        "proposals", help="list recorded proposals (inert — nothing consumes them)"
+        "proposals", help="list recorded proposals (see `approvals` for the review queue they enter)"
     )
     proposals_parser.add_argument("--cell", default=None, help="scope to one cell_id")
     proposals_parser.set_defaults(func=cmd_proposals)

@@ -1672,3 +1672,31 @@ actually queued for building — this file is memory, not a backlog to work thro
   address it just validated (with the original hostname kept for the Host header / TLS SNI) rather
   than a hostname a second resolution could change. Not built — the brief explicitly allows
   documenting this limitation rather than closing it in the same slice.
+- **Deferred production hardening (brief §12) — real gaps, correctly not in front of the flight
+  simulator.** Four items, none touched by Slices A-C:
+  - **Migration atomicity.** `db.migrate()`'s own comment already admits a crash between
+    `executescript` and the `schema_migrations` INSERT leaves the DB changed but unmarked — no
+    transaction wraps the two because `executescript` commits before it starts. Needs a recoverable
+    protocol, an interruption test (crash between schema apply and version recording, per migration,
+    from both a clean and a historical schema), pre-migration backup guidance, and a
+    `migration status/repair` diagnostic that never guesses silently. `mitosis` has no
+    `migration-status` verb today — confirmed absent while testing 0034 against a disposable copy
+    of `first-real-call.db`.
+  - **Identity and separation of duties.** `decided_by`/`allocated_by`/`changed_by` are free-text
+    audit labels — the same value (`"operator"`) is accepted for both sides of an approval, so
+    "two explicit steps" (README, corrected 2026-09-04) is not "two-person enforcement". Needs
+    authenticated operator identities and a real constraint (application *and* database) that
+    approver != allocator before this could ever be claimed.
+  - **Tamper evidence beyond internal consistency.** The hash chains (ledger, prediction register)
+    catch an ordinary row edit; a database writer with enough access can still rewrite history and
+    recompute every hash after it. README's current claim already reads as "internally verifiable
+    chain consistency" and doesn't overclaim, so nothing needed correcting there — but closing the
+    actual gap needs keyed signatures, external checkpoint publication, and verification from a
+    trust domain the colony's own DB access can't reach.
+  - **Sandbox / Charter C12-C13.** Repaired egress (Slice B) is not an execution sandbox. Phase 5
+    still needs an adversarial boundary (filesystem isolation, secret isolation, dependency
+    controls, resource limits, default-deny networking) before any generated code executes; C13's
+    router exists but adversarial lineage taint still can't be produced from a real Phase 6 history,
+    a limitation the repo already states rather than hides.
+  All four are real; none should displace Slice F (flight simulator) or the Phase 3 validation it
+  gates — the brief's own point is that evidence risk now outweighs governance-concept risk.
