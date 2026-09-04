@@ -163,7 +163,7 @@ class UrlLibFetcher:
             licence="unknown",
             permitted_uses="review only; no storage, redistribution or training",
             commercial_use="unknown",
-            contains_personal_data=False,
+            contains_personal_data="unknown",
         )
 
     def _robots_allow(self, url: str) -> bool:

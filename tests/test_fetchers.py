@@ -211,6 +211,17 @@ def test_a_connection_failure_is_not_permission(monkeypatch):
     assert fetcher._robots_allow("https://example.test/x") is False
 
 
+def test_a_fetched_page_records_personal_data_status_as_unknown_not_no(server_factory):
+    """§20.1/§20.2: the fetcher has performed no classification, so writing
+    `False` was always a fabricated negative. `unknown` is the honest value
+    -- see the module docstring."""
+    origin = server_factory({"/robots.txt": (200, b"", None), "/page": (200, b"hi", None)})
+    fetcher = fetchers.UrlLibFetcher()
+    result = fetcher.fetch(f"{origin.base_url}/page", max_bytes=1000)
+    assert result.contains_personal_data == "unknown"
+    assert result.contains_personal_data != "no"
+
+
 def test_respect_robots_false_skips_the_check_entirely(server_factory):
     origin = server_factory(
         {

@@ -1654,3 +1654,21 @@ actually queued for building — this file is memory, not a backlog to work thro
   observed the malformed shape *at t=0*, which is evidence *for* the current choice the ADR does not
   cite. Worth a deliberate call (and a line in ADR-069's "What it displaced") rather than silent
   reuse — decide whether format-recovery or selection-fidelity wins on the repair turn specifically.
+
+<!-- 2026-09-04, external audit brief (MITOSIS_IMPROVEMENT_IMPLEMENTATION_BRIEF), Slice B -->
+- **`check_exportable` never reads `contains_personal_data`.** §20.2's export gate (`artifacts.py`)
+  refuses on taint (Charter C13) and on `commercial_use != "permitted"`, but an artifact whose
+  personal-data status is `"yes"` — or still `"unknown"` — can be exported today, commercially even,
+  if `commercial_use` happens to read `"permitted"`. Fixing the fabricated `False` (this slice) makes
+  the *value* honest; it does not add a *policy* that reads it before allowing an export. SPEC.md
+  §20 doesn't mandate a hard gate here either (§20.1 requires the metadata be tracked; §20.2 only
+  forbids assuming reuse rights), so this was left as a value-correctness fix, not a new control.
+  Whether export should *refuse* on `"yes"`/`"unknown"` the way it already does on `commercial_use`
+  is a real open question, deliberately not decided inside a bug-fix slice.
+- **DNS rebinding is a documented, not closed, gap in `fetchers._check_destination_safe`.** The SSRF
+  guard resolves and classifies a hostname before connecting; `urllib` re-resolves the same hostname
+  itself a few instructions later when it actually opens the socket, so a DNS answer that changes
+  between the two lookups is not covered. Closing it needs a fetcher that connects to the literal
+  address it just validated (with the original hostname kept for the Host header / TLS SNI) rather
+  than a hostname a second resolution could change. Not built — the brief explicitly allows
+  documenting this limitation rather than closing it in the same slice.

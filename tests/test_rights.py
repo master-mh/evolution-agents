@@ -53,7 +53,7 @@ def conn():
 
 
 class FakeFetcher:
-    def __init__(self, *, commercial_use="unknown", licence="unknown", personal=False):
+    def __init__(self, *, commercial_use="unknown", licence="unknown", personal="unknown"):
         self.commercial_use, self.licence, self.personal = commercial_use, licence, personal
 
     def fetch(self, url, *, max_bytes):
@@ -296,7 +296,7 @@ def test_charter_c13_refuses_regardless_of_any_attestation(conn):
         conn, cell_id=cell.cell_id, kind="report", title="Tainted", content="x",
         own_provenance=artifacts.Provenance(
             licence="colony-authored", permitted_uses="none", commercial_use="unknown",
-            contains_personal_data=False, retention_rule="n/a", source_summary="sim",
+            contains_personal_data="no", retention_rule="n/a", source_summary="sim",
             taint_labels=(artifacts.TAINT_SIM_ADVERSARIAL,),
         ),
     )
@@ -355,7 +355,7 @@ def test_a_producer_may_not_declare_its_own_content_commercially_permitted(conn)
             conn, cell_id=cell.cell_id, kind="report", title="Self-granted", content="mine",
             own_provenance=artifacts.Provenance(
                 licence="colony-authored", permitted_uses="anything",
-                commercial_use="permitted", contains_personal_data=False,
+                commercial_use="permitted", contains_personal_data="no",
                 retention_rule="n/a", source_summary="", taint_labels=(),
             ),
         )
@@ -373,7 +373,7 @@ def test_a_producer_may_still_declare_its_own_content_prohibited(conn):
         conn, cell_id=cell.cell_id, kind="report", title="Careful", content="mine",
         own_provenance=artifacts.Provenance(
             licence="colony-authored", permitted_uses="internal only",
-            commercial_use="prohibited", contains_personal_data=False,
+            commercial_use="prohibited", contains_personal_data="no",
             retention_rule="n/a", source_summary="", taint_labels=(),
         ),
     )

@@ -542,7 +542,7 @@ def _observations_section(conn: sqlite3.Connection, cell: Cell) -> Section | Non
                     f"  retrieved: {item['retrieved_at_utc']}",
                     f"  licence: {item['licence']} "
                     f"(commercial use: {item['commercial_use']})",
-                    f"  personal data: {'yes' if item['contains_personal_data'] else 'no'}",
+                    f"  personal data: {item['contains_personal_data'] or 'unknown'}",
                     "  --- begin external content ---",
                     (item["result_text"] or ""),
                     "  --- end external content ---",

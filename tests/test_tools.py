@@ -59,7 +59,7 @@ class FakeFetcher:
             licence="unknown",
             permitted_uses="review only",
             commercial_use="unknown",
-            contains_personal_data=False,
+            contains_personal_data="unknown",
         )
 
 
@@ -759,6 +759,7 @@ def test_a_result_records_its_data_rights(conn):
     ).fetchone()
     assert row["source"] == URL
     assert row["commercial_use"] == "unknown"
+    assert row["contains_personal_data"] == "unknown"
     assert row["taint_label"] == tool_registry.TAINT_UNTRUSTED_EXTERNAL
     assert len(row["result_sha256"]) == 64
 

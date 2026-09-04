@@ -103,6 +103,12 @@ EXPORT_BLOCKING_TAINTS: frozenset[str] = frozenset({TAINT_SIM_ADVERSARIAL})
 #: averaged away by a permitted one.
 COMMERCIAL_USE_PRECEDENCE: tuple[str, ...] = ("prohibited", "unknown", "permitted")
 
+#: §20.1 `contains personal data`, most restrictive first — same shape and
+#: same reason as COMMERCIAL_USE_PRECEDENCE: one source saying "yes" must not
+#: be averaged away by others saying "no", and "no" itself must not be
+#: claimed for an artifact that has any unclassified contribution.
+PERSONAL_DATA_PRECEDENCE: tuple[str, ...] = ("yes", "unknown", "no")
+
 #: What a Cell may produce. Free text would make the artifact index unreadable
 #: and §12's behavioural descriptors ungroupable; §28's Phase 8 names these.
 ARTIFACT_KINDS: frozenset[str] = frozenset(
@@ -147,7 +153,9 @@ class Artifact:
     licence: str
     permitted_uses: str
     commercial_use: str
-    contains_personal_data: bool
+    #: Tri-state — 'yes' / 'no' / 'unknown' — like `commercial_use`. See
+    #: `PERSONAL_DATA_PRECEDENCE`.
+    contains_personal_data: str
     retention_rule: str
     source_summary: str
     exported_at_utc: datetime | None
@@ -166,7 +174,7 @@ class Provenance:
     licence: str
     permitted_uses: str
     commercial_use: str
-    contains_personal_data: bool
+    contains_personal_data: str
     retention_rule: str
     source_summary: str
     taint_labels: tuple[str, ...]
@@ -206,7 +214,9 @@ COLONY_AUTHORED = Provenance(
     # wrote is a question for a person. Until ADR-041 nothing could ask one, so
     # this default was also the permanent answer.
     commercial_use="unknown",
-    contains_personal_data=False,
+    # A real "no", not a fabricated one: with no external sources at all
+    # there is nothing this could have inherited personal data from.
+    contains_personal_data="no",
     retention_rule="retain until superseded",
     source_summary="no external sources",
     taint_labels=(),
@@ -238,8 +248,8 @@ def _attested(conn: sqlite3.Connection, recorded: Provenance, *, url: str) -> Pr
     )
 
 
-def _most_restrictive(values: list[str]) -> str:
-    for candidate in COMMERCIAL_USE_PRECEDENCE:
+def _most_restrictive(values: list[str], precedence: tuple[str, ...]) -> str:
+    for candidate in precedence:
         if candidate in values:
             return candidate
     return "unknown"
@@ -297,8 +307,12 @@ def inherit_provenance(
     return Provenance(
         licence=licences[0] if len(licences) == 1 else "mixed: " + ", ".join(licences),
         permitted_uses=" | ".join(sorted({c.permitted_uses for c in contributions})),
-        commercial_use=_most_restrictive([c.commercial_use for c in contributions]),
-        contains_personal_data=any(c.contains_personal_data for c in contributions),
+        commercial_use=_most_restrictive(
+            [c.commercial_use for c in contributions], COMMERCIAL_USE_PRECEDENCE
+        ),
+        contains_personal_data=_most_restrictive(
+            [c.contains_personal_data for c in contributions], PERSONAL_DATA_PRECEDENCE
+        ),
         retention_rule=" | ".join(sorted({c.retention_rule for c in contributions})),
         source_summary="; ".join(
             sorted({c.source_summary for c in contributions if c.source_summary})
@@ -315,10 +329,11 @@ def provenance_of_tool_call(conn: sqlite3.Connection, tool_call_id: str) -> Prov
     do not, once an operator has attested the source** — `_attested` overlays
     their position for the host, so this returns what the colony currently
     believes about the page rather than only what the fetch could tell.
-    A fetched page is `unknown` on licence and commercial use by construction
-    (see `fetchers.py`), which is what made anything derived from one `unknown`
-    too — and unsellable "until a person says otherwise". This is where a person
-    says otherwise:
+    A fetched page is `unknown` on licence, commercial use, *and* personal-data
+    status by construction (see `fetchers.py`) — none of them were determined,
+    only `licence`/`commercial_use`/`permitted_uses` are attestable, and
+    anything derived from an `unknown` page inherits it too, unsellable "until
+    a person says otherwise". This is where a person says otherwise:
     `_attested` overlays an operator's position for the source's host, so this
     returns what the colony *currently believes* about the page rather than only
     what the fetch reported.
@@ -342,7 +357,7 @@ def provenance_of_tool_call(conn: sqlite3.Connection, tool_call_id: str) -> Prov
         licence=row["licence"] or "unknown",
         permitted_uses=row["permitted_uses"] or "unknown",
         commercial_use=row["commercial_use"] or "unknown",
-        contains_personal_data=bool(row["contains_personal_data"]),
+        contains_personal_data=row["contains_personal_data"] or "unknown",
         retention_rule="follows source",
         source_summary=row["source"] or "unknown",
         taint_labels=(row["taint_label"],) if row["taint_label"] else (),
@@ -474,7 +489,7 @@ def _provenance_from_json(raw: str | None) -> Provenance | None:
         licence=data["licence"],
         permitted_uses=data["permitted_uses"],
         commercial_use=data["commercial_use"],
-        contains_personal_data=bool(data["contains_personal_data"]),
+        contains_personal_data=data["contains_personal_data"],
         retention_rule=data["retention_rule"],
         source_summary=data["source_summary"],
         taint_labels=tuple(data["taint_labels"]),
@@ -593,7 +608,7 @@ def _create_locked(
             provenance.licence,
             provenance.permitted_uses,
             provenance.commercial_use,
-            1 if provenance.contains_personal_data else 0,
+            provenance.contains_personal_data,
             provenance.retention_rule,
             provenance.source_summary,
             # Stored apart from the fold so `effective_provenance` can rebuild
@@ -856,7 +871,7 @@ def _row_to_artifact(row: sqlite3.Row) -> Artifact:
         licence=row["licence"],
         permitted_uses=row["permitted_uses"],
         commercial_use=row["commercial_use"],
-        contains_personal_data=bool(row["contains_personal_data"]),
+        contains_personal_data=row["contains_personal_data"],
         retention_rule=row["retention_rule"],
         source_summary=row["source_summary"],
         exported_at_utc=(

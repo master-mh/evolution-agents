@@ -168,7 +168,10 @@ class FetchResult:
     licence: str
     permitted_uses: str
     commercial_use: str
-    contains_personal_data: bool
+    #: Tri-state like `commercial_use` — 'yes' / 'no' / 'unknown' — for the
+    #: same reason: a fetcher that has not classified a page and writes a
+    #: default anyway is manufacturing a rights position it does not have.
+    contains_personal_data: str
 
 
 class Fetcher(Protocol):

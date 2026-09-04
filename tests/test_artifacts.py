@@ -39,7 +39,7 @@ def conn():
 
 
 class FakeFetcher:
-    def __init__(self, *, commercial_use="unknown", personal=False):
+    def __init__(self, *, commercial_use="unknown", personal="unknown"):
         self.commercial_use, self.personal = commercial_use, personal
 
     def fetch(self, url, *, max_bytes):
@@ -213,8 +213,8 @@ def test_the_most_restrictive_source_wins(conn):
     a restriction by citing enough permissive material alongside it."""
     merged = artifacts.inherit_provenance(
         [
-            artifacts.Provenance("CC0", "any", "permitted", False, "keep", "a", ()),
-            artifacts.Provenance("All rights", "none", "prohibited", False, "keep", "b", ()),
+            artifacts.Provenance("CC0", "any", "permitted", "no", "keep", "a", ()),
+            artifacts.Provenance("All rights", "none", "prohibited", "no", "keep", "b", ()),
         ]
     )
     assert merged.commercial_use == "prohibited"
@@ -224,14 +224,27 @@ def test_personal_data_and_taint_are_unions(conn):
     """§18.1/§20.1: one source carrying personal data taints the derivative."""
     merged = artifacts.inherit_provenance(
         [
-            artifacts.Provenance("a", "x", "permitted", False, "k", "a", ("PUBLIC_SAFE",)),
+            artifacts.Provenance("a", "x", "permitted", "no", "k", "a", ("PUBLIC_SAFE",)),
             artifacts.Provenance(
-                "b", "y", "permitted", True, "k", "b", ("UNTRUSTED_EXTERNAL",)
+                "b", "y", "permitted", "yes", "k", "b", ("UNTRUSTED_EXTERNAL",)
             ),
         ]
     )
-    assert merged.contains_personal_data is True
+    assert merged.contains_personal_data == "yes"
     assert set(merged.taint_labels) == {"PUBLIC_SAFE", "UNTRUSTED_EXTERNAL"}
+
+
+def test_an_unclassified_source_is_not_averaged_into_no(conn):
+    """§20.1: an artifact built partly on a fetched (unclassified) page must
+    not read as a confirmed 'no' just because its other sources are clean --
+    the honest most-restrictive answer is 'unknown', not the majority vote."""
+    merged = artifacts.inherit_provenance(
+        [
+            artifacts.Provenance("a", "x", "permitted", "no", "k", "a", ()),
+            artifacts.Provenance("b", "y", "permitted", "unknown", "k", "b", ()),
+        ]
+    )
+    assert merged.contains_personal_data == "unknown"
 
 
 def test_an_artifact_citing_nothing_is_not_automatically_sellable(conn):

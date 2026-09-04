@@ -568,7 +568,7 @@ def _finish_success(
                 result.licence,
                 result.permitted_uses,
                 result.commercial_use,
-                1 if result.contains_personal_data else 0,
+                result.contains_personal_data,
                 text,
                 result_bytes,
                 digest,

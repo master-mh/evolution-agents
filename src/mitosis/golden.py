@@ -1196,7 +1196,30 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #             byte-identical. `model_calls`/`resource_usage`/every ledger
 #             balance are untouched — the new column adds no cost, because
 #             nothing in the scenario ever writes to it.
-EXPECTATION_VERSION = 37
+#
+#   37 -> 38 (`contains_personal_data` becomes tri-state — 'yes'/'no'/'unknown'
+#             instead of a boolean; implementation brief Slice B). **Two kinds
+#             of change, confirmed independently.** `tool_calls` and
+#             `artifacts` each move on exactly one field,
+#             `contains_personal_data`, from `0` to `"unknown"` — the fetcher
+#             never classified anything, so `_GoldenFetcher` reporting
+#             `False` was the same fabricated negative as the real one
+#             (fixed in the same slice). **Nothing else on either table
+#             moved.** Separately, `deliberations.context_tokens`,
+#             `model_calls.input_tokens` and `resource_usage.quantity` each
+#             shift by a small constant (+2 or +3) on exactly the 7 rows
+#             downstream of the Cell that reads a fetched page back in its
+#             own context — `context.py` now renders "personal data: unknown"
+#             (7 characters) where it rendered "personal data: no" (2) before,
+#             and `providers._estimate_tokens` prices `MockProvider` calls as
+#             a deterministic function of text length (same mechanism as
+#             version 35->36's prompt-length shift). No `output_tokens`
+#             (the mock reply is a fixed literal), no `cost_actual_micro_usd`
+#             (MockProvider is priced at zero), and no `balances` row moved —
+#             confirmed by a full section-by-section diff, not assumed from
+#             the hash mismatch: every other section is byte-identical to
+#             version 37.
+EXPECTATION_VERSION = 38
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -1426,7 +1449,7 @@ class _GoldenFetcher:
             licence="unknown",
             permitted_uses="review only; no storage, redistribution or training",
             commercial_use="unknown",
-            contains_personal_data=False,
+            contains_personal_data="unknown",
         )
 
 

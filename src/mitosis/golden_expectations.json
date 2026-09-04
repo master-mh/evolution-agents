@@ -1,5 +1,5 @@
 {
-  "expectation_version": 37,
+  "expectation_version": 38,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "9fd00cce73cef50756a065abb8907ae135458b045f4236265c6fa131c5643961",
+  "semantic_hash": "64457b88f952fbf212e4aaae22a66d7f0c963c8befcf72a96e26ddedec91b1e5",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -155,7 +155,7 @@
       {
         "cell": "cell#4",
         "commercial_use": "unknown",
-        "contains_personal_data": 0,
+        "contains_personal_data": "unknown",
         "content_bytes": 55,
         "export_is_commercial": 0,
         "exported": true,
@@ -407,7 +407,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 809,
+        "context_tokens": 811,
         "failure_reason": null,
         "made_model_call": true,
         "made_repair_call": false,
@@ -417,7 +417,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 992,
+        "context_tokens": 994,
         "failure_reason": null,
         "made_model_call": true,
         "made_repair_call": false,
@@ -437,7 +437,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 1020,
+        "context_tokens": 1022,
         "failure_reason": null,
         "made_model_call": true,
         "made_repair_call": false,
@@ -447,7 +447,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 1052,
+        "context_tokens": 1054,
         "failure_reason": null,
         "made_model_call": true,
         "made_repair_call": false,
@@ -467,7 +467,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 1080,
+        "context_tokens": 1082,
         "failure_reason": null,
         "made_model_call": true,
         "made_repair_call": false,
@@ -477,7 +477,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 1080,
+        "context_tokens": 1082,
         "failure_reason": null,
         "made_model_call": true,
         "made_repair_call": false,
@@ -487,7 +487,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 1016,
+        "context_tokens": 1018,
         "failure_reason": null,
         "made_model_call": true,
         "made_repair_call": false,
@@ -858,7 +858,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3428,
+        "input_tokens": 3431,
         "mirror_minor_units": 0,
         "output_tokens": 269,
         "pricing_table_version": "2026-07-27",
@@ -874,7 +874,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3910,
+        "input_tokens": 3913,
         "mirror_minor_units": 0,
         "output_tokens": 216,
         "pricing_table_version": "2026-07-27",
@@ -906,7 +906,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3995,
+        "input_tokens": 3998,
         "mirror_minor_units": 0,
         "output_tokens": 225,
         "pricing_table_version": "2026-07-27",
@@ -922,7 +922,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 4059,
+        "input_tokens": 4062,
         "mirror_minor_units": 0,
         "output_tokens": 218,
         "pricing_table_version": "2026-07-27",
@@ -954,7 +954,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 4113,
+        "input_tokens": 4116,
         "mirror_minor_units": 0,
         "output_tokens": 224,
         "pricing_table_version": "2026-07-27",
@@ -970,7 +970,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 4113,
+        "input_tokens": 4116,
         "mirror_minor_units": 0,
         "output_tokens": 225,
         "pricing_table_version": "2026-07-27",
@@ -986,7 +986,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 3955,
+        "input_tokens": 3958,
         "mirror_minor_units": 0,
         "output_tokens": 236,
         "pricing_table_version": "2026-07-27",
@@ -1648,7 +1648,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3428,
+        "quantity": 3431,
         "resource_type": "input_tokens"
       },
       {
@@ -1660,7 +1660,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3910,
+        "quantity": 3913,
         "resource_type": "input_tokens"
       },
       {
@@ -1690,7 +1690,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3995,
+        "quantity": 3998,
         "resource_type": "input_tokens"
       },
       {
@@ -1708,7 +1708,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 4059,
+        "quantity": 4062,
         "resource_type": "input_tokens"
       },
       {
@@ -1738,7 +1738,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 4113,
+        "quantity": 4116,
         "resource_type": "input_tokens"
       },
       {
@@ -1750,7 +1750,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 4113,
+        "quantity": 4116,
         "resource_type": "input_tokens"
       },
       {
@@ -1762,7 +1762,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 3955,
+        "quantity": 3958,
         "resource_type": "input_tokens"
       },
       {
@@ -1851,7 +1851,7 @@
         },
         "cell": "cell#4",
         "commercial_use": "unknown",
-        "contains_personal_data": 0,
+        "contains_personal_data": "unknown",
         "http_status": 200,
         "licence": "unknown",
         "result_bytes": 51,

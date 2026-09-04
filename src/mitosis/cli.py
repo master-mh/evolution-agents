@@ -1301,7 +1301,7 @@ def cmd_artifacts(args: argparse.Namespace) -> None:
         print(f"    hash:  {row['artifact_hash'][:16]}…  ({row['content_bytes']} bytes, {state})")
         print(f"    cell:  {row['created_by_cell_id']}")
         print(f"    §20.1: licence={row['licence']}  commercial_use={row['commercial_use']}  "
-              f"personal_data={'yes' if row['contains_personal_data'] else 'no'}")
+              f"personal_data={row['contains_personal_data']}")
         print(f"    §18.1: {', '.join(taints)}")
     conn.close()
 
@@ -1325,7 +1325,7 @@ def cmd_artifact(args: argparse.Namespace) -> None:
     print(f"    licence:        {artifact.licence}")
     print(f"    permitted uses: {artifact.permitted_uses}")
     print(f"    commercial use: {artifact.commercial_use}")
-    print(f"    personal data:  {'yes' if artifact.contains_personal_data else 'no'}")
+    print(f"    personal data:  {artifact.contains_personal_data}")
     print(f"    retention:      {artifact.retention_rule}")
     print(f"    sources:        {artifact.source_summary}")
     print(f"    §18.1 taint:    {', '.join(artifact.taint_labels) or 'none'}")
