@@ -4314,3 +4314,81 @@ in the same wake.
 - **1172 tests and the golden run green.** Golden expectations moved 36 -> 37: no scenario reply is
   malformed, so every deliberation's new `made_repair_call` field is `False` and nothing else in
   the snapshot moved — confirmed by a full section-by-section diff before regenerating, not assumed.
+
+## ADR-070: Parse-repair is *not* extended to the Auditors or `call-model` — the mechanism's premise (reformat, don't re-judge) is what excludes them
+
+- **Status:** Accepted; docstring correction in `auditor.py`, no other code change
+- **Spec ref:** §23.2, §10.4, §24.1; ADR-067 (scope precedent), ADR-069 (the mechanism)
+
+- **Context:** ADR-069 built a bounded parse-repair retry in `deliberation.py`. Its BUILD_RECORD
+  "Next" line named three call sites that got none of it — `auditor.py`, `content_audit.py`, and
+  `cli.py`'s `call-model` — as "scoped out the same way ADR-067 scoped temperature to
+  `deliberation.py` only … an unargued follow-up, not a gap." This ADR is that argument, made once
+  so the refusal is on record rather than re-derived every time someone re-reads the three sites and
+  notices they share deliberation's shape. The conclusion is: **do not port.** The three sites are
+  not one follow-up; they split into two decisively different cases, and neither wants the retry.
+
+### `cli.py` `call-model` is not scoped-out — it is *inapplicable*
+
+`cmd_call_model` takes a freeform `--prompt` and optional freeform `--system` and prints
+`call.response_text` **raw**. There is no `parse()`, no schema, no `ProposalError`. A parse-repair
+re-prompt names "the specific validation error"; here there is no validation and no error to name.
+Listing this verb alongside the other two overstated the size of the open work — it belongs on no
+follow-up list at all. Struck.
+
+### The Auditors *look* identical to deliberation, and the resemblance is the trap
+
+`auditor.audit_request` and `content_audit` share deliberation's exact shape: a paid
+`gateway.call_model` -> a strict `_parse` -> on failure a **recorded rejection** carrying the
+`model_call_id`. The mechanism from ADR-069 would drop in with almost no friction. Three things say
+it should not, and the first is decisive:
+
+- **The `_parse` error is not only a formatting fault — it also fires on an *incoherent verdict*.**
+  Both `_parse` functions raise for two distinct causes: malformed JSON / schema violation, *and* a
+  self-contradictory judgement — `concern` with probability above the coherence midpoint,
+  `no_concern` with probability below it (`auditor._parse`, `content_audit._parse`). A repair
+  re-prompt echoes that error back and asks for another try. For deliberation that means "reformat
+  your proposal." For an Auditor a coherence error means "your verdict contradicts itself" — and
+  re-prompting to fix *that* is asking the judge to reconcile a contradiction it already expressed.
+  That is coaching the oversight mechanism, not reformatting a reply. §23.2 and §10.4 make the
+  Auditor's entire value its independence, produced once; a kernel that nudges the verdict until it
+  validates has quietly turned a one-shot independent judgement into a negotiated one.
+
+- **The salvage value is lower.** A deliberation that fails to parse loses a **proposal** — the core
+  economic output the whole loop exists to produce. A failed audit is *already* absorbed as a
+  recorded rejected-audit; the approval path still has the fact that an Auditor was paid and
+  produced nothing usable, and can route accordingly. Same bounded two-call cost, smaller upside.
+
+- **ADR-067's precedent puts the burden on the extension, not the scope.** BUILD_RECORD cited
+  ADR-067 (temperature scoped to `deliberation.py`) precisely because scoping-to-one-module was a
+  *considered* refusal, not an oversight. The extension has to earn itself; on the two points above
+  it does not.
+
+### The stale claim this surfaced
+
+`auditor._parse`'s docstring asserted its strictness was "the same policy `deliberation` applies:
+never repair a half-understood judgement." As of ADR-069 that parallel is **false** —
+`deliberation` now repairs once before recording. This is the recurring claim-drift shape in this
+repo: a comment naming a *behaviour of another module* that a later slice changed, with no test
+defending the claim. The fix is not to delete the line but to invert it into the deliberate
+divergence this ADR records — which is the one code change this ADR carries. `content_audit._parse`
+carried no such claim and needed no edit.
+
+### What it displaced
+
+- **Porting the ADR-069 mechanism to all three sites.** Rejected per the argument above: inapplicable
+  at `call-model`, and premise-violating at the Auditors (repair reformats; it must not re-judge).
+- **Porting to the Auditors only, reasoning that they share deliberation's call/parse/record shape.**
+  Rejected: the shared shape is real but the `_parse` error is not — its coherence branch makes a
+  repair a re-judgement, which the format-only repair in `deliberation` never is.
+- **Splitting the Auditor `_parse` error into "format" (repairable) and "coherence" (not).** Rejected
+  as more machinery than the upside warrants (point 2) and as still nudging an independent verdict on
+  the format branch; the honest line is no repair for an oversight output, stated once.
+- **Leaving the follow-up unargued in BUILD_RECORD.** Rejected: an unargued "not a gap" invites the
+  same rediscovery every session. Recording the refusal *is* the deliverable, matching this repo's
+  habit of writing down what it chose not to build and why (ADR-046's dead-socket precedent).
+
+### Verification
+
+- **No behavioural change to verify** — the decision is to build nothing. Full suite stays green
+  (the docstring edit touches no code path). The teeth of this ADR are in the record, not a test.

@@ -1620,11 +1620,14 @@ actually queued for building — this file is memory, not a backlog to work thro
   proposals per wake alongside raw parse rate (the ADR-050 lesson about not optimising toward a mute
   colony applies here too — a repair that "fixes" every reply into the same boilerplate proposal
   would raise parse rate while making the diversity problem worse).
-- **`auditor.py`/`content_audit.py`/`cli.py`'s `call-model` get no parse-repair retry.** Scoped the
-  same way ADR-067 scoped the temperature socket to `deliberation.py` only — those are
-  operator-composed §10.4 judgments, not the agent loop this mechanism was built for. Auditor
-  replies already go through a comparable strict parse (`content_audit._parse`); whether they'd
-  benefit from the same repair is an open, unargued question.
+- **`auditor.py`/`content_audit.py`/`cli.py`'s `call-model` get no parse-repair retry.** ~~Scoped the
+  same way ADR-067 scoped the temperature socket to `deliberation.py` only … whether they'd
+  benefit from the same repair is an open, unargued question.~~ **Argued and closed 2026-09-04
+  (ADR-070): don't port.** `call-model` is *inapplicable* (no `parse()` — it prints raw text); the
+  Auditors are *excluded on principle* because their `_parse` error also fires on an incoherent
+  verdict, so a repair there re-judges rather than reformats, and §23.2/§10.4 make the verdict's
+  value its once-produced independence. The stale docstring in `auditor._parse` that claimed parity
+  with `deliberation` was inverted to record the divergence.
 - **No `mitosis`-level report of how often a wake needed a repair.** `deliberations.
   repair_model_call_id IS NOT NULL` already answers "how many" from the CLI or a direct query; a
   dedicated `mitosis repair-rate`-style verb is additive and not built ahead of a reason to want one.

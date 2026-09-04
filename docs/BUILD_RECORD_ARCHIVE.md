@@ -6,6 +6,65 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-03 — A bounded, single parse-repair retry
+
+`deliberation.py` + migration 0033 + `cli.py` + 7 new tests + golden 36 -> 37 (ADR-069). **An
+unparseable reply now gets exactly one re-prompt, naming the specific validation error, before the
+wake is recorded as a loss.** PRIORITIES had carried this since ADR-049 as "the standard remedy,
+deliberately unbuilt" — gated on "the model question above" being settled. It settled in the
+negative (`qwen2.5` unusable on this hardware), which is what unblocked the gate.
+
+### Not the retry `gateway.py` already scoped and declined
+
+`gateway.py`'s docstring already ruled out one kind of retry — re-attempting a call whose *billing
+status* is ambiguous (`execution_unknown`), which risks double-billing and needs reconciliation
+this kernel does not have. A parse-repair retry is a different thing: the first call is known to
+have succeeded and been billed (it returned text; `ProposalError` only fires after that), so what
+needs fixing is the *reply*, not the call. It is therefore a wholly new, separately-priced,
+separately-capped `gateway.call_model` invocation — the same category §24's intro line also names
+("validates structured output"), which already lives in `deliberation.py`/`proposal.py` rather
+than the gateway.
+
+### Bounded to exactly one attempt, and best-effort by construction
+
+`MAX_PARSE_REPAIR_ATTEMPTS = 1` — PRIORITIES' own "it pays twice for a prompt bug" is the accepted,
+bounded cost; unbounded would turn a persistently broken prompt into an unbounded per-wake cost
+multiplier. `_attempt_parse_repair` wraps the whole attempt in a broad `except Exception`: any
+failure of the attempt itself (an exhausted cap, an unpriced model) degrades to exactly the
+pre-repair UNPARSEABLE outcome — `deliberate()` never raises where it did not raise before this
+existed, mirroring `_unfunded_books`' own "a refusal costs nothing and is recorded" reasoning.
+
+### One nullable column, not a second `model_call_id`
+
+A repaired deliberation genuinely makes two billed calls. `deliberations.repair_model_call_id`
+(migration 0033) is `NULL` for the overwhelming majority — every deliberation that parses first
+try — and named only when a second call was made. A plain nullable `TEXT REFERENCES` column is a
+legal SQLite `ALTER TABLE ADD COLUMN`, so this needed no rebuild the way migration 0032
+(`proposals.risk_tier`) did.
+
+### Verification
+
+- **7 new tests in `test_deliberation.py`; teeth-checked.** Disabling the wiring in `deliberate()`'s
+  except-branch failed the two tests defending the headline behaviour (a repaired PROPOSED outcome,
+  and the two-call bound on a persistently bad reply) with clean, specific assertion failures.
+- **1172 tests and the golden run green.** Golden expectations moved 36 -> 37: one added boolean
+  field (`made_repair_call`) on every `deliberations` row, `False` everywhere — no scenario reply is
+  malformed, so nothing in the fixture ever reaches this mechanism. Confirmed by a full
+  section-by-section diff before regenerating, not assumed from the hash mismatch alone.
+- No live measurement of the actual parse-rate lift was run — logged in FUTURE_BUILD_HOOKS as a
+  separate, reviewable act with its own arms and sample size, matching ADR-067's precedent for the
+  temperature socket.
+### Follow-up (same day, post-slice critique): the catch is narrowed
+
+A critique of the slice caught that `_attempt_parse_repair`'s `except Exception` was a *blanket*
+catch — it degraded genuine faults (a bug in the repair path, a locked DB) to a silent UNPARSEABLE
+row with the traceback buried in `failure_reason`, uncatchable by any test that drives a working
+provider. Narrowed to `_REPAIR_UNATTEMPTABLE_ERRORS` (gateway/reservations/breaker refusals only);
+everything else propagates, matching the first, unwrapped `gateway.call_model` in `deliberate()`.
+New test `test_a_bug_in_the_repair_path_propagates_rather_than_masquerading` (teeth-checked against
+the blanket catch); the fallback test now raises a real `RealSpendCapExceededError`. 1175 tests and
+golden green; golden unchanged (the repair path is never hit in the fixture). ADR-069 amended.
+
 ## 2026-08-28 — §12.1's third dimension is declared, and the mechanism already existed
 
 Migration 0029 + `counterparty.attest_buyer_type` + 15 tests + `set-buyer-type`/`buyers` + golden

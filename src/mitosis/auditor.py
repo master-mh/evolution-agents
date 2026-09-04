@@ -475,13 +475,25 @@ def _validated_auditor(
 
 
 def _parse(raw_text: str) -> AuditReply:
-    """Strict, and never salvaged into a best effort.
+    """Strict, and never salvaged into a best effort — not even the one
+    bounded re-prompt `deliberation` now allows.
 
     Raises, and `audit_request` turns that into a *recorded* rejection rather
     than propagating it — the reply is refused, but the fact that an Auditor
-    bought a model call and produced nothing usable is kept. Strictness here
-    and recording there are the same policy `deliberation` applies: never
-    repair a half-understood judgement, always remember that it happened.
+    bought a model call and produced nothing usable is kept.
+
+    This once matched `deliberation`'s policy exactly. As of ADR-069
+    `deliberation` diverged: an unparseable proposal now gets a single
+    parse-repair re-prompt before it is recorded as a loss. That divergence is
+    deliberate and does *not* extend here (ADR-070). The error this raises is
+    not only a formatting fault — it also fires on an *incoherent* verdict
+    (`concern` with high probability of success, `no_concern` with low; see
+    below). Re-prompting a Cell to reformat its own proposal is reformatting;
+    re-prompting an Auditor to fix a contradiction in its own verdict is
+    coaching the judge, and §23.2/§10.4 make the Auditor's value its
+    independence, produced once. So strictness-and-record stays the whole
+    policy here: never repair a half-understood judgement, always remember it
+    happened.
     """
     text = proposal_module._strip_code_fence(raw_text)
     try:
