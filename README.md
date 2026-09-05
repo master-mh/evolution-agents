@@ -23,7 +23,8 @@ implemented plumbing is not empirical validation:
 | Phase (directive §28) | State |
 |---|---|
 | 0–1 — kernel, governance | substantially complete |
-| 2–3 — flight simulator, evolutionary validation | **not built or validated** |
+| 2 — flight simulator | seam proven at small scale: one environment family, one deterministic Cell-policy family, one selection policy, reproduction/mutation reaching the real kernel paths. Population/chaos-drill scale, a second environment family, and environment separation are **not yet built** |
+| 3 — evolutionary validation | **not built** — gated on Phase 2's remaining scope |
 | 4 — LLM deliberation loop | substantially implemented |
 | 5–6 — sandboxed execution, richer web observation | absent |
 | 7–8 — human approval ladder, external actions | partial |
@@ -37,7 +38,7 @@ validated self-evolving business colony. [`PRIORITIES.md`](PRIORITIES.md) is can
 |---|---|
 | Tests | full suite (`pytest`), including Hypothesis property tests for the Colony Charter |
 | Golden-run replay | expectation version 38, verified in CI |
-| Schema | 34 numbered migrations |
+| Schema | 35 numbered migrations |
 | Python | 3.11+ |
 | Real money spent to date | 0.19¢, once, deliberately |
 

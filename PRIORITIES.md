@@ -964,4 +964,11 @@
 - [ ] Reconciling resource_usage against actual sandbox/model-gateway logs (Amendment A6's other half). **Half-unblocked 2026-08-22:** the entry said "no such logs exist until Phase 4/5", but the model-gateway half now does — `model_calls` records provider, resolved model, API version and reported usage per call. The *sandbox* half is still genuinely blocked until Phase 5. *Disproved by:* the `model_calls` table.
 
 ## Later
-- [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per directive §28
+- [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
+  directive §28. **Underway, not done**: `src/mitosis/simulation/`'s first slice (ADR-072) proves
+  the seam — one environment family, one deterministic Cell-policy family, one selection policy,
+  reproduction/mutation reaching the real kernel paths, population 20 -> 70 over 50 epochs with
+  conservation intact and zero real spend. Still missing before Phase 2 itself is done: a second
+  environment family, environment separation (§8.1), regime shifts (§8.4), the five real mutation
+  operators (§14.1), chaos drills, and population/benchmark scale. Phase 3 (the other four
+  `SelectionPolicy` implementations, the pre-registered comparisons) has not started.

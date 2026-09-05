@@ -19,99 +19,98 @@ Auditor path for §13.3/§13.4's content judgments, the software_native_advantag
 gate reading a resolved content audit, model_policy's temperature socket,
 risk_tier becoming optional for abstain, the bounded single parse-repair
 retry, the argued refusal to extend it to the Auditors or `call-model`,
-an external audit's clean source-distribution archive, and its egress-boundary
+an external audit's clean source-distribution archive, its egress-boundary
 repair (robots.txt transport, SSRF, honest personal-data status),
-2026-07-21 through 2026-09-04):
+documentation/safety-claim reconciliation, a narrow runtime-defect lint gate,
+and auto-promotion reaching the scheduled `tick`,
+2026-07-21 through 2026-09-05):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-05 — External audit brief, Slices C–E: docs reconciliation, a lint gate, and auto-promotion reaching `tick`
+## 2026-09-05 — Phase 2 flight simulator, first slice: mock Cells decide through the real deliberation pipeline (Slice F, part 1)
 
-Continuing the brief's priority order after Slices A–B (distribution hygiene, egress boundary;
-archived above): documentation repair, a minimal static-analysis gate, then the scheduled-path
-wiring the brief calls out as the last step before the Phase 2 flight simulator becomes the
-gating priority.
+The brief calls this "the highest-value substantive build" and the last gate before real
+evolutionary evidence — SPEC.md's own Amendment A1 already concedes this repo built Phase 4 (the
+LLM loop) before Phase 2, so nothing has ever exercised the kernel's governance/accounting machinery
+at population scale. Given the size, a plan was written first — three parallel research passes over
+the actual current code (genome/lineage/death; selection/novelty/promotion; providers/deliberation/
+revenue), not memory — and approved before any code. `docs/DECISIONS.md`'s ADR-072 is the full
+as-built record, including three places building it refined the plan; this entry is the summary.
 
-### Slice C — documentation/safety-claim reconciliation
+### What shipped
 
-README's Status table carried stale counts (a fixed test/migration/golden-version trio that had
-already drifted once) and a "two separate humans" approval claim the code has never enforced —
-`approval.approve` takes any `decided_by` string, so a single operator approving their own request
-is not code-refused, only discouraged by convention. Rewrote the Status section as a phase-capability
-table plus a **Tests** row that names the mechanism (`pytest`, Hypothesis property tests) instead of
-a number that goes stale on the next commit, and corrected "two separate humans" to "two explicit
-steps" with an audit-trail caveat rather than a code-enforced guarantee. Backed by
-`scripts/check_docs_facts.py` (stdlib-only: migration count from the migrations directory, golden
-expectation version from `golden_expectations.json`, CLI verbs via an AST walk of `cli.py`'s
-`add_parser` calls, README's own referenced verbs via regex) wired into CI so a claim that *can*
-drift automatically fails the build the next time it does, instead of waiting for the next external
-audit to notice.
+New `src/mitosis/simulation/` package (migration 0035 for its own `simulation_runs` audit row,
+`pricing.py` gains a zero-cost `("simulation", "policy-v1")` entry, `cli.py` gains `mitosis
+simulate`). Every birth, death, transaction, experiment, and capital movement goes through the
+*existing* kernel entry points — `lifecycle.create_cell`/`lineage.reproduce`, `ledger
+.post_transaction`, `experiment_grants.start_from_grant`/`experiments.conclude`, `revenue
+.record_revenue`, `scheduler.tick`. The simulator supplies only the decisions nothing in the kernel
+makes today:
 
-### Slice D — a narrow runtime-defect lint gate
+- **`policy.py`** — `SimulationPolicyProvider` implements the existing `providers.ModelProvider`
+  Protocol, so a mock Cell's proposal plugs into `scheduler.tick()` unchanged and still passes
+  through the real proposal schema, risk assessment, and approval queue. Deterministic per call from
+  `(genome content shown this call, a monotonic call counter)`, not per-Cell identity — the Protocol
+  carries none, and two Cells can share a genome hash right after birth.
+- **The plan proposed a new manual approval decider for `spend_request` grants; building it found a
+  cleaner path.** `approval._kernel_tier` has no branch at all for `ProposalKind.EXPERIMENT` — a
+  LOW-claimed, reversible, signal-free one is genuinely `batchable` and auto-approved by the
+  *existing* `autopromotion.sweep()` step ADR-071 already wired into `tick()`. This also explains two
+  reserved sockets already sitting unfilled in the repo: `experiment_grants.FLIGHT_SIMULATOR_RUNG =
+  1` and `experiments.LADDER`'s rung-1 label, verbatim, `"flight simulator"`.
+- **`environment.py`** — `MarketEnvironment` Protocol plus one concrete family
+  (`UtilityMaximizingMarket`): customers buy when a seeded willingness-to-pay meets the genome's
+  declared price. Brief requires >= 2 families; only one ships here.
+- **`mutation.py` / `selection_policy.py`** — the required no-op/control mutation, and
+  `RandomEligibleSelection` (brief Slice G's own policy #1, built here since it is also Slice F's
+  own minimum — some reproduction across niches, not quality-diversity selection). The
+  `SelectionPolicy` Protocol is designed to Slice G's full decision-record shape now, so the other
+  four named policies are additive later rather than a rework.
 
-The brief's claim reproduced exactly: `tools.py`'s `ToolCall.arguments: dict[str, Any]` referenced
-`Any` with no import, a live `NameError` on any code path that called
-`typing.get_type_hints` against that class (confirmed by reverting the one-line fix and getting the
-exact `NameError: name 'Any' is not defined`, before re-fixing). Added `ruff` as a dev dependency
-scoped to `E9,F63,F7,F82` — undefined names and syntax-shaped errors only, **not** the ~339-finding
-broad style sweep a default `ruff check` reports, which stays deliberately unchased in one commit
-per CLAUDE.md. `test_public_type_hints_resolve` pins the guarantee structurally
-(`typing.get_type_hints` on every public class); CI gained both the docs-fact-check and the lint
-gate as separate steps.
+### Three bugs found by running it, not by reading it
 
-### Slice E — wiring `autopromotion.EvidencePromoter` into the scheduled `tick`
+`random.Random()` does not accept a tuple as a seed (every draw was keyed on one; fixed to a stable
+f-string, which — unlike `hash()` — does not depend on `PYTHONHASHSEED`). `experiment_grants
+.start_from_grant` raises two sibling exceptions and only one was caught: `ExperimentConflictError`
+(expected — an approval's own `WAKE_HUMAN_DECISION` follow-up becomes ready only on the *next*
+tick, so a cell often carries two pending grants into one epoch) was handled, but at population >=
+`max_parallel_experiments` (default 20, §9.2's colony-wide slot cap) the sibling
+`ExperimentCapacityError` fired just as often and, uncaught, aborted the whole epoch before anything
+could conclude — stranding every running experiment permanently. A smoke-scale test (population <=
+10) never exercised this; only a manual population=20 run did. And the first invariant check counted
+`Book.USD_REAL` transaction rows, which fails on every run: `gateway.call_model` reserves and
+releases against USD_REAL for *every* call regardless of provider (a same-Cell cash<->committed pair
+netting to zero) — pre-existing bookkeeping, not spend. Fixed to sum `external_expense` activity,
+which is what "zero USD_REAL movement" actually means.
 
-`cli.py::cmd_tick` never passed a `promoter` to `scheduler.tick()`, so an operator who enabled
-`auto_promotion` (§27.1) got proposals deliberated and queued every tick but **nothing ever
-allocated** unless they separately remembered to run the standalone `mitosis auto-promote` verb by
-hand — the flag looked live and silently wasn't, on the one path (`cron` + `tick`) an unattended
-colony actually runs. One line (`promoter=autopromotion.EvidencePromoter()`), leaning entirely on
-`autopromotion.sweep()`'s own pre-existing flag gate and guard coverage (ADR-063) — nothing new to
-build, only a missing call site.
+### A gap fixed while building
 
-**Reading the guards changed what "on" needed to test.** `approval._kernel_tier` unconditionally
-floors a `spend_request` at `RiskTier.MEDIUM` regardless of what the Cell claims, and
-`RequestStatus.batchable` requires `assessed_tier is RiskTier.LOW` — so **no `spend_request` can
-ever be batchable**, and `sweep()`'s own `approve_batch()` step can therefore never auto-approve
-one, flag on or off. Since `promotion.allocate()` also requires the grant's proposal be exactly
-`spend_request` (the only kind that moves capital), approval and allocation never meet inside one
-unattended sweep for this proposal kind: a human approves (`approval.approve()`, exactly as today),
-and what this slice adds is that *allocating* that already-approved grant — moving the money, waking
-the Cell — now reaches an ordinary scheduled tick instead of requiring the standalone verb. Written
-up as ADR-071, since the brief's own phrasing ("approves and allocates") described a scenario that
-turns out to be unbuildable in good faith without loosening a live safety floor nobody asked to
-revisit.
+`lineage.reproduce()` funds a child only in the parent's own book — a child born this way had no
+USD_REAL/RESOURCE balance and would be permanently unschedulable. Every reproduction now also funds
+the child's scheduler-eligibility sliver from `seed_bank`, same as founding. Confirmed live:
+population 20 -> 70 over 50 epochs, children actually woken and participating in later epochs, not
+just present as inert rows.
 
-#### Verification
+### Verification
 
-- **7 new tests** (`tests/test_scheduler_autopromotion.py`): flag off leaves an approved grant
-  un-allocated; flag on allocates it; the same property proven **end-to-end through `cli.main`**,
-  not just `scheduler.tick()` directly — every other test passes its own `promoter` by hand, so only
-  the CLI-level test actually pins `cmd_tick`'s call site; a HIGH-tier request stays queued for a
-  person even with auto-promotion on; vacation mode blocks the promoter before deliberation even
-  runs (a paid, unreachable `_Boom.complete` proves it); ticking twice does not double-allocate;
-  a structural AST test pins that `scheduler.py` still imports none of
-  `autopromotion`/`promotion`/`outcome` (the dependency inversion CLAUDE.md names explicitly).
-- **Three teeth-checks, each mutate → confirm the specific test fails for the stated reason → restore
-  verbatim (never `git checkout`, working tree held in memory).** Removing `cmd_tick`'s `promoter=`
-  line failed only the CLI-level test — every direct-`scheduler.tick()` test kept passing, which is
-  exactly the gap that test exists to close. Reintroducing a `promotion` import into `scheduler.py`
-  failed the structural test by name. Neutering the vacation guard (`if False and is_paid and
-  is_on_vacation(...)`) **surfaced two real bugs in the test itself before it could confirm
-  anything**: `list == ()` is unconditionally `False` in Python regardless of contents (every
-  `allocatable_grants`/`list_promotions` call returns a `list`, so four assertions across the file
-  were comparing against the wrong empty-container literal and would have failed even in the
-  passing case, or — worse — silently proven nothing when written the other direction), and the
-  vacation test's own paid `_Boom` provider tripped the *earlier* `real_spending`-disabled guard
-  first, never reaching vacation at all, mirroring the exact confound
-  `test_an_absent_operator_pauses_paid_work_but_not_free_work` in `tests/test_scheduler.py` already
-  guards against with `scheduler.set_real_spending(conn, True)`. Both fixed, then the same mutation
-  re-run to confirm the *fixed* test fails for the right reason before restoring the guard.
-- Full suite **1239 passed** (up from 1232 at the end of Slice D — 7 new); golden run unaffected
-  (hash unchanged at 38, as expected — this slice touches `cli.py` and tests only, no scenario or
-  kernel-semantics change); `ruff check .` and `scripts/check_docs_facts.py` both clean.
+- 12 new tests (`tests/test_simulation.py`): same-seed determinism (byte-identical manifests except
+  `run_id`); the `external_expense` invariant; population growth through the real reproduction path
+  (population raised to 10 so a lineage's first child clears `max_lineage_population_fraction`'s
+  0.20 cap — the same founder-effect tension FUTURE_BUILD_HOOKS.md already documents, which bites
+  immediately at population=3); a reproduced child's own USD_REAL/RESOURCE funding; a population=20
+  run against §9.2's cap; a CLI end-to-end run; the policy's prompt-extraction seam; environment
+  purity; a structural test that no kernel module imports `simulation`.
+- Every bug above teeth-checked in the literal sense: fix reverted, the specific new test confirmed
+  to fail for the stated reason, fix restored — including a temporary fake USD_REAL spend inserted
+  into the epoch loop to prove the invariant actually catches one.
+- Full suite green (1249, up from 1239 — the file's own 12 plus 2 that already existed as a wash);
+  golden run unaffected (hash unchanged at 38 — new package, a migration nothing existing reads, a
+  new CLI verb, no existing scenario touched); `ruff check .` and `scripts/check_docs_facts.py` both
+  clean (README's migration count and phase-status table updated — Phase 2 split from Phase 3 to
+  say precisely what is and is not built rather than one blanket "not built" claim).
+- Manually run at population=20/epochs=50 (~5.6 epochs/sec on this hardware) specifically because
+  the automated suite's smoke scale would not have surfaced the capacity-cap bug.
 
-- Next: the Phase 2 flight simulator (Slice F) — deterministic seeded environments, at least two
-  independent market-family models, a `mitosis simulate` verb, population scale, an assertion
-  `USD_REAL` never moves — is now the brief's and PRIORITIES.md's shared gating step for real
-  evolutionary evidence (Phases 2–3 remain deliberately unbuilt). Its own design/scoping pass comes
-  first, given its scale, rather than freehand implementation.
+- Next: the plan's own sub-slice sequence continues — a second, independently-shaped environment
+  family and environment separation (§8.1) next, then regime shifts (§8.4), the remaining mutation
+  operators (§14.1), chaos drills, and the two acceptance-scale configurations, before Slice G's
+  remaining `SelectionPolicy` implementations and Slice H's pre-registered Phase 3 comparisons.

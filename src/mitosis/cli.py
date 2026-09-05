@@ -64,6 +64,7 @@ from . import (
     scheduler,
     sweeper,
 )
+from .simulation import runner as simulation_runner
 from .accounts import cell_cash
 from .models import (
     DEFAULT_POPULATION_LIMITS,
@@ -915,6 +916,38 @@ def cmd_tick(args: argparse.Namespace) -> None:
     for deliberated in result.deliberations:
         print()
         _print_deliberation(conn, deliberated)
+    conn.close()
+
+
+def cmd_simulate(args: argparse.Namespace) -> None:
+    """Run the Phase 2 flight simulator (SPEC.md §7, §8, §28 Phase 2; the
+    implementation brief's Slice F).
+
+    Synthetic economy only: `USD_SIM` and `RESOURCE`, plus the one `USD_REAL`
+    sliver every Cell needs to be scheduler-eligible at all (a pre-existing
+    `scheduler.eligible_cells` rule this verb does not introduce) and the
+    zero-amount reserve/release pairs every model call posts against it
+    regardless of provider — the manifest records that no `external_expense`
+    (real spend, as opposed to that internal bookkeeping) was ever posted.
+    Deterministic: the same `--seed` reproduces the same manifest byte for
+    byte, since ids and every environment/policy/selection draw are seeded
+    from it.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    manifest = simulation_runner.run(
+        conn,
+        simulation_runner.RunConfig(
+            scenario_name=args.scenario, master_seed=args.seed,
+            epochs=args.epochs, population=args.population, output_path=args.output,
+        ),
+    )
+    print(manifest.summary())
+    if args.output:
+        print(f"  manifest written to {args.output}")
+    for failure in manifest.failures:
+        print(f"  FAILURE: {failure}")
     conn.close()
 
 
@@ -3253,6 +3286,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_model_args(tick_parser, default_max_tokens=deliberation.DEFAULT_MAX_TOKENS)
     tick_parser.set_defaults(func=cmd_tick)
+
+    simulate_parser = subparsers.add_parser(
+        "simulate",
+        help=(
+            "run the Phase 2 flight simulator: a synthetic population, "
+            "deterministic by seed, zero real spend (SPEC.md §28 Phase 2)"
+        ),
+    )
+    simulate_parser.add_argument(
+        "--scenario", default="smoke", help="named scenario (default: a small smoke run)"
+    )
+    simulate_parser.add_argument(
+        "--seed", type=int, required=True,
+        help="master seed; the same seed reproduces the same manifest byte for byte",
+    )
+    simulate_parser.add_argument("--epochs", type=int, required=True)
+    simulate_parser.add_argument(
+        "--population", type=int, required=True, help="number of founder Cells"
+    )
+    simulate_parser.add_argument(
+        "--output", default=None, help="path to write the machine-readable run manifest"
+    )
+    simulate_parser.set_defaults(func=cmd_simulate)
 
     health_parser = subparsers.add_parser(
         "health",

@@ -4447,3 +4447,137 @@ carried no such claim and needed no edit.
   forbidden import reintroduced into `scheduler.py`, the vacation guard neutered), each confirmed to
   fail for the named reason and then restored verbatim. Full suite 1239 passed (7 new); golden run
   unaffected (hash unchanged at 38 — this slice touches `cli.py` and tests only).
+
+## ADR-072: The Phase 2 flight simulator's seam — mock Cells decide through the real deliberation pipeline, and reproduction/capital move through real kernel entry points
+
+- **Status:** Accepted; `src/mitosis/simulation/` (new package), migration 0035, `pricing.py`,
+  `cli.py`'s `simulate` verb, 12 new tests in `tests/test_simulation.py`
+- **Spec ref:** §7 (colony flight simulator), §8 (anti-Goodhart/simulator overfitting), §9
+  (population control), §14.1 (mutation operators), §28 Phase 2; implementation brief Slice F
+
+- **Context:** the external audit brief ranks the Phase 2 flight simulator as "the highest-value
+  substantive build" — testing the kernel's governance/accounting machinery at population scale
+  (hundreds of Cells, thousands of epochs) with zero real spend, which SPEC.md's own Amendment A1
+  already concedes was never done because this repo built Phase 4 (the LLM loop) before Phase 2.
+  Given the size, a dedicated plan was written first (grounded in three research passes over the
+  actual current code, not memory) and approved before any code — this ADR is that plan's
+  as-built record, including three places building it refined the plan itself.
+
+### Kernel reuse, confirmed rather than assumed
+
+Every birth, death, transaction, experiment, and capital movement goes through the existing entry
+points — `lifecycle.create_cell`/`lineage.reproduce`, `ledger.post_transaction`,
+`experiment_grants.start_from_grant`/`experiments.conclude`, `revenue.record_revenue`,
+`scheduler.tick`. The simulator supplies only the decisions nothing in the kernel makes today: what
+a mock Cell proposes (`simulation/policy.py`), what a customer does
+(`simulation/environment.py`), and which Cell reproduces (`simulation/selection_policy.py`).
+
+### Mock Cells decide through `deliberation.deliberate()` via a new `ModelProvider`
+
+`SimulationPolicyProvider` implements the existing `providers.ModelProvider` Protocol, so it plugs
+into `scheduler.tick()` unchanged — a mock Cell's proposal still passes through the real
+`proposal.parse()` schema, risk-tier assessment, and approval queue. Deliberately stateless with
+respect to *which Cell* is calling: `ModelRequest` carries no Cell identity and the rendered prompt
+names none either (only genome content, which two Cells can share right after birth) — the policy
+keys its decision on the genome content shown *this call* plus a monotonic per-provider call
+counter, which reproduces from a seed without needing an identity the interface does not provide.
+Every `(provider, model)` pair a simulation ever constructs must be pre-registered in
+`pricing.PRICING_TABLE` at `ModelPrice("0","0")` — `gateway.call_model` prices a call *before* any
+reservation, and an unregistered pair raises `UnknownModelError` unhandled, aborting the whole
+tick rather than one Cell's wake.
+
+### Plan refinement found while building: experiments, not spend requests, are the vehicle
+
+The plan (written before any code) proposed a new `SIMULATION_DECIDER` identity calling
+`approval.approve()` directly on `spend_request` grants, reasoning from ADR-071's finding that
+`spend_request` is never kernel-assessed LOW and so never auto-batchable. Building the policy
+surfaced a cleaner fact: `approval._kernel_tier` has **no branch at all for
+`ProposalKind.EXPERIMENT`** — it stays at the initial LOW unless quarantine or cumulative exposure
+raises it. A LOW-claimed, reversible (`_is_reversible` excludes only `EXTERNAL_ACTION` and a
+USD_REAL `SPEND_REQUEST`), signal-free `EXPERIMENT` proposal is therefore genuinely `batchable` and
+is auto-approved by the *existing* `autopromotion.sweep()` batch step ADR-071 already wired into
+`scheduler.tick()` — no new approval decider needed for the common case at all. This also explains
+two reserved sockets found already sitting in the repo, unfilled: `experiment_grants
+.FLIGHT_SIMULATOR_RUNG = 1` and `experiments.LADDER`'s rung-1 label, verbatim, `"flight simulator"`
+— the spec's own authors clearly meant experiments, not spend requests, to be this slice's primary
+proposal vehicle. `SIMULATION_DECIDER` still exists and is used, but only for the steps that have no
+existing automated decider at all: starting an approved grant's experiment
+(`experiment_grants.start_from_grant`) and concluding it once the environment evaluates an outcome
+(`experiments.conclude`) — both per-Cell kernel calls with no batch/scheduled caller today.
+
+### Three bugs found by running it, not by reading it
+
+- **`random.Random()` does not accept a tuple as a seed** (`ValueError`, not silently wrong) — every
+  draw in `environment.py`/`policy.py`/`runner.py` was keyed on a tuple of coordinates. Fixed to a
+  stable f-string, which (unlike `hash()`) does not depend on `PYTHONHASHSEED` and so reproduces
+  across separate processes, not just within one.
+- **`experiment_grants.start_from_grant` raises two sibling exceptions, and only one was caught.**
+  `experiments.ExperimentConflictError` (a cell already has one running) is expected and common —
+  `autopromotion.sweep()`'s own approval batch enqueues a `WAKE_HUMAN_DECISION` follow-up wake
+  (§17.2) that becomes ready only on the *next* tick, so a cell routinely carries two pending grants
+  into one epoch. Only that subclass was caught at first; at population >= `max_parallel_experiments`
+  (default 20, §9.2's colony-wide slot cap) the sibling `ExperimentCapacityError` fires just as
+  often, and being uncaught it aborted the entire epoch before the evaluate/conclude loop ran —
+  stranding every running experiment permanently, since nothing ever concluded to free a slot again.
+  Fixed by catching the shared `experiments.ExperimentError` base, matching `autopromotion.sweep()`'s
+  own posture of catching a base exception per-item rather than crashing the sweep.
+  Caught at population=20; a smaller smoke run (population <=10) never exercises this path at all,
+  which is why the plan's own "prove the seam at small scale" framing did not surface it —
+  recorded here so a future slice does not have to relearn it by rerunning a bigger scenario.
+- **A reserve/release row is not spend.** The first invariant check counted `Book.USD_REAL`
+  transaction rows, and failed on every run: `gateway.call_model` reserves and releases against
+  USD_REAL for *every* model call regardless of provider (a `cell:X:cash` <-> `cell:X:committed`
+  pair netting to zero, `mock`/`ollama` included) — pre-existing reservation-FSM bookkeeping, not
+  real spend. The invariant now sums `external_expense` activity in `Book.USD_REAL` instead
+  (`usd_real_spend_unchanged`), which is what "zero USD_REAL movement" (brief acceptance criterion)
+  actually means in context.
+
+### A gap fixed while building, not deferred
+
+`lineage.reproduce()` funds a child only in the parent's own book (funding cannot cross books,
+§2.4) — a child born this way had no USD_REAL/RESOURCE balance of its own and would be permanently
+unschedulable (`scheduler.eligible_cells` requires >= 1 in both, regardless of a Cell's own book).
+Every reproduction now also funds the child's scheduler-eligibility sliver from `seed_bank`, the
+same as founding — `_fund_scheduler_eligibility`, shared by both paths. Confirmed live: population
+20 -> 70 over 50 epochs, every child actually woken, proposing, and evaluated in later epochs, not
+just present as an inert row.
+
+### What this slice deliberately did not build
+
+Matching the plan's own sub-slice sequence, unstarted: a second, independently-shaped environment
+family (brief requires >= 2); environment separation (training/validation/secret-challenge, §8.1);
+scheduled regime shifts (§8.4); the five real mutation operators beyond the required no-op/control
+(§14.1); chaos drills (§28's kill-30%/corrupt-module/crash-at-boundary scenarios); full manifest
+richness (population/diversity time series); the four remaining `SelectionPolicy` implementations
+(Slice G). `selection.py`'s `reproducibility` gate and `economic_potential` axis stay
+`UNMEASURABLE` — a simulated economy could compute real values for both, and the brief calls this
+out as a Slice G decision, not this one.
+
+### Verification
+
+- 12 new tests: determinism (two fresh in-memory colonies, same seed, byte-identical manifests
+  except `run_id`, which identifies the invocation rather than the deterministic economic content —
+  the same posture `scheduler.tick_id` already takes); the `external_expense` invariant; population
+  growth through the real `lineage.reproduce` path (population raised to 10 so a lineage's first
+  child clears `max_lineage_population_fraction`'s 0.20 cap, rather than merely tolerating the
+  well-documented founder-effect tension at tiny scale); a reproduced child's own USD_REAL/RESOURCE
+  eligibility funding (added *after* finding that gap, since none of the other tests would have
+  caught its regression); a population=20 run against §9.2's default 20-slot cap (added after
+  finding the `ExperimentCapacityError` bug at that scale, since every other test here runs at
+  population <=10 and would never exercise it); a CLI end-to-end run writing a manifest file; the
+  policy's prompt-extraction seam; environment purity; a structural test that no kernel module
+  imports the `simulation` package.
+- Every bug this ADR describes above was teeth-checked in the literal sense: the fix was reverted,
+  the specific new test confirmed to fail for the stated reason, then the fix restored — the
+  capacity-cap fix via the population=20 test, the eligibility-funding fix via the child-balance
+  test, the structural boundary via a temporary `simulation` import into `scheduler.py`, and the
+  `external_expense` invariant via a temporary fake USD_REAL spend inserted into the epoch loop.
+- Full suite green, golden run unaffected (hash unchanged at 38 — this slice adds a new package,
+  a migration nothing existing reads, and a new CLI verb; it touches no existing scenario), `ruff
+  check .` and `scripts/check_docs_facts.py` both clean (README's migration count and phase-status
+  table updated: Phase 2 split from Phase 3 to state what is and is not yet built, rather than
+  leaving a now-inaccurate "not built" blanket claim).
+- Manually run at population=20/epochs=50 (~5.6 epochs/sec on this hardware) and population=20/
+  epochs=5 to reproduce and confirm the capacity-exhaustion bug before fixing it — both a smaller
+  smoke scale (this slice's actual scope) and one large enough to hit §9.2's colony-wide cap, since
+  the smaller scale alone would have shipped the bug undetected.

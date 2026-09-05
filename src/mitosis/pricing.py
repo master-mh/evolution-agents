@@ -67,6 +67,16 @@ PRICING_TABLE: dict[str, dict[str, ModelPrice]] = {
     "mock": {
         "mock-1": ModelPrice("0", "0"),
     },
+    # The Phase 2 flight simulator's deterministic Cell-policy family
+    # (`simulation.policy.SimulationPolicyProvider`, SPEC.md §7.1/§7.3). Zero
+    # for the same reason `mock` is: it makes no external call. Registered
+    # explicitly rather than left to fail loudly the first time a simulation
+    # run priced it, since `gateway.call_model` prices every call *before*
+    # any reservation and an unregistered model aborts the whole tick, not
+    # one Cell's wake.
+    "simulation": {
+        "policy-v1": ModelPrice("0", "0"),
+    },
     "anthropic": {
         "claude-opus-5": ModelPrice("5", "25"),
         "claude-sonnet-5": ModelPrice("3", "15"),
