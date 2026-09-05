@@ -4970,3 +4970,69 @@ out as a Slice G decision, not this one.
 - Next: the >= 500 Cell/>= 10,000 epoch acceptance benchmark, run to completion with its manifest
   retained, closes out Slice F; then Slice G's remaining `SelectionPolicy` implementations and
   Slice H's pre-registered Phase 3 comparisons.
+
+## ADR-077: A run record that never named its own selection policy, and founder concentration as a real time series (Slice G, part 0)
+
+- **Status:** Accepted; migration 0036 adds `simulation_runs.selection_policy_name/_version`;
+  `runner._record_run_start` actually reads them from its own `selection` parameter; `lineage.py`
+  gains `founder_concentration()`; `EpochRecord`/`RunManifest` gain the corresponding fields; 5 new
+  tests in `tests/test_simulation.py` (50 total)
+- **Spec ref:** implementation brief's Slice G ("niche diversity and founder concentration are
+  measured over time") and its own "Current disconnected components" framing, which this whole
+  slice addresses across several sub-slices; this one is the observability foundation the rest is
+  built on
+
+- **Context:** planning Slice G (closing the evolutionary decision loop — replaceable, recorded
+  `SelectionPolicy` implementations behind the seam F1 built) surfaced a real bug before any new
+  policy existed to expose it: `runner._record_run_start` has taken a `selection: SelectionPolicy`
+  parameter since F1, but never read `.name`/`.version` from it — both `simulation_runs` and
+  `RunManifest`'s `policy_name`/`policy_version` fields were, and remain, the **Cell** policy's
+  identity (`SIMULATION_PROVIDER`/`POLICY_VERSION`, what a mock Cell proposes) — a different
+  decision entirely from *which Cell reproduces*, which is `SelectionPolicy`'s own job. For a slice
+  whose entire purpose is comparing selection policies against each other, an operator could not
+  previously tell which one a run used except by reading a per-epoch `simulation_selection_decision`
+  audit event. Two new nullable columns (no rebuild — a plain `ADD COLUMN` with no CHECK/NOT
+  NULL/computed default, the same shape migration 0033's `repair_model_call_id` already used) and
+  `_record_run_start` finally uses its own parameter.
+
+- **Founder concentration joins `distinct_genomes` as a real per-epoch time series, not a fact
+  buried in one policy's own text.** New `lineage.founder_concentration(conn) -> tuple[str | None,
+  float]` — one `GROUP BY` over the already-denormalized `cells.founder_cell_id`, ties broken by
+  `founder_cell_id` itself for determinism (arbitrary as a value, but stable given a seeded run's
+  own id sequence). This needs to be comparable *across* policies over time — is `StagedFundingSelection`
+  actually less founder-concentrated than `RandomEligibleSelection` over the same seed, a genuinely
+  Phase-3-shaped question — which a free-text reason inside whichever policy happens to be running
+  could never answer. `EpochRecord` gains `founder_concentration`/`dominant_founder_cell_id`,
+  computed in `_run_one_epoch` the same way `distinct_genomes` already is, regardless of which
+  policy is active.
+
+- **A teeth-check that initially passed for the wrong reason, caught before it shipped.** The first
+  attempt at proving `founder_concentration`'s ordering mattered removed the `ORDER BY n DESC`
+  clause entirely, leaving `ORDER BY founder_cell_id` alone — this happened to still name the
+  correct dominant founder across the one run it was tried against, purely because that run's
+  randomly-generated UUIDs coincidentally sorted the dominant founder first. A mutation that *always*
+  fails regardless of id randomness needed a sharper edit: flipping `DESC` to `ASC` picks the
+  *smallest* count deterministically, which can never be the two-member dominant lineage against nine
+  one-member lineages — confirmed to fail across three independent runs with fresh random ids each
+  time, not just once. The same category of trap this repo's own conventions warn about (a mutation
+  that happens not to move the observed outcome), just discovered via test-fixture randomness this
+  time rather than a fixture unable to distinguish two outcomes at all.
+
+- **Verification:** 5 new tests: the run-record fix (a minimal name/version-only `SelectionPolicy`
+  wrapper — no second real policy exists yet at this sub-slice — proves `simulation_runs` and the
+  manifest both read from the actual object, not the Cell-policy constants); `founder_concentration`'s
+  correctness on a constructed ten-founder fixture (population raised to ten for the same
+  `max_lineage_population_fraction` reason `test_population_grows_through_the_real_reproduction_path`
+  already documents — a single child exceeds the 0.20 cap at population <=2); founder concentration
+  as a real bounded time series across a full run. Two teeth-checks, the second requiring a
+  do-over as described above, both confirmed to fail for the stated reason and restored verbatim.
+  Full suite green; golden run unaffected (hash unchanged at 38 — no existing scenario touched);
+  `ruff check .` and `scripts/check_docs_facts.py` both clean (README's migration count updated
+  35 -> 36).
+
+- Next: G1 — `candidate.py`'s simulator-native gates/axes/`dominates()`, the full `SelectionDecision`
+  schema expansion, and `posteriors.sample()`, per the approved Slice G plan
+  (`docs/DECISIONS.md`'s own forward reference here now points to the plan file's sub-slice
+  sequence: G1 candidate.py + schema, G2 SingleLeaderboardSelection, G3 ParetoSelection, G4
+  MapElitesSelection, G5 StagedFundingSelection + Thompson sampling + the validation consumer, G6
+  cross-policy acceptance harness).

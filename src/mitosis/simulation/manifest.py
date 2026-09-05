@@ -22,6 +22,22 @@ and mutation something real to measure:
   (scenario, seed, epochs, population; not `output_path`, a local write
   destination rather than configuration), so two manifests claiming the same
   configuration can be checked, not just asserted.
+
+Slice G adds two more fields, for a reason distinct from F5's: comparing
+*selection policies* against each other needs to know which one a run used,
+and needs founder concentration as a real time series rather than a fact
+buried in one policy's own free-text reason (see `docs/DECISIONS.md`'s
+Slice G ADR):
+
+- `RunManifest.selection_policy_name`/`.selection_policy_version` -- distinct
+  from `policy_name`/`policy_version` above, which name the *Cell* policy
+  (what a mock Cell proposes), not *which Cell reproduces* (`SelectionPolicy`'s
+  own job) -- `_record_run_start` previously never read this from the
+  `selection` parameter it was already given.
+- `EpochRecord.founder_concentration`/`.dominant_founder_cell_id` -- the
+  largest living share any one founder's lineage holds, and which founder
+  that is, computed by `lineage.founder_concentration()` the same way
+  `distinct_genomes` is computed regardless of which policy is running.
 """
 
 from __future__ import annotations
@@ -42,6 +58,8 @@ class EpochRecord:
     reproductions: int
     distinct_genomes: int
     environment_events: tuple[str, ...]
+    founder_concentration: float
+    dominant_founder_cell_id: str | None
 
 
 @dataclass(frozen=True)
@@ -55,6 +73,8 @@ class RunManifest:
     environment_version: str
     policy_name: str
     policy_version: str
+    selection_policy_name: str
+    selection_policy_version: str
     population_target: int
     epochs_target: int
     epochs_completed: int
@@ -75,7 +95,8 @@ class RunManifest:
         real = "unchanged" if self.usd_real_spend_unchanged else "MOVED"
         failure_note = f", {len(self.failures)} failure(s)" if self.failures else ""
         return (
-            f"run {self.run_id} ({self.scenario_name}, seed {self.master_seed}): "
+            f"run {self.run_id} ({self.scenario_name}, seed {self.master_seed}, "
+            f"selection={self.selection_policy_name}): "
             f"{self.epochs_completed}/{self.epochs_target} epoch(s), "
             f"{self.final_living_cells} living Cell(s), "
             f"conservation={conservation}, USD_REAL {real}{failure_note}"

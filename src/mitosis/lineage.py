@@ -354,6 +354,28 @@ def lineage_fraction(conn: sqlite3.Connection, founder_cell_id: str) -> float:
     return living_lineage_count(conn, founder_cell_id) / living_total
 
 
+def founder_concentration(conn: sqlite3.Connection) -> tuple[str | None, float]:
+    """The founder whose lineage holds the largest living share, and that
+    share -- one query over every founder at once, rather than repeated
+    single-founder `lineage_fraction` calls. `(None, 0.0)` when the colony
+    has no living Cells at all.
+
+    Ties broken by `founder_cell_id` itself: arbitrary as a value, but
+    deterministic given a seeded run's own id sequence, which is what a
+    same-seed-reproduces-the-same-manifest property actually needs."""
+    living_total = population.living_count(conn)
+    if living_total == 0:
+        return None, 0.0
+    row = conn.execute(
+        "SELECT founder_cell_id, COUNT(*) AS n FROM cells WHERE status != ? "
+        "GROUP BY founder_cell_id ORDER BY n DESC, founder_cell_id LIMIT 1",
+        (CellStatus.DEAD.value,),
+    ).fetchone()
+    if row is None:
+        return None, 0.0
+    return row["founder_cell_id"], row["n"] / living_total
+
+
 def lineage_members(conn: sqlite3.Connection, founder_cell_id: str) -> list[Cell]:
     """Every Cell in the lineage, living or dead, oldest first."""
     rows = conn.execute(

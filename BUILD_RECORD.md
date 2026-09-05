@@ -25,68 +25,67 @@ documentation/safety-claim reconciliation, a narrow runtime-defect lint gate,
 auto-promotion reaching the scheduled `tick`, the flight simulator's first
 slice (mock Cells deciding through the real deliberation pipeline), its
 second (a second market family, environment separation, regime shifts), its
-third (the remaining mutation operators, wired through a real choice), and
-its fourth (chaos drills as repeatable scenarios),
+third (the remaining mutation operators, wired through a real choice), its
+fourth (chaos drills as repeatable scenarios), and its fifth (manifest
+richness, a CI-scale acceptance test, a founding cap bug fix, and a retained
+benchmark artifact),
 2026-07-21 through 2026-09-05):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-05 — Phase 2 flight simulator, fifth slice (part a): manifest richness, a CI-scale acceptance scenario, and a founding bug the acceptance scale would have hit (Slice F, part 5a)
+## 2026-09-05 — Closing the evolutionary decision loop, part 0: a run record that never named its own selection policy, and founder concentration as a real time series (Slice G, part 0)
 
-Continuing the same sub-slice sequence (ADR-072–075) without a fresh plan-mode round-trip.
-ADR-076 is the full as-built record.
+A plan was written first, given the genuine architectural forks Slice G surfaces (a full Explore
+pass over `selection.py`/`novelty.py`/`posteriors.py`/`autopromotion.py`, then a Plan pass to
+resolve them) — `docs/DECISIONS.md`'s ADR-077 is the as-built record for this first sub-slice; the
+plan file itself sequences the remaining six.
 
-### What shipped
+### The central finding the whole plan turns on
 
-`EpochRecord` gains `distinct_genomes` (the diversity time series — distinct `genome_hash` values
-among living Cells, since a genome hash *is* a Cell's full strategy under ADR-018) and
-`environment_events` (regime-shift recovery, made visible on the retained manifest itself rather
-than only via the audit trail). `RunManifest` gains `config_hash`, a SHA-256 over the run's actual
-configuration. One consolidated test, `test_phase_2_ci_scale_acceptance_scenario`, runs a single
-small scenario and asserts every bullet of the brief's own Phase 2 acceptance checklist by name.
+The kernel's own fitness dimensions would be uniformly degenerate if reused verbatim on simulated
+Cells: `SimulationPolicyProvider._propose()` hardcodes `estimated_cost_minor_units: 0` and
+`predictions: []` on every call, killing `evidence_quality`/`information_gain`/`experiment_cost`
+permanently; no content audit or counterparty-keyed revenue is ever produced either, killing
+`software_native_advantage` and two of `novelty.py`'s three dimensions. Only genome-content-based
+`novelty_distance` survives contact with the simulator unchanged. The plan therefore builds a
+simulator-native dimension set from data the simulator actually produces — reusing the kernel's
+*shapes* (the `dominates()` rule, the niche-coordinate pattern) by direct call where the underlying
+function is genuinely genome-content-only, and building new, honestly-named logic everywhere else.
 
-### A bug the acceptance criteria's own scale would have hit
+### What shipped in this first, smallest sub-slice
 
-Validating the manifest changes at population=50 surfaced an unhandled `BirthRateExceededError`:
-`_found_population` created every founder before any epoch advanced, and §9.2's
-`max_births_per_epoch` (default 25) does not distinguish a founder from a reproduced child. Nothing
-in F1-F4's own tests (all population <= 30) exercised this — invisible until something asked for
-more founders than one kernel epoch allows, which the brief's own >= 500 Cell acceptance scale
-unavoidably does. Fixed by founding in batches of `max_births_per_epoch`, advancing the clock
-between batches exactly as the main loop does — not loosening the cap itself (§9.1's own reasoning
-against unrestricted reproduction, the same posture ADR-071 already took on a different cap).
+- **The bug**: `runner._record_run_start` has taken a `selection: SelectionPolicy` parameter since
+  F1 but never read `.name`/`.version` from it — both `simulation_runs` and the manifest recorded
+  the *Cell* policy's identity in the selection-policy fields too. For a slice whose entire purpose
+  is comparing selection policies, nothing at the run level could say which one a run used except a
+  per-epoch audit event. Fixed with two new nullable columns (migration 0036, no rebuild needed) and
+  `_record_run_start` finally using its own parameter.
+- **Founder concentration**, joining `distinct_genomes` as a real per-epoch time series: new
+  `lineage.founder_concentration()`, one `GROUP BY` over the already-denormalized
+  `cells.founder_cell_id`. Comparable across policies over time, which a free-text reason inside one
+  policy could never give.
 
-The fix's own first regression test failed for the wrong reason: calling `_found_population`
-directly skipped `run()`'s own clock-anchoring setup, so `clock.current_epoch` never advanced
-regardless of `clock.advance` calls, and the test failed with the *pre-fix* error for an unrelated
-cause. Rewritten to go through `run()` itself.
+### A teeth-check that initially passed for the wrong reason
+
+The first attempt at proving `founder_concentration`'s ordering mattered removed `ORDER BY n DESC`
+entirely — this happened to still name the right founder, purely because that run's random ids
+coincidentally sorted it first. Flipping `DESC` to `ASC` instead picks the *smallest* count
+deterministically, which can never be the dominant lineage — confirmed to fail across three
+independent runs with fresh random ids each time, not just once, before trusting it.
 
 ### Verification
 
-6 new tests (48 total): the founding-batch fix (via `run()`, not the private function directly); the
-diversity time series' bound *and* that it's not merely "always equals living_cells"; regime-shift
-events appearing only at the scheduled epoch; `config_hash`'s stability, sensitivity to each real
-field, and exclusion of `output_path`; the consolidated acceptance scenario. Four teeth-checks, each
-confirmed to fail for the stated reason and restored verbatim. Full suite green (1286, up from 1281
-— one Hypothesis deadline flake elsewhere confirmed environmental by an isolated rerun, caused by a
-concurrent CPU-heavy benchmark validation on this same machine, not a regression); golden run
-unaffected (hash unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both clean.
+5 new tests (50 total): the run-record fix (a minimal name/version-only policy wrapper, since no
+second real policy exists yet); `founder_concentration`'s correctness on a ten-founder fixture (the
+same `max_lineage_population_fraction` reason population is raised to ten elsewhere in this file);
+founder concentration as a real bounded time series. Two teeth-checks (the second needing the
+do-over above), both confirmed to fail for the stated reason and restored verbatim. Full suite
+green; golden run unaffected (hash unchanged at 38); `ruff check .` and
+`scripts/check_docs_facts.py` both clean (README's migration count updated 35 -> 36).
 
-### What this does not close
-
-The second acceptance-scale configuration: a moderate-scale validation (population=50, epochs=200)
-run to confirm the founding fix at a scale that actually exceeds the birth-rate cap completed in
-23m47s (~0.14 epochs/sec once population reached `max_active_cells`=100), retained at
-`docs/benchmarks/2026-09-05-founding-fix-validation-p50-e200.json` — nearly 40x slower than the
-first slice's own smaller benchmark (~5.6 epochs/sec at population 20->70). Extrapolating that rate
-to five times the population and fifty times the epochs points to a multi-hour, quite possibly
-multi-day run on this hardware, exactly the case the brief's own accommodation describes ("if
-runtime makes 500x10,000 unsuitable for ordinary CI, keep a small deterministic CI scenario, and a
-separately documented benchmark command whose result artifact is retained"). The command is
-documented (`mitosis simulate --population 500 --epochs 10000 --seed <n> --output <path>`,
-`docs/benchmarks/README.md`) and the mechanism it depends on is now proven correct; running it to
-completion and retaining its manifest is deferred to a following slice as an explicitly kicked-off,
-unattended job sized in hours or days.
-
-- Next: the >= 500 Cell/>= 10,000 epoch acceptance benchmark, run to completion with its manifest
-  retained, closes out Slice F; then Slice G's remaining `SelectionPolicy` implementations and
-  Slice H's pre-registered Phase 3 comparisons.
+- Next: G1 — `candidate.py`'s simulator-native gates/axes/`dominates()`, the full
+  `SelectionDecision` schema expansion, and `posteriors.sample()`, per the approved Slice G plan
+  (G2 `SingleLeaderboardSelection`, G3 `ParetoSelection`, G4 `MapElitesSelection`, G5
+  `StagedFundingSelection` + Thompson sampling + the `EnvironmentSuite.validation` consumer, G6 the
+  cross-policy acceptance harness) — then Slice H's pre-registered Phase 3 comparisons. The >= 500
+  Cell/>= 10,000 epoch Phase 2 acceptance benchmark itself remains documented but not yet run to
+  completion (ADR-076).

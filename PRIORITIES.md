@@ -965,21 +965,17 @@
 
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
-  directive §28. **Underway, not done**: `src/mitosis/simulation/`'s first five slices (ADR-072
-  through ADR-076) prove the seam and now carry two independently-shaped environment families
-  (`UtilityMaximizingMarket`, `RuleBasedMarket`), real environment separation (§8.1's `training`/
-  `validation`/`secret_challenge`, structurally enforced), a scheduled regime shift on each family
-  (§8.4), all six required mutation operators (§14.1) wired through a real random operator choice,
-  all five brief-required chaos drills (§28) as repeatable scenarios (`chaos.py`), a diversity/
-  regime-shift-carrying manifest (`distinct_genomes`, `environment_events`, `config_hash`), and a
-  CI-scale test asserting the brief's full Phase 2 acceptance checklist by name — reproduction/
-  mutation reaching the real kernel paths, population 20 -> 70 over 50 epochs with conservation
-  intact and zero real spend. A founding bug was found and fixed along the way:
-  `_found_population` could not exceed §9.2's `max_births_per_epoch` (default 25) before batching
-  across kernel epochs — the >= 500 Cell acceptance scale would have hit it immediately. Still
-  missing before Phase 2 itself is done: actually running the >= 500 Cell/>= 10,000 epoch benchmark
-  to completion and retaining its manifest — a moderate-scale (population=50/epochs=200) validation
-  of the founding fix alone took 23m47s (~0.14 epochs/sec, `docs/benchmarks/`), ~40x slower than the
-  first slice's own smaller benchmark, so the full acceptance scale extrapolates to a genuinely
-  multi-hour-to-multi-day, deliberately non-CI job per the brief's own accommodation. Phase 3 (the
-  other four `SelectionPolicy` implementations, the pre-registered comparisons) has not started.
+  directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped
+  environment families, real environment separation (§8.1), scheduled regime shifts (§8.4), all six
+  mutation operators (§14.1), all five chaos drills (§28), a diversity/regime-shift-carrying
+  manifest — reproduction/mutation reaching the real kernel paths, population 20 -> 70 over 50
+  epochs with conservation intact and zero real spend. Missing before Phase 2 itself is fully done:
+  actually running the >= 500 Cell/>= 10,000 epoch acceptance benchmark to completion (a
+  population=50/epochs=200 validation took 23m47s, ~40x slower than the first slice's own smaller
+  benchmark — `docs/benchmarks/`; the full scale extrapolates to a multi-hour-to-multi-day,
+  deliberately non-CI job). **Closing the evolutionary decision loop underway** (brief's own "Slice
+  G", ADR-077 so far): `RandomEligibleSelection` is still the only `SelectionPolicy` — a plan for the
+  remaining four (single-leaderboard control, Pareto, MAP-Elites, staged-funding) plus Thompson
+  sampling and the `EnvironmentSuite.validation` consumer is approved and sequenced (G0 done: a run
+  record that never named its own selection policy, fixed; founder concentration now a real time
+  series; G1-G6 remain). Phase 3's own pre-registered comparisons have not started.

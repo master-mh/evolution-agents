@@ -76,6 +76,88 @@ def test_a_full_colony_of_experiments_does_not_strand_the_run(conn):
     assert all(record.experiments_concluded > 0 for record in manifest.epochs)
 
 
+class _NamedWrapperSelection:
+    """A minimal `SelectionPolicy`-conforming wrapper reporting a distinct
+    name/version, used only to prove the run record reads `.name`/`.version`
+    from the actual policy object rather than a hardcoded constant -- no
+    second real policy exists yet at this sub-slice (Slice G's G0)."""
+
+    def __init__(self, wrapped, *, name: str, version: str) -> None:
+        self._wrapped = wrapped
+        self.name = name
+        self.version = version
+
+    def decide(self, conn, *, epoch, rng, seed_label):
+        return self._wrapped.decide(conn, epoch=epoch, rng=rng, seed_label=seed_label)
+
+
+def test_the_run_record_and_manifest_name_the_actual_selection_policy_used(conn):
+    """`runner._record_run_start` took a `selection: SelectionPolicy`
+    parameter but never read `.name`/`.version` from it -- both
+    `simulation_runs` and the manifest recorded the *Cell* policy's identity
+    (`SIMULATION_PROVIDER`/`POLICY_VERSION`) in the selection-policy fields
+    too, so nothing at the run level could say which `SelectionPolicy` a run
+    actually used, only a per-epoch `simulation_selection_decision` audit
+    event could (Slice G's G0 fix)."""
+    fake = _NamedWrapperSelection(RandomEligibleSelection(), name="fake_policy", version="7")
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="test", master_seed=1, epochs=3, population=3),
+        selection=fake,
+    )
+
+    assert manifest.selection_policy_name == "fake_policy"
+    assert manifest.selection_policy_version == "7"
+
+    row = conn.execute(
+        "SELECT selection_policy_name, selection_policy_version FROM simulation_runs "
+        "WHERE run_id = ?", (manifest.run_id,),
+    ).fetchone()
+    assert row["selection_policy_name"] == "fake_policy"
+    assert row["selection_policy_version"] == "7"
+
+
+def test_founder_concentration_identifies_the_larger_living_lineage(conn):
+    """Ten founders, not two: `max_lineage_population_fraction` (default
+    0.20) refuses a second Cell in any lineage while the colony is this
+    small -- a single child already exceeds the cap at population=2
+    (`2/3 = 0.667`), the same founder-effect tension
+    `test_population_grows_through_the_real_reproduction_path` already
+    documents. At population=10 a lineage's first child clears it
+    (`2/11 ~= 0.18`)."""
+    from mitosis import lifecycle, lineage
+    from mitosis.models import CellType
+
+    founders = [
+        lifecycle.create_cell(
+            conn, cell_type=CellType.COMMERCIAL, budget_minor_units=1000,
+            book=Book.USD_SIM, idempotency_key=f"founder-{i}",
+        )
+        for i in range(10)
+    ]
+    lineage.reproduce(
+        conn, parent_cell_id=founders[0].cell_id, budget_minor_units=100,
+        idempotency_key="child-of-founder-0",
+    )
+
+    dominant_id, share = lineage.founder_concentration(conn)
+    assert dominant_id == founders[0].cell_id
+    assert share == pytest.approx(2 / 11)
+
+
+def test_epoch_records_track_founder_concentration_as_a_time_series(conn):
+    """Brief: "founder concentration [measured] over time" -- surfaced as a
+    real per-epoch field (`lineage.founder_concentration`), comparable
+    across policies, not buried in one policy's own free-text reason."""
+    manifest = _run(conn, seed=7, epochs=20, population=10)
+
+    for record in manifest.epochs:
+        assert 0.0 <= record.founder_concentration <= 1.0
+        if record.living_cells > 0:
+            assert record.dominant_founder_cell_id is not None
+        else:
+            assert record.dominant_founder_cell_id is None
+
+
 def test_founding_a_population_above_the_birth_rate_cap_does_not_raise(conn):
     """§9.2's `max_births_per_epoch` (default 25) does not distinguish a
     founder from a reproduced child (`population._check_birth_rate` reads

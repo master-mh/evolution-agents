@@ -197,13 +197,15 @@ def _record_run_start(conn, *, run_id: str, config: RunConfig,
         """
         INSERT INTO simulation_runs (
             run_id, scenario_name, master_seed, code_version, environment_name,
-            environment_version, policy_name, policy_version, population_target,
-            epochs_target, status, started_at_utc, finished_at_utc, manifest_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, NULL, NULL)
+            environment_version, policy_name, policy_version, selection_policy_name,
+            selection_policy_version, population_target, epochs_target, status,
+            started_at_utc, finished_at_utc, manifest_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, NULL, NULL)
         """,
         (
             run_id, config.scenario_name, config.master_seed, _code_version(),
             environment.name, environment.version, SIMULATION_PROVIDER, POLICY_VERSION,
+            selection.name, selection.version,
             config.population, config.epochs, started.isoformat(),
         ),
     )
@@ -376,11 +378,14 @@ def _run_one_epoch(
 
     living_cells = [c for c in lifecycle.list_cells(conn) if c.status is CellStatus.ALIVE]
     distinct_genomes = len({c.genome_hash for c in living_cells})
+    dominant_founder_cell_id, founder_concentration = lineage.founder_concentration(conn)
     return EpochRecord(
         epoch=epoch, living_cells=len(living_cells), experiments_started=started,
         experiments_concluded=concluded, sales=sales,
         revenue_minor_units=revenue_minor_units, reproductions=reproductions,
         distinct_genomes=distinct_genomes, environment_events=tuple(environment_events),
+        founder_concentration=founder_concentration,
+        dominant_founder_cell_id=dominant_founder_cell_id,
     )
 
 
@@ -463,6 +468,8 @@ def run(
             environment_version=suite.training.version,
             policy_name=SIMULATION_PROVIDER,
             policy_version=POLICY_VERSION,
+            selection_policy_name=selection.name,
+            selection_policy_version=selection.version,
             population_target=config.population,
             epochs_target=config.epochs,
             epochs_completed=len(epoch_records),
