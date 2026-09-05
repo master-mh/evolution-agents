@@ -965,10 +965,13 @@
 
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
-  directive §28. **Underway, not done**: `src/mitosis/simulation/`'s first slice (ADR-072) proves
-  the seam — one environment family, one deterministic Cell-policy family, one selection policy,
-  reproduction/mutation reaching the real kernel paths, population 20 -> 70 over 50 epochs with
-  conservation intact and zero real spend. Still missing before Phase 2 itself is done: a second
-  environment family, environment separation (§8.1), regime shifts (§8.4), the five real mutation
-  operators (§14.1), chaos drills, and population/benchmark scale. Phase 3 (the other four
-  `SelectionPolicy` implementations, the pre-registered comparisons) has not started.
+  directive §28. **Underway, not done**: `src/mitosis/simulation/`'s first two slices (ADR-072,
+  ADR-073) prove the seam and now carry two independently-shaped environment families
+  (`UtilityMaximizingMarket`, `RuleBasedMarket`), real environment separation (§8.1's `training`/
+  `validation`/`secret_challenge`, structurally enforced), and a scheduled regime shift on each
+  family (§8.4) — reproduction/mutation reaching the real kernel paths, population 20 -> 70 over 50
+  epochs with conservation intact and zero real spend. Still missing before Phase 2 itself is done:
+  the five real mutation operators beyond the no-op control (§14.1), chaos drills, full manifest
+  richness (population/diversity time series, regime-shift bookkeeping), and population/benchmark
+  scale. Phase 3 (the other four `SelectionPolicy` implementations, the pre-registered comparisons)
+  has not started.

@@ -21,8 +21,13 @@ import pytest
 
 from mitosis import cli, db, ledger
 from mitosis.models import Book
-from mitosis.simulation import runner
-from mitosis.simulation.environment import ExperimentAction, UtilityMaximizingMarket
+from mitosis.simulation import environment, runner
+from mitosis.simulation.environment import (
+    EnvironmentSuite,
+    ExperimentAction,
+    RuleBasedMarket,
+    UtilityMaximizingMarket,
+)
 from mitosis.simulation.policy import SimulationPolicyProvider, _extract_genome
 from mitosis.simulation.selection_policy import RandomEligibleSelection
 
@@ -230,6 +235,232 @@ def test_the_utility_maximizing_market_is_pure_given_its_coordinates():
     outcome_b = env_b.evaluate(experiment=action, epoch=3)
 
     assert outcome_a == outcome_b
+
+
+def test_the_rule_based_market_is_pure_given_its_coordinates():
+    env_a = RuleBasedMarket()
+    env_a.reset(seed=99)
+    env_b = RuleBasedMarket()
+    env_b.reset(seed=99)
+    action = ExperimentAction(
+        cell_id="c1", genome_content={"product": {"quality": "premium"}}, hypothesis="h"
+    )
+
+    outcome_a = env_a.evaluate(experiment=action, epoch=3)
+    outcome_b = env_b.evaluate(experiment=action, epoch=3)
+
+    assert outcome_a == outcome_b
+
+
+def test_the_rule_based_market_always_clears_the_budget_tier():
+    env = RuleBasedMarket()
+    env.reset(seed=1)
+    action = ExperimentAction(
+        cell_id="c1", genome_content={"revenue_model": {"price_minor_units": 250}}, hypothesis="h"
+    )
+    for epoch in range(5):
+        outcome = env.evaluate(experiment=action, epoch=epoch)
+        assert outcome.purchased
+        assert outcome.revenue_minor_units == 250
+
+
+def test_the_rule_based_market_requires_the_durable_flag_above_the_budget_tier():
+    env = RuleBasedMarket()
+    env.reset(seed=1)
+    no_flag = ExperimentAction(
+        cell_id="c1", genome_content={"revenue_model": {"price_minor_units": 650}}, hypothesis="h"
+    )
+    with_flag = ExperimentAction(
+        cell_id="c1",
+        genome_content={
+            "revenue_model": {"price_minor_units": 650}, "product": {"durable": True},
+        },
+        hypothesis="h",
+    )
+    for epoch in range(5):
+        assert env.evaluate(experiment=no_flag, epoch=epoch).purchased is False
+        assert env.evaluate(experiment=with_flag, epoch=epoch).purchased is True
+
+
+def test_the_rule_based_market_requires_premium_quality_above_the_standard_tier():
+    env = RuleBasedMarket()
+    env.reset(seed=1)
+    no_quality = ExperimentAction(
+        cell_id="c1", genome_content={"revenue_model": {"price_minor_units": 900}}, hypothesis="h"
+    )
+    for epoch in range(5):
+        assert env.evaluate(experiment=no_quality, epoch=epoch).purchased is False
+
+
+def test_the_two_environment_families_disagree_on_the_same_genome():
+    """SPEC.md §8.3's actual requirement: a strategy is not promoted on
+    success in one family alone. A standard-band price without the `durable`
+    flag fails `RuleBasedMarket` at every coordinate below, by construction --
+    yet the identical genome sometimes clears `UtilityMaximizingMarket`'s
+    willingness-to-pay draw. The two mechanisms disagree on the same input
+    rather than being the same formula wearing different constants.
+
+    Restricted to epochs before `_REGIME_SHIFT_EPOCH` (10): price=600 exceeds
+    the post-shift willingness-to-pay ceiling of 450 and would always fail
+    `UtilityMaximizingMarket` too past that epoch -- this test is about the
+    two families' base mechanisms disagreeing, not about the shift itself
+    (see the dedicated regime-shift tests)."""
+    genome = {"revenue_model": {"price_minor_units": 600}}
+    action = ExperimentAction(cell_id="c1", genome_content=genome, hypothesis="h")
+
+    utility = UtilityMaximizingMarket()
+    utility.reset(seed=1)
+    rule_based = RuleBasedMarket()
+    rule_based.reset(seed=1)
+
+    utility_sales = sum(
+        1 for epoch in range(10) if utility.evaluate(experiment=action, epoch=epoch).purchased
+    )
+    rule_based_sales = sum(
+        1 for epoch in range(10) if rule_based.evaluate(experiment=action, epoch=epoch).purchased
+    )
+
+    assert utility_sales > 0
+    assert rule_based_sales == 0
+
+
+def test_the_utility_maximizing_market_shifts_regime_at_the_scheduled_epoch():
+    """SPEC.md §8.4: a scheduled price-compression shift, not a random market
+    shock. At price=600, post-shift willingness to pay
+    (`uniform(0.3, 0.9) * 500` = [150, 450]) can never reach 600, while
+    pre-shift (`uniform(0.5, 1.5) * 500` = [250, 750]) sometimes does --
+    deterministic given the fixed seed, not a statistical fluke."""
+    env = UtilityMaximizingMarket()
+    env.reset(seed=1)
+    action = ExperimentAction(
+        cell_id="c1", genome_content={"revenue_model": {"price_minor_units": 600}}, hypothesis="h"
+    )
+
+    pre_shift_sales = sum(
+        1 for epoch in range(10) if env.evaluate(experiment=action, epoch=epoch).purchased
+    )
+    post_shift_sales = sum(
+        1 for epoch in range(10, 20) if env.evaluate(experiment=action, epoch=epoch).purchased
+    )
+    assert pre_shift_sales > 0
+    assert post_shift_sales == 0
+
+    assert env.advance(epoch=9) == ()
+    events = env.advance(epoch=10)
+    assert len(events) == 1
+    assert events[0].kind == "price_compression"
+
+
+def test_the_rule_based_market_shifts_regime_at_the_scheduled_epoch():
+    """Price=200 always clears the pre-shift budget tier (<= 300) but falls
+    into the standard tier post-shift (<= 150) once stricter enforcement
+    narrows it -- deterministic at every epoch, no coin flip involved."""
+    env = RuleBasedMarket()
+    env.reset(seed=1)
+    action = ExperimentAction(
+        cell_id="c1", genome_content={"revenue_model": {"price_minor_units": 200}}, hypothesis="h"
+    )
+
+    for epoch in range(10):
+        assert env.evaluate(experiment=action, epoch=epoch).purchased is True
+    for epoch in range(10, 15):
+        assert env.evaluate(experiment=action, epoch=epoch).purchased is False
+
+    assert env.advance(epoch=9) == ()
+    events = env.advance(epoch=10)
+    assert len(events) == 1
+    assert events[0].kind == "stricter_enforcement"
+
+
+def test_regime_shift_events_are_recorded_in_the_audit_trail(conn):
+    """A regime shift is a colony-wide happening on the environment's own
+    clock, not one Cell's action -- recorded via `audit.record` the same way
+    `SelectionDecision` is, rather than a second schema-level identity for a
+    fact this mechanism already carries (see `runner._run_one_epoch`)."""
+    manifest = _run(conn, seed=1, epochs=15, population=3)
+    assert manifest.failures == ()
+
+    rows = conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE event_type = 'simulation_environment_event'"
+    ).fetchall()
+    assert len(rows) == 1
+    metadata = json.loads(rows[0]["metadata_json"])
+    assert metadata["kind"] == "price_compression"
+    assert metadata["epoch"] == 10
+
+
+def test_build_environment_selects_the_named_family_and_rejects_unknown_names():
+    assert isinstance(
+        environment.build_environment("utility_maximizing_market"), UtilityMaximizingMarket
+    )
+    assert isinstance(environment.build_environment("rule_based_market"), RuleBasedMarket)
+    with pytest.raises(environment.UnknownEnvironmentError):
+        environment.build_environment("not_a_real_market")
+
+
+def test_cli_simulate_accepts_the_rule_based_market(tmp_path):
+    db_path = tmp_path / "sim.db"
+    output_path = tmp_path / "manifest.json"
+    cli.main(["--db", str(db_path), "init"])
+
+    exit_code = cli.main([
+        "--db", str(db_path), "simulate",
+        "--seed", "3", "--epochs", "5", "--population", "3",
+        "--environment", "rule_based_market", "--output", str(output_path),
+    ])
+
+    assert exit_code in (0, None)
+    written = json.loads(output_path.read_text())
+    assert written["environment_name"] == "rule_based_market"
+    assert all(written["conservation_ok"].values())
+
+
+class _NeverCallMarket:
+    """A `MarketEnvironment` that fails loudly the moment anything routine
+    calls it -- used to prove `validation`/`secret_challenge` roles are
+    structurally untouched, not just conventionally ignored."""
+
+    name = "never_call_market"
+    version = "1"
+
+    def reset(self, *, seed: int) -> None:
+        pass
+
+    def observe(self, *, cell_id: str, epoch: int):
+        raise AssertionError("validation/secret_challenge must never be observed by the routine loop")
+
+    def evaluate(self, *, experiment, epoch: int):
+        raise AssertionError("validation/secret_challenge must never be evaluated by the routine loop")
+
+    def advance(self, *, epoch: int):
+        raise AssertionError("validation/secret_challenge must never be advanced by the routine loop")
+
+
+def test_the_routine_epoch_loop_never_touches_validation_or_secret_challenge_environments(conn):
+    """SPEC.md §8.1: validation 'influences capital allocation, partially
+    hidden' and secret challenge is 'never available to Cells or routine
+    selection logic'. Enforced structurally, not by convention:
+    `runner._run_one_epoch` takes a single `MarketEnvironment`, not a suite,
+    so there is no path by which it could reach `validation` or
+    `secret_challenge` even by mistake -- a fake that raises the instant
+    anything calls it proves the routine loop never does."""
+    suite = EnvironmentSuite(
+        training=UtilityMaximizingMarket(),
+        validation=_NeverCallMarket(),
+        secret_challenge=_NeverCallMarket(),
+    )
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="test", master_seed=1, epochs=6, population=3),
+        suite=suite,
+    )
+    assert manifest.failures == ()
+    assert manifest.epochs_completed == 6
+
+
+def test_environment_suite_training_only_leaves_the_other_roles_unset():
+    suite = EnvironmentSuite.training_only(UtilityMaximizingMarket())
+    assert suite.validation is None
+    assert suite.secret_challenge is None
 
 
 def test_random_eligible_selection_never_chooses_an_ineligible_cell(conn):

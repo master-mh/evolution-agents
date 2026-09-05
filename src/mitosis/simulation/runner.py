@@ -39,7 +39,7 @@ from .. import (
 )
 from ..models import Book, CellStatus, CellType, ClockMode, EntrySpec
 from . import mutation
-from .environment import ExperimentAction, MarketEnvironment, UtilityMaximizingMarket
+from .environment import EnvironmentSuite, ExperimentAction, MarketEnvironment, UtilityMaximizingMarket
 from .manifest import EpochRecord, RunManifest
 from .policy import POLICY_MODEL_ID, POLICY_VERSION, SIMULATION_PROVIDER, SimulationPolicyProvider
 from .selection_policy import RandomEligibleSelection, SelectionPolicy
@@ -299,7 +299,23 @@ def _run_one_epoch(
             # per-grant `PromotionError`.
             pass
 
-    environment.advance(epoch=epoch)
+    for event in environment.advance(epoch=epoch):
+        # A colony-wide happening the environment produced on its own clock
+        # (SPEC.md §8.4's scheduled regime shifts), not one Cell's action --
+        # recorded the same way `SelectionDecision` is, since neither
+        # deserves a second, schema-level identity for a fact `audit`
+        # already carries. Manifest-level regime-shift bookkeeping is F5's
+        # addition (see `manifest.py`'s own docstring); this is what makes a
+        # shift a real, queryable event now rather than inert Protocol
+        # plumbing nothing ever calls.
+        audit.record(
+            conn, event_type="simulation_environment_event", cell_id=None,
+            description=event.detail,
+            metadata={
+                "run_id": run_id, "epoch": epoch,
+                "environment": environment.name, "kind": event.kind,
+            },
+        )
 
     living = sum(1 for c in lifecycle.list_cells(conn) if c.status is CellStatus.ALIVE)
     return EpochRecord(
@@ -311,18 +327,23 @@ def _run_one_epoch(
 
 def run(
     conn, config: RunConfig, *,
-    environment: MarketEnvironment | None = None,
+    suite: EnvironmentSuite | None = None,
     selection: SelectionPolicy | None = None,
 ) -> RunManifest:
-    environment = environment or UtilityMaximizingMarket()
+    suite = suite or EnvironmentSuite.training_only(UtilityMaximizingMarket())
     selection = selection or RandomEligibleSelection()
     run_id = ids.new_id()
     started = datetime.now(timezone.utc)
 
     with ids.seeded(config.master_seed):
-        environment.reset(seed=config.master_seed)
+        # `validation`/`secret_challenge` are reset so a later slice can use
+        # them without an "unreset" footgun -- but §8.1 means only `training`
+        # is ever passed into the epoch loop below.
+        for candidate in (suite.training, suite.validation, suite.secret_challenge):
+            if candidate is not None:
+                candidate.reset(seed=config.master_seed)
         _record_run_start(
-            conn, run_id=run_id, config=config, environment=environment,
+            conn, run_id=run_id, config=config, environment=suite.training,
             selection=selection, started=started,
         )
 
@@ -346,7 +367,7 @@ def run(
                 epoch_records.append(
                     _run_one_epoch(
                         conn, epoch=epoch, run_id=run_id, policy=policy,
-                        environment=environment, selection=selection,
+                        environment=suite.training, selection=selection,
                         master_seed=config.master_seed,
                     )
                 )
@@ -370,8 +391,8 @@ def run(
             scenario_name=config.scenario_name,
             master_seed=config.master_seed,
             code_version=_code_version(),
-            environment_name=environment.name,
-            environment_version=environment.version,
+            environment_name=suite.training.name,
+            environment_version=suite.training.version,
             policy_name=SIMULATION_PROVIDER,
             policy_version=POLICY_VERSION,
             population_target=config.population,

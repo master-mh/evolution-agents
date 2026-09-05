@@ -4581,3 +4581,103 @@ out as a Slice G decision, not this one.
   epochs=5 to reproduce and confirm the capacity-exhaustion bug before fixing it — both a smaller
   smoke scale (this slice's actual scope) and one large enough to hit §9.2's colony-wide cap, since
   the smaller scale alone would have shipped the bug undetected.
+
+## ADR-073: A second, independently-shaped market family, real environment separation, and scheduled regime shifts (Slice F, part 2)
+
+- **Status:** Accepted; `src/mitosis/simulation/environment.py` gains `RuleBasedMarket`,
+  `EnvironmentSuite`, and a scheduled regime shift on both families; `cli.py` gains `simulate
+  --environment`; 12 new tests in `tests/test_simulation.py` (24 total)
+- **Spec ref:** §8.1 (environment separation), §8.3 (multiple simulator families), §8.4 (scheduled
+  regime shifts); `docs/DECISIONS.md`'s ADR-072 (this slice's own F1 predecessor and architecture)
+
+- **Context:** F1 shipped exactly one environment family (`UtilityMaximizingMarket`) and said so in
+  its own docstring — brief requirement F.2 ("at least two independently shaped customer/market
+  models so success cannot depend on one authored rule set") was explicitly deferred to this slice.
+  §8.1's three-way training/validation/secret-challenge separation and §8.4's scheduled regime
+  shifts were likewise named in the F1 architecture plan as F2's addition, not built yet.
+
+- **`RuleBasedMarket`, and what "independently shaped" has to mean to be true:** the sibling
+  compares a continuous random willingness-to-pay draw against price. A second family that just
+  reused that comparison with different constants would not satisfy §8.3 — a strategy tuned to win
+  one continuous curve wins the other too, which is exactly the collusion the clause rules out. This
+  family is instead discrete rule branching throughout: a price tier, a genome-declared boolean flag
+  required to clear the standard tier, and a premium tier gated on a declared quality flag plus a
+  fixed-cutoff coin flip rather than a price-sensitive curve. `test_the_two_environment_families_
+  disagree_on_the_same_genome` proves the two mechanisms actually disagree on one fixed genome
+  (price=600, no `durable` flag: sometimes clears the sibling family, never clears this one) rather
+  than merely asserting they are different classes.
+
+- **Environment separation without a fake consumer:** `EnvironmentSuite` is a real, three-field
+  frozen dataclass (`training`, `validation`, `secret_challenge`) — not an enum-and-registry, since
+  nothing in this slice dispatches on role generically; three named fields already are the "config
+  object with controlled visibility" §8.1 asks for. The separation is enforced structurally, not by
+  convention: `runner._run_one_epoch`'s own signature takes one `MarketEnvironment`, not a suite, so
+  there is no path by which the routine loop could reach `validation` or `secret_challenge` even by
+  a future mistake — `run()` is the only place that reads `suite.training` out of the suite at all.
+  `test_the_routine_epoch_loop_never_touches_validation_or_secret_challenge_environments` proves this
+  with a fake that raises the instant anything calls it, not an AST check.
+
+  **What this deliberately does not do:** wire a `validation`-consulting selection policy.
+  `RandomEligibleSelection` does not look at any environment outcome at all, by design (brief Slice
+  F's own minimum) — building a fake consumer just to exercise the `validation` slot would be
+  exactly the premature abstraction this repo's own conventions warn against. §8.1's "influences
+  capital allocation" clause is realized once a Slice G selection policy exists that looks at
+  performance at all; this slice lays the pipe and proves the boundary holds, not more.
+
+- **Scheduled regime shifts, on both families, at one shared epoch:** `_REGIME_SHIFT_EPOCH = 10` is
+  a fixed colony-wide constant, not a random draw — §8.4 calls this "part of fitness evaluation, not
+  only a test category," which a random shock would not satisfy (nothing could be pre-registered
+  against it). `UtilityMaximizingMarket` gets a price-compression shift (willingness-to-pay range
+  narrows from `uniform(0.5,1.5)` to `uniform(0.3,0.9)` — §8.4's "demand changes, price
+  compression"); `RuleBasedMarket` gets a stricter-enforcement shift (the always-clears budget tier
+  narrows from <=300 to <=150 — §8.4's "platform-fee changes... stricter enforcement"). Both are
+  proven behaviourally, not just structurally: a price chosen so the pre-shift branch sometimes
+  purchases and the post-shift branch can *never* purchase (600 exceeds the post-shift ceiling of
+  450; 200 exceeds the post-shift budget-tier boundary of 150), so the assertions are deterministic
+  facts about the fixed seed, not statistics that could pass by chance.
+
+  A shift is a colony-wide happening the environment produces on its own clock, not one Cell's
+  action — recorded via `audit.record` the same way `SelectionDecision` already is (ADR-072), rather
+  than inventing a second schema-level identity for a fact this mechanism already carries. Manifest-
+  level regime-shift bookkeeping stays out of scope here on purpose: `manifest.py`'s own docstring
+  already assigns "regime-shift bookkeeping" to F5, once diversity time series make a fuller
+  manifest shape worth building at once rather than piecemeal — this slice makes the shift a real,
+  audited fact rather than inert Protocol plumbing nothing calls, without pre-empting F5's own
+  design of how it surfaces in the retained artifact.
+
+- **What it displaced:** an `EnvironmentRole` enum plus a role-keyed dict, considered for
+  `EnvironmentSuite` and rejected — nothing dispatches on role generically in this slice, and three
+  named dataclass fields say everything an enum would without the indirection. Also rejected: CLI
+  flags for `--validation-environment`/`--secret-challenge-environment` — surface for two roles
+  nothing consumes yet is exactly the kind of speculative API this repo's conventions rule out;
+  `EnvironmentSuite` is directly constructible by any Python caller (tests, a future scenario
+  loader) in the meantime.
+
+- **A pre-existing test broke, correctly, for a real reason:** F2a's own
+  `test_the_two_environment_families_disagree_on_the_same_genome` (written before the regime shift
+  existed) sampled epochs 0-29 at price=650 and asserted at least one sale in the sibling family. Once
+  the shift landed, epochs >=10 became provably unsellable at that price (450 < 650) in that family,
+  and the specific seed/cell_id/price combination happened to have zero hits in the remaining
+  pre-shift window (0-9) — an instance of this repo's own "grep every reader" discipline: a change to
+  what a late epoch *means* silently broke a test that exercised one, once run rather than merely
+  reread. Fixed by restricting to the pre-shift window and picking a price (600) verified, not
+  assumed, to hit within it.
+
+- **Verification:** 12 new tests (24 total in the file): the sibling family's purity, tier rules, and
+  disagreement with `UtilityMaximizingMarket`; `build_environment`'s name-based construction and
+  rejection of an unknown name; the CLI's `--environment` flag actually changing which family a run
+  uses (not just accepting the flag); the routine loop's structural blindness to `validation`/
+  `secret_challenge`; both families' regime shifts, behaviourally and via `advance()`'s returned
+  event; the shift's audit-trail record. Six teeth-checks, each confirmed to fail for the stated
+  reason and then restored verbatim: the durable-flag tier-rule removed (breaks both the durable-flag
+  test and the disagreement test), the unknown-name rejection removed (breaks the factory test), the
+  CLI wiring reverted to ignore `--environment` (breaks the CLI family-selection test), the routine
+  loop rewired to read `suite.validation` (breaks the never-call test), the regime-shift epoch branch
+  removed from `evaluate` (breaks the shift test), and the audit-recording loop removed from
+  `_run_one_epoch` (breaks the audit-trail test). Full suite green; golden run unaffected (hash
+  unchanged at 38 — this slice touches no existing scenario); `ruff check .` and
+  `scripts/check_docs_facts.py` both clean.
+
+- Next: the remaining mutation operators (§14.1, Slice F3), chaos drills (§28), full manifest
+  richness (Slice F5), then Slice G's remaining `SelectionPolicy` implementations and Slice H's
+  pre-registered Phase 3 comparisons.

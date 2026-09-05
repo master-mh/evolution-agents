@@ -64,6 +64,7 @@ from . import (
     scheduler,
     sweeper,
 )
+from .simulation import environment as simulation_environment
 from .simulation import runner as simulation_runner
 from .accounts import cell_cash
 from .models import (
@@ -941,6 +942,9 @@ def cmd_simulate(args: argparse.Namespace) -> None:
         simulation_runner.RunConfig(
             scenario_name=args.scenario, master_seed=args.seed,
             epochs=args.epochs, population=args.population, output_path=args.output,
+        ),
+        suite=simulation_environment.EnvironmentSuite.training_only(
+            simulation_environment.build_environment(args.environment)
         ),
     )
     print(manifest.summary())
@@ -3307,6 +3311,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     simulate_parser.add_argument(
         "--output", default=None, help="path to write the machine-readable run manifest"
+    )
+    simulate_parser.add_argument(
+        "--environment",
+        choices=[
+            simulation_environment.UtilityMaximizingMarket.name,
+            simulation_environment.RuleBasedMarket.name,
+        ],
+        default=simulation_environment.UtilityMaximizingMarket.name,
+        help="market family (SPEC.md §8.3; default: utility_maximizing_market)",
     )
     simulate_parser.set_defaults(func=cmd_simulate)
 
