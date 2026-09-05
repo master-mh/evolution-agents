@@ -5036,3 +5036,71 @@ out as a Slice G decision, not this one.
   sequence: G1 candidate.py + schema, G2 SingleLeaderboardSelection, G3 ParetoSelection, G4
   MapElitesSelection, G5 StagedFundingSelection + Thompson sampling + the validation consumer, G6
   cross-policy acceptance harness).
+
+## ADR-078: Simulator-native fitness dimensions, the full decision-record schema, and a Thompson-sampling primitive (Slice G, part 1)
+
+- **Status:** Accepted; new `src/mitosis/simulation/candidate.py`; `SelectionDecision` gains nine new
+  fields (all defaulted); `posteriors.py` gains `sample()`; `RandomEligibleSelection` and `runner.py`
+  updated to use the new fields honestly; 30 new tests across `tests/test_simulation_candidate.py`
+  (new), `tests/test_posteriors.py`, and `tests/test_simulation.py` (80 total simulation-area tests)
+- **Spec ref:** the approved Slice G plan's central finding (see ADR-077); SPEC.md §10.2/§13.2 (gate-
+  then-frontier, never a scalar), §12.1-§12.3 (niches, MAP-Elites, Thompson sampling), §0.3
+  (`economic_potential`'s structural refusal)
+
+- **What shipped, following the plan directly:** `candidate.py`'s simulator-native gates
+  (`not_quarantined`, real; `reproducibility`, a genuine canonical measurement built from
+  cross-Cell replication of a revenue-producing result — see ADR-077's central finding for why the
+  kernel's own nine dimensions would be degenerate here) and axes (`structural_novelty`, reused from
+  `novelty.descriptors()` by direct call since it is genome-content-only; `realized_net_revenue`;
+  `experiment_success_rate`; `economic_potential`, permanently unmeasurable even here — §0.3's
+  refusal is structural, not a data gap, and `SimulationPolicyProvider` has no upside field to even
+  decline). `dominates()` and `pareto_frontier()` reimplement `selection.py`'s exact rule over the
+  new `SimCandidate` shape (a different candidate, not a different rule). `niche_elite()` gives
+  `novelty.py`'s archive the elite-per-niche rule its own docstring says it deliberately lacks:
+  highest `realized_net_revenue` among evaluated occupants, uniform-random exploration among
+  unevaluated ones, `None` for an empty niche. `posteriors.sample()` adds one Thompson-sampling draw
+  (`rng.betavariate(alpha, beta)`) without disturbing the module's own stated boundary — comparing
+  niches' draws is still absent, reserved for `StagedFundingSelection` (G5).
+
+- **`SelectionDecision` gains nine new fields, all defaulted, so no existing policy or test needed to
+  change shape.** `gate_results`, `measured_dimensions`/`unmeasured_dimensions`,
+  `pareto_front_cell_ids`, `niches: tuple[NicheStanding, ...]`, `parent_mutation_operators`/
+  `parent_child_budgets` (per-parent overrides — ADR-074 logged deferring exactly this
+  generalization as "scope built for a Slice G policy that doesn't exist yet"; `RandomEligibleSelection`
+  reproduces at most one parent per epoch and never populates them), `intended_experiment`.
+  `RandomEligibleSelection` reports every known simulator-native dimension name as
+  `unmeasured_dimensions` — an explicit "nothing consulted," not a silently-empty tuple — matching
+  its own F1 docstring's already-established posture for its original, smaller field set.
+
+- **`runner.py`'s reproduction loop now consults the per-parent overrides, with a fallback that
+  keeps every prior policy's behaviour byte-identical.** `operator_overrides.get(parent_id,
+  decision.mutation_operator)` and the equivalent for budget — `RandomEligibleSelection` never
+  populates the override tuples, so this is a no-op for every run before this slice.
+
+- **A wrong first attempt to verify the budget override, caught before it shipped.** The first draft
+  of the override test asserted the child's *current* USD_SIM cash balance equals the overridden
+  budget — wrong, because a child born early in a 20-epoch run has had further epochs to earn its
+  own revenue since, so a live balance is not the fact the test meant to check. Fixed to query the
+  `cell_reproduction_funding` transaction itself (the birth-time credit, `lineage.py`'s own
+  transaction type — distinct from founding's `cell_birth_funding`), which is fixed at birth and
+  answers the actual question the test asks.
+
+- **Verification:** structural (`SimCandidate`/`Axis`/`GateResult` carry no
+  `score`/`rank`/`weight`/`fitness`/`priority`/`total`, the same guarantee `test_selection.py`'s own
+  equivalent test proves for the kernel's shapes); every gate/axis function unit-tested on
+  constructed fixtures (quarantine, the reproducibility threshold and its reject/pass split,
+  novelty's founder-abstention, revenue-minus-spend, success rate, the permanent
+  `economic_potential` abstention); `dominates()`'s strict-improvement and disjoint-measured-axes
+  cases; `pareto_frontier()`'s gate-filtering; `niche_elite()`'s evaluated-vs-exploratory split;
+  `posteriors.sample()`'s statistical convergence to `posterior_mean`, its determinism given a fixed
+  `rng`, and that different seeds actually produce different draws; the decision-record honesty
+  field; the per-parent override mechanism through a live run. Seven teeth-checks (the
+  `HIGHER_IS_BETTER` sense, the reproducibility threshold, the niche-elite sort direction, the
+  Thompson-sample argument order, the operator override, the budget override, the honesty-field
+  population), each confirmed to fail for the stated reason and restored verbatim. Full suite
+  green; golden run unaffected (hash unchanged at 38 — no existing scenario touched); `ruff
+  check .` and `scripts/check_docs_facts.py` both clean.
+
+- Next: G2 — `SingleLeaderboardSelection`, the smallest new policy (no gates, no niches), proving the
+  CLI/factory wiring pattern before G3 (`ParetoSelection`), G4 (`MapElitesSelection`), and G5
+  (`StagedFundingSelection` + the `EnvironmentSuite.validation` consumer) build on it.

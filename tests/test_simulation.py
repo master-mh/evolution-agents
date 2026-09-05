@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import ast
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -29,7 +29,7 @@ from mitosis.simulation.environment import (
     UtilityMaximizingMarket,
 )
 from mitosis.simulation.policy import SimulationPolicyProvider, _extract_genome
-from mitosis.simulation.selection_policy import RandomEligibleSelection
+from mitosis.simulation.selection_policy import RandomEligibleSelection, SelectionDecision
 
 
 @pytest.fixture
@@ -713,6 +713,91 @@ def test_random_eligible_selection_never_chooses_an_ineligible_cell(conn):
 
     assert decision.eligible_cell_ids == ()
     assert decision.chosen_parent_cell_ids == ()
+
+
+def test_random_eligible_selection_reports_every_dimension_as_unmeasured(conn):
+    """Brief Slice G's honesty rule: a policy that consults no gates/niches
+    says so explicitly via `unmeasured_dimensions` naming every known
+    simulator-native dimension, rather than an unexplained empty tuple."""
+    import random
+
+    from mitosis.simulation import candidate
+
+    policy = RandomEligibleSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    all_dimensions = set(candidate.SIM_GATE_DIMENSIONS) | set(candidate.SIM_FRONTIER_DIMENSIONS)
+    assert set(decision.unmeasured_dimensions) == all_dimensions
+    assert decision.measured_dimensions == ()
+
+
+class _OverrideWrapperSelection:
+    """Wraps `RandomEligibleSelection`, overriding only the per-parent
+    operator/budget fields on top of its real decision -- proves
+    `runner.py`'s reproduction loop actually reads and uses the override
+    fields. No real policy populates them yet at this sub-slice (G1); Slice
+    G's later policies (MAP-Elites, staged funding) will be the first."""
+
+    name = "override_wrapper"
+    version = "1"
+
+    def __init__(self, *, operator: str, budget: int) -> None:
+        self._wrapped = RandomEligibleSelection()
+        self._operator = operator
+        self._budget = budget
+
+    def decide(self, conn, *, epoch, rng, seed_label):
+        base = self._wrapped.decide(conn, epoch=epoch, rng=rng, seed_label=seed_label)
+        return replace(
+            base, policy_name=self.name, policy_version=self.version,
+            parent_mutation_operators=tuple(
+                (cid, self._operator) for cid in base.chosen_parent_cell_ids
+            ),
+            parent_child_budgets=tuple(
+                (cid, self._budget) for cid in base.chosen_parent_cell_ids
+            ),
+        )
+
+
+def test_per_parent_mutation_operator_and_budget_overrides_take_precedence(conn):
+    """The per-parent mapping fields exist so a future policy reproducing
+    from multiple niches in one epoch can give each its own operator/budget
+    (ADR-074 logged deferring exactly this as "scope built for a Slice G
+    policy that doesn't exist yet"); this proves `runner.py`'s lookup
+    actually prefers them over the shared `mutation_operator`/
+    `child_budget_minor_units` fields, not just that the schema accepts them."""
+    policy = _OverrideWrapperSelection(operator=mutation.MARKET_CUSTOMER_OPERATOR, budget=250)
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="test", master_seed=7, epochs=20, population=10),
+        selection=policy,
+    )
+    if manifest.final_living_cells <= 10:
+        pytest.skip("no reproduction happened at this seed/epoch count -- not this test's claim")
+
+    rows = conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE event_type = 'simulation_mutation'"
+    ).fetchall()
+    assert rows
+    for row in rows:
+        metadata = json.loads(row["metadata_json"])
+        assert metadata["operator"] == mutation.MARKET_CUSTOMER_OPERATOR
+
+    children = conn.execute("SELECT cell_id FROM cells WHERE parent_cell_id IS NOT NULL").fetchall()
+    assert children
+    for child in children:
+        # The funding *transaction* at birth, not the current cash balance --
+        # a child born early has had further epochs to earn its own revenue
+        # since, which would make a live-balance check pass or fail for the
+        # wrong reason.
+        row = conn.execute(
+            "SELECT e.amount_minor_units AS amount FROM ledger_entries e "
+            "JOIN ledger_transactions t ON t.transaction_id = e.transaction_id "
+            "WHERE t.transaction_type = 'cell_reproduction_funding' "
+            "AND e.account_id = ? AND e.amount_minor_units > 0",
+            (f"cell:{child['cell_id']}:cash",),
+        ).fetchone()
+        assert row is not None
+        assert row["amount"] == 250
 
 
 def test_kill_fraction_drill_kills_the_expected_share_and_conservation_holds(conn):

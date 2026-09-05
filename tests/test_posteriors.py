@@ -364,6 +364,50 @@ def test_the_posterior_never_reaches_a_cell():
         )
 
 
+def test_sample_draws_from_the_posteriors_own_beta_distribution():
+    """A skewed posterior (mean far from 0.5) whose many draws' own mean
+    converges close to `posterior_mean` -- proof `sample()` actually draws
+    from `(alpha, beta)`, not some unrelated or swapped pair."""
+    import random
+
+    posterior = posteriors.StageConversionPosterior(
+        coordinate=(("novelty_distance", "radical"),), trials=100, conversions=80,
+        alpha=81.0, beta=21.0, posterior_mean=81.0 / 102.0, reason="test fixture",
+    )
+    rng = random.Random(0)
+    draws = [posteriors.sample(posterior, rng=rng) for _ in range(5000)]
+    assert sum(draws) / len(draws) == pytest.approx(posterior.posterior_mean, abs=0.02)
+
+
+def test_sample_is_deterministic_given_the_same_rng_state():
+    import random
+
+    posterior = posteriors.StageConversionPosterior(
+        coordinate=(), trials=10, conversions=3, alpha=4.0, beta=8.0,
+        posterior_mean=4.0 / 12.0, reason="test fixture",
+    )
+    first = posteriors.sample(posterior, rng=random.Random(42))
+    second = posteriors.sample(posterior, rng=random.Random(42))
+    assert first == second
+
+
+def test_sample_uses_the_injected_rng_not_a_hidden_global_source():
+    """Two different seeds must be able to produce different draws -- if
+    `sample()` silently ignored `rng` and drew from the module-global
+    `random` instead, this would still pass by accident some of the time,
+    which is exactly why the previous test's determinism check matters too:
+    together they pin both that the draw is seeded and that it is seeded by
+    the caller's own `rng`."""
+    import random
+
+    posterior = posteriors.StageConversionPosterior(
+        coordinate=(), trials=10, conversions=3, alpha=4.0, beta=8.0,
+        posterior_mean=4.0 / 12.0, reason="test fixture",
+    )
+    draws = {posteriors.sample(posterior, rng=random.Random(seed)) for seed in range(10)}
+    assert len(draws) > 1
+
+
 def _fingerprint(conn):
     tables = [r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]

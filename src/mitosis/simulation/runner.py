@@ -300,6 +300,13 @@ def _run_one_epoch(
         metadata={"run_id": run_id, **asdict(decision)},
     )
 
+    # Per-parent overrides for a policy reproducing from multiple niches in
+    # one epoch, each wanting its own operator/budget (Slice G); a policy
+    # that never populates these (every policy through F5) falls back to the
+    # one shared field per decision, unchanged from before this lookup existed.
+    operator_overrides = dict(decision.parent_mutation_operators)
+    budget_overrides = dict(decision.parent_child_budgets)
+
     reproductions = 0
     for parent_id in decision.chosen_parent_cell_ids:
         parent = lifecycle.get_cell(conn, parent_id)
@@ -310,13 +317,15 @@ def _run_one_epoch(
         # the same operator across a whole run would otherwise draw from the
         # identical seed and produce the identical "variation" every time.
         mutation_seed = f"{master_seed}:mutation:{epoch}:{parent_id}"
-        operator_fn = mutation.OPERATORS.get(decision.mutation_operator, mutation.no_op)
+        chosen_operator = operator_overrides.get(parent_id, decision.mutation_operator)
+        chosen_budget = budget_overrides.get(parent_id, decision.child_budget_minor_units)
+        operator_fn = mutation.OPERATORS.get(chosen_operator, mutation.no_op)
         mutation_dict, operator_name = operator_fn(parent_content, seed=mutation_seed)
         reproduce_key = f"sim:{run_id}:epoch:{epoch}:reproduce:{parent_id}"
         try:
             child = lineage.reproduce(
                 conn, parent_cell_id=parent_id,
-                budget_minor_units=decision.child_budget_minor_units,
+                budget_minor_units=chosen_budget,
                 idempotency_key=reproduce_key,
                 mutation=mutation_dict, mutation_operator=operator_name,
             )

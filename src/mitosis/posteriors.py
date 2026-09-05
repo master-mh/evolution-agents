@@ -82,10 +82,19 @@ attention toward — is the Thompson-sampling *policy* §12.3 names in its
 title, and it is deliberately absent: sampling from these distributions to
 choose is a consumer this module does not have yet, the same gap `selection.py`
 left between "a frontier" and "an allocation decision".
+
+**`sample()` (implementation brief Slice G) does not change this line.** A
+single Beta draw from one already-computed `(alpha, beta)` pair is exactly as
+much this module's business as `posterior_mean` already is — both are honest
+summary statistics of one distribution; the only difference is that one is
+stochastic. *Comparing* two niches' draws to decide which gets capital is
+still the consumer this module does not have — that consumer is
+`simulation.selection_policy.StagedFundingSelection`.
 """
 
 from __future__ import annotations
 
+import random
 import sqlite3
 from dataclasses import dataclass
 
@@ -161,6 +170,20 @@ def _posterior(*, trials: int, conversions: int) -> tuple[float, float, float]:
     alpha = PRIOR_ALPHA + conversions
     beta = PRIOR_BETA + (trials - conversions)
     return alpha, beta, alpha / (alpha + beta)
+
+
+def sample(posterior: StageConversionPosterior, *, rng: random.Random) -> float:
+    """One Thompson-sampling draw from this niche's Beta(alpha, beta)
+    posterior. A single-distribution statistic, exactly as `posterior_mean`
+    already is — see the module docstring's "What this deliberately does
+    not do" for why this still compares and decides nothing.
+
+    `rng` is always caller-supplied, never the module-global `random` —
+    the same rule every other seeded draw in this codebase follows, so a
+    caller threading one seed through a whole decision gets one
+    reproducible stream rather than a hidden second source of randomness.
+    """
+    return rng.betavariate(posterior.alpha, posterior.beta)
 
 
 def posteriors(conn: sqlite3.Connection) -> Posteriors:
