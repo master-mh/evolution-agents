@@ -4392,3 +4392,58 @@ carried no such claim and needed no edit.
 
 - **No behavioural change to verify** — the decision is to build nothing. Full suite stays green
   (the docstring edit touches no code path). The teeth of this ADR are in the record, not a test.
+
+## ADR-071: Wiring auto-promotion into `tick` allocates capital; it cannot approve a `spend_request` — that proposal kind is never batchable
+
+- **Status:** Accepted; `cli.py::cmd_tick` passes a `promoter`; 7 new tests in
+  `tests/test_scheduler_autopromotion.py`
+- **Spec ref:** §25.1, §23.1, §27.1; ADR-063 (`autopromotion.py`, which this slice only calls)
+
+- **Context:** an external audit brief's Slice E asked to "wire auto-promotion into the scheduled
+  path" — `cli.py::cmd_tick` never passed a `promoter` to `scheduler.tick()`, so an operator who
+  enabled `autonomy.auto_promotion` got proposals deliberated and queued every tick but nothing
+  ever *allocated* unless they separately ran the standalone `mitosis auto-promote` verb by hand.
+  The brief's own phrasing for the "on" behaviour to test was "a batchable request and funded pool
+  are approved and allocated during a tick."
+
+- **The decision this ADR records:** that scenario, read literally, cannot be built for a
+  `spend_request` — the only proposal kind `promotion.allocate()` will ever consume
+  (`_allocate_locked` rejects every other kind explicitly: "only a spend_request allocates
+  capital"). `approval._kernel_tier` unconditionally floors a `spend_request` at `RiskTier.MEDIUM`
+  regardless of the `risk_tier` the Cell claims in its reply, and `RequestStatus.batchable` requires
+  `assessed_tier is RiskTier.LOW`. So **no `spend_request`, at any claimed tier, is ever
+  batchable**, and `autopromotion.sweep()`'s own `approve_batch()` step can therefore never
+  auto-approve one — on or off. Approval and allocation never meet inside one unattended sweep for
+  this proposal kind: a human approves it (`approval.approve()`, exactly as happens today, with no
+  change from this slice), and what the wiring actually adds is that *allocating* an
+  already-approved grant — moving the money, waking the Cell — now reaches an ordinary scheduled
+  tick instead of requiring the standalone verb to be run by hand.
+
+  This is not a gap this slice leaves open. `_kernel_tier`'s MEDIUM floor on capital requests is a
+  live safety guard (§23.1: "high-risk stays for a person"), and loosening it to manufacture a
+  batchable spend request would be widening exactly the predicate `autopromotion.py`'s own module
+  docstring promises never to widen. The correct reading of "wire auto-promotion into the scheduled
+  path" is the allocation half alone — approval of capital requests staying human by construction is
+  the feature, not an accident this ADR excuses.
+
+- **What it displaced:**
+  - **Testing "auto_promotion on approves and allocates a batchable spend_request during one
+    tick"** as the brief's phrasing suggested. Rejected: unbuildable without either loosening
+    `_kernel_tier`'s floor (out of scope, unargued, and a live guard) or fabricating a test double
+    that bypasses real kernel assessment (defeats the point of an integration test for the actual
+    wiring).
+  - **Asserting only `result.halted` / equality against `()`** in the first draft of the vacation
+    and off/on tests. Two real bugs, not just weak style: `allocatable_grants`/`list_promotions`
+    both return `list`, and `[] == ()` is `False` in Python unconditionally — those assertions would
+    have failed (or, if reversed, silently proven nothing) regardless of the actual promotion state.
+    A teeth-check that neutered the vacation guard caught this before it shipped, and separately
+    caught the vacation test's own paid fake provider tripping the *earlier* `real_spending`-disabled
+    guard first, the identical confound `tests/test_scheduler.py`'s
+    `test_an_absent_operator_pauses_paid_work_but_not_free_work` already guards against.
+
+- **Verification:** 7 new tests, including one driven through `cli.main` end-to-end specifically
+  because every direct-`scheduler.tick()` test supplies its own `promoter` and so cannot catch
+  `cmd_tick` itself forgetting to build one. Three teeth-checks (the CLI wiring reverted, a
+  forbidden import reintroduced into `scheduler.py`, the vacation guard neutered), each confirmed to
+  fail for the named reason and then restored verbatim. Full suite 1239 passed (7 new); golden run
+  unaffected (hash unchanged at 38 — this slice touches `cli.py` and tests only).

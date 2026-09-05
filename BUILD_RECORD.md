@@ -18,78 +18,100 @@ the +15% that did not survive honesty, §13.4's concreteness measure,
 Auditor path for §13.3/§13.4's content judgments, the software_native_advantage
 gate reading a resolved content audit, model_policy's temperature socket,
 risk_tier becoming optional for abstain, the bounded single parse-repair
-retry, and the argued refusal to extend it to the Auditors or `call-model`,
+retry, the argued refusal to extend it to the Auditors or `call-model`,
+an external audit's clean source-distribution archive, and its egress-boundary
+repair (robots.txt transport, SSRF, honest personal-data status),
 2026-07-21 through 2026-09-04):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-04 — External audit brief, Slices A–B: distribution hygiene and the egress boundary
+## 2026-09-05 — External audit brief, Slices C–E: docs reconciliation, a lint gate, and auto-promotion reaching `tick`
 
-An external audit (`MITOSIS_IMPROVEMENT_IMPLEMENTATION_BRIEF`, dated 2026-09-04) reviewed the
-repository from outside this session's history and found the kernel's governance/accounting
-core sound but flagged concrete, reproducible defects the existing test suite never exercised —
-plus a live credential exposure that is the owner's to rotate, not this session's to touch.
-Every specific technical claim in the brief was independently verified against the live repo
-before acting on it (test/migration/expectation-version counts, the `.env`/`.venv` exposure
-path, the exact `fetchers.py` bug) — all checked out, so the brief's own priority order (security
-containment first) was followed rather than re-derived.
+Continuing the brief's priority order after Slices A–B (distribution hygiene, egress boundary;
+archived above): documentation repair, a minimal static-analysis gate, then the scheduled-path
+wiring the brief calls out as the last step before the Phase 2 flight simulator becomes the
+gating priority.
 
-### Slice A — clean source-distribution archive
+### Slice C — documentation/safety-claim reconciliation
 
-`.env` (a live Anthropic key) was never git-tracked, but a manually zipped working directory
-would have shipped it anyway — zipping bypasses `.gitignore`, `git archive` cannot.
-`scripts/build_source_archive.py` builds from `git archive` (tracked content only) and then
-independently opens its own output and refuses to ship it if any forbidden path (`.env`, `*.db`,
-`.git/`, a virtualenv, a cache dir, macOS metadata, coverage reports) is present anyway — defense
-in depth against a future `git add -f` mistake, not just trust in git's default. `dist/`,
-`.coverage`, `.DS_Store` added to `.gitignore`.
+README's Status table carried stale counts (a fixed test/migration/golden-version trio that had
+already drifted once) and a "two separate humans" approval claim the code has never enforced —
+`approval.approve` takes any `decided_by` string, so a single operator approving their own request
+is not code-refused, only discouraged by convention. Rewrote the Status section as a phase-capability
+table plus a **Tests** row that names the mechanism (`pytest`, Hypothesis property tests) instead of
+a number that goes stale on the next commit, and corrected "two separate humans" to "two explicit
+steps" with an audit-trail caveat rather than a code-enforced guarantee. Backed by
+`scripts/check_docs_facts.py` (stdlib-only: migration count from the migrations directory, golden
+expectation version from `golden_expectations.json`, CLI verbs via an AST walk of `cli.py`'s
+`add_parser` calls, README's own referenced verbs via regex) wired into CI so a claim that *can*
+drift automatically fails the build the next time it does, instead of waiting for the next external
+audit to notice.
 
-### Slice B — the public-web egress boundary, in three parts
+### Slice D — a narrow runtime-defect lint gate
 
-1. **Robots.txt transport.** `_robots_allow()` called `RobotFileParser.read()`, which opens its
-   own plain `urllib.request.urlopen()` — no redirect refusal, no timeout, no byte cap. A
-   robots.txt that 302s carried the *policy check* off Charter C12's allowlist even though the
-   page fetch itself never would. Now built on the same bounded, no-redirect transport as the
-   page fetch, with explicit tested status semantics (401/403 disallow, 404 means unrestricted,
-   an oversized or redirected response fails closed rather than parsing a possibly-truncated
-   policy).
-2. **SSRF / non-public destinations.** The Charter C12 allowlist only ever compared hostname
-   *strings* — nothing resolved one. `_check_destination_safe` now refuses a hostname that
-   resolves to loopback, private, link-local (cloud-metadata endpoints included), multicast,
-   unspecified, or reserved, before either request. Documented, not closed: DNS rebinding (a
-   second resolution at actual-connect time) is a named limitation, not silently assumed away.
-3. **Honest personal-data status.** The fetcher wrote `contains_personal_data=False`
-   unconditionally — never a determination, always a fabricated negative, and a Cell's own
-   context rendered it as fact ("personal data: no") on every fetch. Now tri-state
-   (`'yes'/'no'/'unknown'`, migration 0034), matching `commercial_use`'s existing shape in the
-   same §20.1 tuple exactly. The artifacts-table data migration preserves the one *real* "no"
-   (`COLONY_AUTHORED`, no external sources at all) while correcting every other historical `0` —
-   which nothing but the fetcher ever wrote — to `'unknown'`.
+The brief's claim reproduced exactly: `tools.py`'s `ToolCall.arguments: dict[str, Any]` referenced
+`Any` with no import, a live `NameError` on any code path that called
+`typing.get_type_hints` against that class (confirmed by reverting the one-line fix and getting the
+exact `NameError: name 'Any' is not defined`, before re-fixing). Added `ruff` as a dev dependency
+scoped to `E9,F63,F7,F82` — undefined names and syntax-shaped errors only, **not** the ~339-finding
+broad style sweep a default `ruff check` reports, which stays deliberately unchased in one commit
+per CLAUDE.md. `test_public_type_hints_resolve` pins the guarantee structurally
+(`typing.get_type_hints` on every public class); CI gained both the docs-fact-check and the lint
+gate as separate steps.
 
-### Verification
+### Slice E — wiring `autopromotion.EvidencePromoter` into the scheduled `tick`
 
-- **1224 tests and the golden run green**, up from 1175 at the start of this arc — real local
-  HTTP servers for the redirect/hang/oversized/status-code cases (a string-level allowlist test
-  can't see any of them, which is why the existing C12 suite never caught the robots.txt bug),
-  plus synthetic-repo teeth-checks for the archive guard and the migration's data translation.
-- **Golden expectations moved 37 → 38.** Full section-by-section diff before regenerating, not
-  assumed from the hash mismatch: `tool_calls`/`artifacts` move only on
-  `contains_personal_data`; `deliberations`/`model_calls`/`resource_usage` shift by a small
-  constant on exactly the 7 rows downstream of the Cell that reads a fetched page back into its
-  own context (the honest word is longer than the fabricated one, and `MockProvider` prices
-  calls as a function of text length — same mechanism as version 35→36). No `output_tokens`,
-  cost, or `balances` row moved.
-- **Three separate teeth-checks**, each: mutate, confirm the specific expected test(s) fail with
-  no other collateral failures, restore from the pre-mutation copy, confirm byte-identical and
-  green again. The robots-transport fix caught its own pre-fix code failing exactly the redirect
-  and oversized-response cases ("DID NOT RAISE"); the SSRF guard caught all 16 of its own targeted
-  cases with its body stubbed to a no-op; the personal-data precedence order caught the one test
-  built to defend it when the tri-state order was swapped.
-- Confirmed against a disposable copy of `first-real-call.db` (untouched original): all 34
-  migrations apply, `PRAGMA integrity_check` and `foreign_key_check` both clean. No paid provider
-  or live network call made — the network tests use only local servers.
+`cli.py::cmd_tick` never passed a `promoter` to `scheduler.tick()`, so an operator who enabled
+`auto_promotion` (§27.1) got proposals deliberated and queued every tick but **nothing ever
+allocated** unless they separately remembered to run the standalone `mitosis auto-promote` verb by
+hand — the flag looked live and silently wasn't, on the one path (`cron` + `tick`) an unattended
+colony actually runs. One line (`promoter=autopromotion.EvidencePromoter()`), leaning entirely on
+`autopromotion.sweep()`'s own pre-existing flag gate and guard coverage (ADR-063) — nothing new to
+build, only a missing call site.
 
-- Next: Slice C (documentation/safety-claim reconciliation — README's stale 696-test/18-migration/
-  golden-v12 counts and the "two separate humans" claim) per the brief's own priority order, then
-  D (a narrow runtime-defect lint gate) and E (wiring auto-promotion into the scheduled `tick`)
-  before the Phase 2 flight simulator (Slice F), which is still the gating step for real
-  evolutionary evidence — Phases 2 and 3 remain deliberately unbuilt.
+**Reading the guards changed what "on" needed to test.** `approval._kernel_tier` unconditionally
+floors a `spend_request` at `RiskTier.MEDIUM` regardless of what the Cell claims, and
+`RequestStatus.batchable` requires `assessed_tier is RiskTier.LOW` — so **no `spend_request` can
+ever be batchable**, and `sweep()`'s own `approve_batch()` step can therefore never auto-approve
+one, flag on or off. Since `promotion.allocate()` also requires the grant's proposal be exactly
+`spend_request` (the only kind that moves capital), approval and allocation never meet inside one
+unattended sweep for this proposal kind: a human approves (`approval.approve()`, exactly as today),
+and what this slice adds is that *allocating* that already-approved grant — moving the money, waking
+the Cell — now reaches an ordinary scheduled tick instead of requiring the standalone verb. Written
+up as ADR-071, since the brief's own phrasing ("approves and allocates") described a scenario that
+turns out to be unbuildable in good faith without loosening a live safety floor nobody asked to
+revisit.
+
+#### Verification
+
+- **7 new tests** (`tests/test_scheduler_autopromotion.py`): flag off leaves an approved grant
+  un-allocated; flag on allocates it; the same property proven **end-to-end through `cli.main`**,
+  not just `scheduler.tick()` directly — every other test passes its own `promoter` by hand, so only
+  the CLI-level test actually pins `cmd_tick`'s call site; a HIGH-tier request stays queued for a
+  person even with auto-promotion on; vacation mode blocks the promoter before deliberation even
+  runs (a paid, unreachable `_Boom.complete` proves it); ticking twice does not double-allocate;
+  a structural AST test pins that `scheduler.py` still imports none of
+  `autopromotion`/`promotion`/`outcome` (the dependency inversion CLAUDE.md names explicitly).
+- **Three teeth-checks, each mutate → confirm the specific test fails for the stated reason → restore
+  verbatim (never `git checkout`, working tree held in memory).** Removing `cmd_tick`'s `promoter=`
+  line failed only the CLI-level test — every direct-`scheduler.tick()` test kept passing, which is
+  exactly the gap that test exists to close. Reintroducing a `promotion` import into `scheduler.py`
+  failed the structural test by name. Neutering the vacation guard (`if False and is_paid and
+  is_on_vacation(...)`) **surfaced two real bugs in the test itself before it could confirm
+  anything**: `list == ()` is unconditionally `False` in Python regardless of contents (every
+  `allocatable_grants`/`list_promotions` call returns a `list`, so four assertions across the file
+  were comparing against the wrong empty-container literal and would have failed even in the
+  passing case, or — worse — silently proven nothing when written the other direction), and the
+  vacation test's own paid `_Boom` provider tripped the *earlier* `real_spending`-disabled guard
+  first, never reaching vacation at all, mirroring the exact confound
+  `test_an_absent_operator_pauses_paid_work_but_not_free_work` in `tests/test_scheduler.py` already
+  guards against with `scheduler.set_real_spending(conn, True)`. Both fixed, then the same mutation
+  re-run to confirm the *fixed* test fails for the right reason before restoring the guard.
+- Full suite **1239 passed** (up from 1232 at the end of Slice D — 7 new); golden run unaffected
+  (hash unchanged at 38, as expected — this slice touches `cli.py` and tests only, no scenario or
+  kernel-semantics change); `ruff check .` and `scripts/check_docs_facts.py` both clean.
+
+- Next: the Phase 2 flight simulator (Slice F) — deterministic seeded environments, at least two
+  independent market-family models, a `mitosis simulate` verb, population scale, an assertion
+  `USD_REAL` never moves — is now the brief's and PRIORITIES.md's shared gating step for real
+  evolutionary evidence (Phases 2–3 remain deliberately unbuilt). Its own design/scoping pass comes
+  first, given its scale, rather than freehand implementation.

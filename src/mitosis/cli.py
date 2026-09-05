@@ -879,12 +879,23 @@ def cmd_tick(args: argparse.Namespace) -> None:
 
     Idempotent per epoch — safe to run from cron as often as you like, since a
     second tick inside the same epoch enqueues nothing.
+
+    Always supplies the §25.1 auto-promotion sweep (ADR-063); it is a no-op
+    while §27.1's `auto_promotion` autonomy flag is off, which is the same
+    switch `mitosis set-autonomy --auto-promotion` and `auto-promote` already
+    read — `autopromotion.sweep` checks it first and does nothing else if it
+    is unset. This is what makes the flag actually reach the scheduled path
+    instead of only the standalone `auto-promote` verb.
     """
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
 
     result = scheduler.tick(
-        conn, provider=_build_provider(args), model=args.model, max_cells=args.max_cells
+        conn,
+        provider=_build_provider(args),
+        model=args.model,
+        max_cells=args.max_cells,
+        promoter=autopromotion.EvidencePromoter(),
     )
 
     print(f"Tick {result.tick_id} — epoch {result.epoch_number} — {result.outcome}")

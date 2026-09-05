@@ -6,6 +6,72 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-04 — External audit brief, Slices A–B: distribution hygiene and the egress boundary
+
+An external audit (`MITOSIS_IMPROVEMENT_IMPLEMENTATION_BRIEF`, dated 2026-09-04) reviewed the
+repository from outside this session's history and found the kernel's governance/accounting
+core sound but flagged concrete, reproducible defects the existing test suite never exercised —
+plus a live credential exposure that is the owner's to rotate, not this session's to touch.
+Every specific technical claim in the brief was independently verified against the live repo
+before acting on it (test/migration/expectation-version counts, the `.env`/`.venv` exposure
+path, the exact `fetchers.py` bug) — all checked out, so the brief's own priority order (security
+containment first) was followed rather than re-derived.
+
+### Slice A — clean source-distribution archive
+
+`.env` (a live Anthropic key) was never git-tracked, but a manually zipped working directory
+would have shipped it anyway — zipping bypasses `.gitignore`, `git archive` cannot.
+`scripts/build_source_archive.py` builds from `git archive` (tracked content only) and then
+independently opens its own output and refuses to ship it if any forbidden path (`.env`, `*.db`,
+`.git/`, a virtualenv, a cache dir, macOS metadata, coverage reports) is present anyway — defense
+in depth against a future `git add -f` mistake, not just trust in git's default. `dist/`,
+`.coverage`, `.DS_Store` added to `.gitignore`.
+
+### Slice B — the public-web egress boundary, in three parts
+
+1. **Robots.txt transport.** `_robots_allow()` called `RobotFileParser.read()`, which opens its
+   own plain `urllib.request.urlopen()` — no redirect refusal, no timeout, no byte cap. A
+   robots.txt that 302s carried the *policy check* off Charter C12's allowlist even though the
+   page fetch itself never would. Now built on the same bounded, no-redirect transport as the
+   page fetch, with explicit tested status semantics (401/403 disallow, 404 means unrestricted,
+   an oversized or redirected response fails closed rather than parsing a possibly-truncated
+   policy).
+2. **SSRF / non-public destinations.** The Charter C12 allowlist only ever compared hostname
+   *strings* — nothing resolved one. `_check_destination_safe` now refuses a hostname that
+   resolves to loopback, private, link-local (cloud-metadata endpoints included), multicast,
+   unspecified, or reserved, before either request. Documented, not closed: DNS rebinding (a
+   second resolution at actual-connect time) is a named limitation, not silently assumed away.
+3. **Honest personal-data status.** The fetcher wrote `contains_personal_data=False`
+   unconditionally — never a determination, always a fabricated negative, and a Cell's own
+   context rendered it as fact ("personal data: no") on every fetch. Now tri-state
+   (`'yes'/'no'/'unknown'`, migration 0034), matching `commercial_use`'s existing shape in the
+   same §20.1 tuple exactly. The artifacts-table data migration preserves the one *real* "no"
+   (`COLONY_AUTHORED`, no external sources at all) while correcting every other historical `0` —
+   which nothing but the fetcher ever wrote — to `'unknown'`.
+
+#### Verification
+
+- **1224 tests and the golden run green**, up from 1175 at the start of this arc — real local
+  HTTP servers for the redirect/hang/oversized/status-code cases (a string-level allowlist test
+  can't see any of them, which is why the existing C12 suite never caught the robots.txt bug),
+  plus synthetic-repo teeth-checks for the archive guard and the migration's data translation.
+- **Golden expectations moved 37 → 38.** Full section-by-section diff before regenerating, not
+  assumed from the hash mismatch: `tool_calls`/`artifacts` move only on
+  `contains_personal_data`; `deliberations`/`model_calls`/`resource_usage` shift by a small
+  constant on exactly the 7 rows downstream of the Cell that reads a fetched page back into its
+  own context (the honest word is longer than the fabricated one, and `MockProvider` prices
+  calls as a function of text length — same mechanism as version 35→36). No `output_tokens`,
+  cost, or `balances` row moved.
+- **Three separate teeth-checks**, each: mutate, confirm the specific expected test(s) fail with
+  no other collateral failures, restore from the pre-mutation copy, confirm byte-identical and
+  green again. The robots-transport fix caught its own pre-fix code failing exactly the redirect
+  and oversized-response cases ("DID NOT RAISE"); the SSRF guard caught all 16 of its own targeted
+  cases with its body stubbed to a no-op; the personal-data precedence order caught the one test
+  built to defend it when the tri-state order was swapped.
+- Confirmed against a disposable copy of `first-real-call.db` (untouched original): all 34
+  migrations apply, `PRAGMA integrity_check` and `foreign_key_check` both clean. No paid provider
+  or live network call made — the network tests use only local servers.
+
 ## 2026-09-03 — A bounded, single parse-repair retry
 
 `deliberation.py` + migration 0033 + `cli.py` + 7 new tests + golden 36 -> 37 (ADR-069). **An
