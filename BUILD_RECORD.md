@@ -24,60 +24,67 @@ repair (robots.txt transport, SSRF, honest personal-data status),
 documentation/safety-claim reconciliation, a narrow runtime-defect lint gate,
 auto-promotion reaching the scheduled `tick`, the flight simulator's first
 slice (mock Cells deciding through the real deliberation pipeline), its
-second (a second market family, environment separation, regime shifts), and
-its third (the remaining mutation operators, wired through a real choice),
+second (a second market family, environment separation, regime shifts), its
+third (the remaining mutation operators, wired through a real choice), and
+its fourth (chaos drills as repeatable scenarios),
 2026-07-21 through 2026-09-05):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-05 — Phase 2 flight simulator, fourth slice: chaos drills as repeatable scenarios (Slice F, part 4)
+## 2026-09-05 — Phase 2 flight simulator, fifth slice (part a): manifest richness, a CI-scale acceptance scenario, and a founding bug the acceptance scale would have hit (Slice F, part 5a)
 
-Continuing the same sub-slice sequence (ADR-072–074) without a fresh plan-mode round-trip.
-ADR-075 is the full as-built record.
+Continuing the same sub-slice sequence (ADR-072–075) without a fresh plan-mode round-trip.
+ADR-076 is the full as-built record.
 
 ### What shipped
 
-New `src/mitosis/simulation/chaos.py`, all five brief-required drills, plus one new seam:
-`runner.run()` gains `epoch_hook`, called once per epoch after that epoch's own processing already
-completed, so every hook-shaped drill shares one addition to `runner.py` rather than one each.
-`KillFractionDrill` kills a seeded fraction of living Cells; `WithdrawCapabilityDrill` disables the
-`auto_promotion` autonomy flag mid-run; `CrashingEnvironment` (a `MarketEnvironment` decorator, no
-runner change needed) raises once from `evaluate()` at a chosen epoch; a regime-shift drill and a
-duplicate/out-of-order drill reuse existing mechanisms rather than adding new ones (below).
+`EpochRecord` gains `distinct_genomes` (the diversity time series — distinct `genome_hash` values
+among living Cells, since a genome hash *is* a Cell's full strategy under ADR-018) and
+`environment_events` (regime-shift recovery, made visible on the retained manifest itself rather
+than only via the audit trail). `RunManifest` gains `config_hash`, a SHA-256 over the run's actual
+configuration. One consolidated test, `test_phase_2_ci_scale_acceptance_scenario`, runs a single
+small scenario and asserts every bullet of the brief's own Phase 2 acceptance checklist by name.
 
-### Two of five drills needed reframing, stated rather than silently substituted
+### A bug the acceptance criteria's own scale would have hit
 
-"Corrupt or withdraw one shared capability/module" has no module/tool-use surface in this simulator
-yet (`SimulationPolicyProvider` decides from genome content alone) — `auto_promotion` is the one
-capability that actually is shared and colony-wide, so withdrawing it is a real loss, not a
-stand-in. "Crash at reserve, execute, and settlement boundaries" targets the *experiment*
-lifecycle's own three-phase shape (start/evaluate/conclude), not the deeper money-reservation FSM in
-`gateway.py` — that FSM's crash safety is Charter C6's job, already exhaustively verified
-independent of any live population; what's genuinely new is whether a full run's own state
-(population, audit trail, manifest) survives one call failing mid-flight. The other two boundaries
-(`start_from_grant`, `conclude`/`record_revenue`) have no injectable seam today, and building one
-solely for a drill to target would be speculative surface for no other caller.
+Validating the manifest changes at population=50 surfaced an unhandled `BirthRateExceededError`:
+`_found_population` created every founder before any epoch advanced, and §9.2's
+`max_births_per_epoch` (default 25) does not distinguish a founder from a reproduced child. Nothing
+in F1-F4's own tests (all population <= 30) exercised this — invisible until something asked for
+more founders than one kernel epoch allows, which the brief's own >= 500 Cell acceptance scale
+unavoidably does. Fixed by founding in batches of `max_births_per_epoch`, advancing the clock
+between batches exactly as the main loop does — not loosening the cap itself (§9.1's own reasoning
+against unrestricted reproduction, the same posture ADR-071 already took on a different cap).
 
-### A wrong assumption, corrected before it shipped
-
-The plan assumed an out-of-order funding call (a child funded before its birth is visible) would be
-rejected. Checking rather than assuming: `ledger` accounts are plain strings, not a foreign key into
-`cells` (confirmed by reading `scheduler.eligible_cells`, which starts from the `cells` table and
-only then checks balances) — so the call neither corrupts anything nor raises; it parks an inert,
-unreachable balance instead. The test asserts what's actually true, not the rejection that doesn't
-happen.
+The fix's own first regression test failed for the wrong reason: calling `_found_population`
+directly skipped `run()`'s own clock-anchoring setup, so `clock.current_epoch` never advanced
+regardless of `clock.advance` calls, and the test failed with the *pre-fix* error for an unrelated
+cause. Rewritten to go through `run()` itself.
 
 ### Verification
 
-9 new tests (42 total): each drill's real effect verified independently of its own self-report (a
-coroner-report count matching the claimed kill count, not just trusting it; the autonomy flag
-actually flipped; one recorded failure and the interrupted experiment concluding on a later epoch,
-not just "didn't crash"; a >5x aggregate sales drop across the regime-shift boundary at full-economy
-scale; duplicate-call idempotency; out-of-order inertness); the shared post-drill invariant helper;
-two determinism-under-a-drill checks covering both injection mechanisms (epoch-hook and
-environment-wrapper). Five teeth-checks, each confirmed to fail for the stated reason and restored
-verbatim. Full suite green; golden run unaffected (hash unchanged at 38); `ruff check .` and
-`scripts/check_docs_facts.py` both clean.
+6 new tests (48 total): the founding-batch fix (via `run()`, not the private function directly); the
+diversity time series' bound *and* that it's not merely "always equals living_cells"; regime-shift
+events appearing only at the scheduled epoch; `config_hash`'s stability, sensitivity to each real
+field, and exclusion of `output_path`; the consolidated acceptance scenario. Four teeth-checks, each
+confirmed to fail for the stated reason and restored verbatim. Full suite green (1286, up from 1281
+— one Hypothesis deadline flake elsewhere confirmed environmental by an isolated rerun, caused by a
+concurrent CPU-heavy benchmark validation on this same machine, not a regression); golden run
+unaffected (hash unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both clean.
 
-- Next: full manifest richness and the two acceptance-scale configurations (Slice F5) close out
-  Slice F, then Slice G's remaining `SelectionPolicy` implementations and Slice H's pre-registered
-  Phase 3 comparisons.
+### What this does not close
+
+The second acceptance-scale configuration: a moderate-scale validation (population=50, epochs=200)
+run to confirm the founding fix at a scale that actually exceeds the birth-rate cap took over
+fifteen CPU-minutes and was still running when this entry was written — well below a naive
+extrapolation from the first slice's own smaller benchmark (~5.6 epochs/sec at population 20->70).
+The brief's own >= 500 Cell/>= 10,000 epoch acceptance run is a genuinely multi-hour undertaking on
+this hardware, exactly the case its own accommodation describes ("if runtime makes 500x10,000
+unsuitable for ordinary CI, keep a small deterministic CI scenario, and a separately documented
+benchmark command whose result artifact is retained"). The command is documented
+(`mitosis simulate --population 500 --epochs 10000 --seed <n> --output <path>`) and the mechanism it
+depends on is now proven correct; running it to completion and retaining its manifest is deferred to
+a following slice rather than blocking this already-complete work on an unattended multi-hour job.
+
+- Next: the >= 500 Cell/>= 10,000 epoch acceptance benchmark, run to completion with its manifest
+  retained, closes out Slice F; then Slice G's remaining `SelectionPolicy` implementations and
+  Slice H's pre-registered Phase 3 comparisons.

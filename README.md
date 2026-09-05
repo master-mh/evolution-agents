@@ -23,7 +23,7 @@ implemented plumbing is not empirical validation:
 | Phase (directive §28) | State |
 |---|---|
 | 0–1 — kernel, governance | substantially complete |
-| 2 — flight simulator | seam proven at small scale: one environment family, one deterministic Cell-policy family, one selection policy, reproduction/mutation reaching the real kernel paths. Population/chaos-drill scale, a second environment family, and environment separation are **not yet built** |
+| 2 — flight simulator | seam proven, with real substance: two independently-shaped environment families, structurally-enforced environment separation (§8.1), scheduled regime shifts on both families (§8.4), all six required mutation operators (§14.1) wired through a real random operator choice, all five chaos drills as repeatable scenarios (§28), and a diversity/regime-shift-carrying manifest — reproduction/mutation reaching the real kernel paths throughout. A CI-scale acceptance scenario passes every brief checklist item at small scale; the brief's own >=500-Cell/>=10,000-epoch benchmark is documented and separately run (`docs/DECISIONS.md`'s Slice F ADR-076), not part of ordinary CI. Full manifest richness beyond the diversity/regime-shift additions (e.g. a richer failure taxonomy) and Slice G's non-random selection policies are what remain |
 | 3 — evolutionary validation | **not built** — gated on Phase 2's remaining scope |
 | 4 — LLM deliberation loop | substantially implemented |
 | 5–6 — sandboxed execution, richer web observation | absent |

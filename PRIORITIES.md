@@ -965,15 +965,20 @@
 
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
-  directive §28. **Underway, not done**: `src/mitosis/simulation/`'s first four slices (ADR-072
-  through ADR-075) prove the seam and now carry two independently-shaped environment families
+  directive §28. **Underway, not done**: `src/mitosis/simulation/`'s first five slices (ADR-072
+  through ADR-076) prove the seam and now carry two independently-shaped environment families
   (`UtilityMaximizingMarket`, `RuleBasedMarket`), real environment separation (§8.1's `training`/
   `validation`/`secret_challenge`, structurally enforced), a scheduled regime shift on each family
   (§8.4), all six required mutation operators (§14.1) wired through a real random operator choice,
-  and all five brief-required chaos drills (§28) as repeatable scenarios (`chaos.py`) — reproduction/
+  all five brief-required chaos drills (§28) as repeatable scenarios (`chaos.py`), a diversity/
+  regime-shift-carrying manifest (`distinct_genomes`, `environment_events`, `config_hash`), and a
+  CI-scale test asserting the brief's full Phase 2 acceptance checklist by name — reproduction/
   mutation reaching the real kernel paths, population 20 -> 70 over 50 epochs with conservation
-  intact and zero real spend. Still missing before Phase 2 itself is done: full manifest richness
-  (population/diversity time series, regime-shift bookkeeping) and the two acceptance-scale
-  configurations (a small CI scenario plus a documented 500-Cell/10,000-epoch benchmark that
-  actually exercises the drills at scale). Phase 3 (the other four `SelectionPolicy`
-  implementations, the pre-registered comparisons) has not started.
+  intact and zero real spend. A founding bug was found and fixed along the way:
+  `_found_population` could not exceed §9.2's `max_births_per_epoch` (default 25) before batching
+  across kernel epochs — the >= 500 Cell acceptance scale would have hit it immediately. Still
+  missing before Phase 2 itself is done: actually running the >= 500 Cell/>= 10,000 epoch benchmark
+  to completion and retaining its manifest — a moderate-scale (population=50/epochs=200) validation
+  of the founding fix alone took over fifteen CPU-minutes, so the full acceptance scale is a
+  genuinely multi-hour, deliberately non-CI job per the brief's own accommodation. Phase 3 (the
+  other four `SelectionPolicy` implementations, the pre-registered comparisons) has not started.

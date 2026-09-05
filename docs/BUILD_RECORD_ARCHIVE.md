@@ -6,6 +6,59 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-05 — Phase 2 flight simulator, fourth slice: chaos drills as repeatable scenarios (Slice F, part 4)
+
+Continuing the same sub-slice sequence (ADR-072–074) without a fresh plan-mode round-trip.
+ADR-075 is the full as-built record.
+
+### What shipped
+
+New `src/mitosis/simulation/chaos.py`, all five brief-required drills, plus one new seam:
+`runner.run()` gains `epoch_hook`, called once per epoch after that epoch's own processing already
+completed, so every hook-shaped drill shares one addition to `runner.py` rather than one each.
+`KillFractionDrill` kills a seeded fraction of living Cells; `WithdrawCapabilityDrill` disables the
+`auto_promotion` autonomy flag mid-run; `CrashingEnvironment` (a `MarketEnvironment` decorator, no
+runner change needed) raises once from `evaluate()` at a chosen epoch; a regime-shift drill and a
+duplicate/out-of-order drill reuse existing mechanisms rather than adding new ones (below).
+
+### Two of five drills needed reframing, stated rather than silently substituted
+
+"Corrupt or withdraw one shared capability/module" has no module/tool-use surface in this simulator
+yet (`SimulationPolicyProvider` decides from genome content alone) — `auto_promotion` is the one
+capability that actually is shared and colony-wide, so withdrawing it is a real loss, not a
+stand-in. "Crash at reserve, execute, and settlement boundaries" targets the *experiment*
+lifecycle's own three-phase shape (start/evaluate/conclude), not the deeper money-reservation FSM in
+`gateway.py` — that FSM's crash safety is Charter C6's job, already exhaustively verified
+independent of any live population; what's genuinely new is whether a full run's own state
+(population, audit trail, manifest) survives one call failing mid-flight. The other two boundaries
+(`start_from_grant`, `conclude`/`record_revenue`) have no injectable seam today, and building one
+solely for a drill to target would be speculative surface for no other caller.
+
+### A wrong assumption, corrected before it shipped
+
+The plan assumed an out-of-order funding call (a child funded before its birth is visible) would be
+rejected. Checking rather than assuming: `ledger` accounts are plain strings, not a foreign key into
+`cells` (confirmed by reading `scheduler.eligible_cells`, which starts from the `cells` table and
+only then checks balances) — so the call neither corrupts anything nor raises; it parks an inert,
+unreachable balance instead. The test asserts what's actually true, not the rejection that doesn't
+happen.
+
+### Verification
+
+9 new tests (42 total): each drill's real effect verified independently of its own self-report (a
+coroner-report count matching the claimed kill count, not just trusting it; the autonomy flag
+actually flipped; one recorded failure and the interrupted experiment concluding on a later epoch,
+not just "didn't crash"; a >5x aggregate sales drop across the regime-shift boundary at full-economy
+scale; duplicate-call idempotency; out-of-order inertness); the shared post-drill invariant helper;
+two determinism-under-a-drill checks covering both injection mechanisms (epoch-hook and
+environment-wrapper). Five teeth-checks, each confirmed to fail for the stated reason and restored
+verbatim. Full suite green; golden run unaffected (hash unchanged at 38); `ruff check .` and
+`scripts/check_docs_facts.py` both clean.
+
+- Next: full manifest richness and the two acceptance-scale configurations (Slice F5) close out
+  Slice F, then Slice G's remaining `SelectionPolicy` implementations and Slice H's pre-registered
+  Phase 3 comparisons.
+
 ## 2026-09-05 — Phase 2 flight simulator, third slice: the remaining mutation operators, wired through a real operator choice (Slice F, part 3)
 
 Continuing the same sub-slice sequence (ADR-072, ADR-073) without a fresh plan-mode round-trip.

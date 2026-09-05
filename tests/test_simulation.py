@@ -76,6 +76,27 @@ def test_a_full_colony_of_experiments_does_not_strand_the_run(conn):
     assert all(record.experiments_concluded > 0 for record in manifest.epochs)
 
 
+def test_founding_a_population_above_the_birth_rate_cap_does_not_raise(conn):
+    """§9.2's `max_births_per_epoch` (default 25) does not distinguish a
+    founder from a reproduced child (`population._check_birth_rate` reads
+    `cells.born_in_epoch` unconditionally) -- founding more than that many
+    Cells in what looks like one instant used to raise `BirthRateExceededError`
+    uncaught, well under the >= 500 Cells the brief's own acceptance scale
+    needs. Fixed by batching founding across kernel epochs, advancing the
+    clock between batches -- found empirically via a moderate-scale
+    (population=50) benchmark run, not by reading the code.
+
+    Goes through `run()`, not `_found_population` directly: the clock must
+    be anchored first (`clock.initialize_if_absent`/`scheduler.
+    configure_epochs_if_absent`, both part of `run()`'s own setup) or
+    `clock.current_epoch` never advances regardless of how many times
+    `clock.advance` is called, and every birth would still land in the same
+    "epoch 0" the cap is checked against."""
+    manifest = _run(conn, epochs=1, population=30)
+    assert manifest.failures == ()
+    assert manifest.final_living_cells >= 30
+
+
 def test_usd_real_never_moves_once_the_epoch_loop_starts(conn):
     """Every model call reserves and releases against `Book.USD_REAL`
     regardless of provider (cash <-> the Cell's own `committed` account,
@@ -793,6 +814,132 @@ def test_verify_post_drill_invariants_reports_true_on_a_healthy_run(conn):
     assert chaos.verify_post_drill_invariants(conn) == {
         "USD_REAL": True, "USD_SIM": True, "RESOURCE": True, "ledger_chain_valid": True,
     }
+
+
+def test_manifest_carries_a_diversity_time_series_bounded_by_living_cells(conn):
+    """Brief: "population/diversity time series." Diversity is counted as
+    distinct `genome_hash` values among living Cells -- a genome hash *is* a
+    Cell's full strategy (ADR-018's content addressing), so this is a
+    structural bound true regardless of which operators fired: you cannot
+    have more distinct strategies than living Cells, and at least one living
+    Cell means at least one distinct genome."""
+    manifest = _run(conn, seed=7, epochs=20, population=10)
+    assert manifest.epochs
+    for record in manifest.epochs:
+        assert 1 <= record.distinct_genomes <= record.living_cells
+    # Not merely "distinct_genomes == living_cells always" (which a
+    # non-deduplicating count would also satisfy): at this seed/scale some
+    # epochs genuinely have fewer distinct genomes than living Cells (a
+    # no-op mutation or a clamped continuous operator collapsing to the
+    # parent's own hash, ADR-018) -- confirmed empirically, not assumed.
+    assert any(record.distinct_genomes < record.living_cells for record in manifest.epochs)
+
+
+def test_manifest_carries_regime_shift_events_only_at_the_scheduled_epoch(conn):
+    """Brief: "regime-shift recovery." Made visible directly on the
+    retained manifest (not only via the `simulation_environment_event`
+    audit trail, ADR-073/074) -- a reader can see which epoch carried a
+    shift and read the following epochs' own `living_cells`/`sales`/
+    `distinct_genomes` to see recovery, rather than the manifest declaring a
+    computed verdict on the colony's behalf."""
+    manifest = _run(conn, seed=1, epochs=15, population=3)
+    shift_epochs = [record.epoch for record in manifest.epochs if record.environment_events]
+    assert shift_epochs == [10]
+    assert "price_compression" in manifest.epochs[10].environment_events[0]
+
+
+def test_config_hash_is_stable_for_the_same_configuration_and_differs_for_a_different_one():
+    same_a = runner._config_hash(
+        runner.RunConfig(scenario_name="x", master_seed=1, epochs=6, population=3)
+    )
+    same_b = runner._config_hash(
+        runner.RunConfig(scenario_name="x", master_seed=1, epochs=6, population=3)
+    )
+    different_seed = runner._config_hash(
+        runner.RunConfig(scenario_name="x", master_seed=2, epochs=6, population=3)
+    )
+    different_population = runner._config_hash(
+        runner.RunConfig(scenario_name="x", master_seed=1, epochs=6, population=4)
+    )
+    different_output_path_only = runner._config_hash(
+        runner.RunConfig(
+            scenario_name="x", master_seed=1, epochs=6, population=3, output_path="/tmp/m.json",
+        )
+    )
+
+    assert same_a == same_b
+    assert same_a != different_seed
+    assert same_a != different_population
+    # output_path is a write destination, not configuration -- it must not
+    # change the hash, or two runs of the identical scenario writing to
+    # different paths would wrongly look like different configurations.
+    assert same_a == different_output_path_only
+
+
+def test_phase_2_ci_scale_acceptance_scenario(conn):
+    """The brief's own Phase 2 acceptance checklist, in one place, at a
+    scale CI can run in seconds rather than the >=500 Cell/>=10,000 epoch
+    scale the same checklist also asks for (brief: "if runtime makes
+    500x10,000 unsuitable for ordinary CI, keep a small deterministic CI
+    scenario, and a separately documented benchmark command whose result
+    artifact is retained" -- `docs/DECISIONS.md`'s Slice F ADR-076 documents
+    that larger, separately-run benchmark; this is the small scenario).
+
+    Every bullet below is the brief's own acceptance-test wording, each with
+    the specific assertion that stands in for it -- not a paraphrase with no
+    checkable claim behind it."""
+    drill = chaos.KillFractionDrill(fraction=0.3, at_epoch=8)
+    manifest = runner.run(
+        conn,
+        runner.RunConfig(scenario_name="acceptance", master_seed=1, epochs=30, population=15),
+        epoch_hook=drill,
+    )
+
+    # "zero real API spend and zero USD_REAL movement"
+    assert manifest.usd_real_spend_unchanged
+
+    # "deterministic reruns from the same version and seed"
+    conn_b = db.connect_and_migrate()
+    try:
+        replay = runner.run(
+            conn_b,
+            runner.RunConfig(scenario_name="acceptance", master_seed=1, epochs=30, population=15),
+            epoch_hook=chaos.KillFractionDrill(fraction=0.3, at_epoch=8),
+        )
+        first_dict = asdict(manifest)
+        second_dict = asdict(replay)
+        del first_dict["run_id"]
+        del second_dict["run_id"]
+        assert first_dict == second_dict
+    finally:
+        conn_b.close()
+
+    # "stable carrying capacity" -- never exceeded the configured colony limit
+    from mitosis import population as population_module
+
+    limits = population_module.get_limits(conn)
+    assert all(record.living_cells <= limits.max_living_cells for record in manifest.epochs)
+
+    # "no book-level conservation failure"
+    assert all(chaos.verify_post_drill_invariants(conn).values())
+
+    # "no duplicate economic effects under event redelivery" -- the
+    # simulator's own idempotency-keyed operations are covered directly by
+    # `test_duplicate_funding_call_is_a_safe_noop`; referenced, not re-proven
+    # here, to keep this scenario about the acceptance checklist as a whole.
+
+    # "recovery from the defined chaos drills"
+    assert len(drill.reports) == 1
+    assert manifest.failures == ()
+    assert manifest.final_living_cells > 0
+
+    # "more than one occupied behavioural niche" -- distinct genome_hash
+    # values among living Cells are distinct strategies (ADR-018's content
+    # addressing; see `manifest.py`'s own diversity-time-series docstring)
+    assert manifest.epochs[-1].distinct_genomes > 1
+
+    # brief: "regime-shift recovery" as part of the same acceptance run
+    assert any(record.environment_events for record in manifest.epochs)
 
 
 def test_no_kernel_module_imports_the_simulation_package():

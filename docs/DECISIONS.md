@@ -4870,3 +4870,99 @@ out as a Slice G decision, not this one.
 - Next: full manifest richness and the two acceptance-scale configurations (Slice F5) close out
   Slice F, then Slice G's remaining `SelectionPolicy` implementations and Slice H's pre-registered
   Phase 3 comparisons.
+
+## ADR-076: Manifest richness, a CI-scale acceptance scenario, and a founding bug the acceptance criteria's own scale would have hit (Slice F, part 5a)
+
+- **Status:** Accepted; `manifest.py` gains `distinct_genomes`/`environment_events`/`config_hash`;
+  `runner._found_population` batches across the birth-rate cap; one consolidated acceptance test;
+  6 new tests in `tests/test_simulation.py` (48 total)
+- **Spec ref:** brief's "CLI and artifacts" section (manifest content) and "Phase 2 acceptance test"
+  section (the checklist this slice's new test proves in one place); SPEC.md §9.2 (`max_births_per_
+  epoch`, the cap the founding bug ran into)
+
+- **Manifest richness, each field tied to something that only now exists to measure.**
+  `manifest.py`'s own F1 docstring named this explicitly: diversity and regime-shift bookkeeping
+  needed a second environment family and a real mutation set before either was a meaningful
+  measurement, and F2-F4 built both. `EpochRecord.distinct_genomes` counts distinct `genome_hash`
+  values among living Cells — a genome hash *is* a Cell's full strategy under ADR-018's content
+  addressing, so this counts distinct strategies, not an ad hoc diversity proxy.
+  `EpochRecord.environment_events` carries any regime-shift strings that fired that epoch, so
+  "regime-shift recovery" (brief) is visible directly on the retained manifest: a reader sees which
+  epoch carried a shift and reads the following epochs' own `living_cells`/`sales`/`distinct_genomes`
+  to see recovery, rather than the manifest computing a "recovered" verdict on the colony's behalf.
+  `RunManifest.config_hash` is a SHA-256 over the run's actual configuration (scenario, seed, epochs,
+  population — not `output_path`, a write destination rather than configuration), so two manifests
+  claiming the same configuration can be checked, not only asserted.
+
+- **A bug the acceptance criteria's own scale would have hit, found by trying to reach that scale.**
+  Validating the manifest changes at a moderate scale (population=50) surfaced an unhandled
+  `BirthRateExceededError`: `_found_population` created every founder before any epoch advanced, and
+  §9.2's `max_births_per_epoch` (default 25) does not distinguish a founder from a reproduced child.
+  Nothing in F1-F4's own tests (all population <= 30, and the one population=20 test that comes
+  closest sits under the 25 cap) exercised this — the bug was invisible until something asked for
+  more founders than one kernel epoch allows, which the brief's own >= 500 Cell acceptance scale
+  unavoidably does. Not a case for loosening the cap (§9.1: "unrestricted reproduction... capital
+  alone is not sufficient population control" — the same reasoning ADR-071 already used to refuse
+  loosening a different cap): `_found_population` now founds in batches of `max_births_per_epoch`,
+  advancing the clock between batches exactly as `run()`'s own main loop does. This shifts nothing
+  the simulation's own logic reads — `_run_one_epoch`'s `epoch` parameter (RNG seeding, the
+  regime-shift comparison) is the simulator's own loop counter, never the kernel's `clock.
+  current_epoch` — so founding needing several kernel epochs before the main loop's epoch 0 starts
+  is an internal offset, not a change in simulated behaviour.
+
+- **The first version of the regression test passed for the wrong reason, caught before it shipped.**
+  Calling `_found_population` directly (bypassing `run()`'s own setup) left the clock never
+  "anchored" (`clock.initialize_if_absent`/`scheduler.configure_epochs_if_absent`, both part of
+  `run()`'s setup, not called), so `clock.current_epoch` stayed 0 regardless of how many times
+  `clock.advance` was called — every birth still landed in "epoch 0," and the fix's own regression
+  test failed with the *unbatched* error, for a reason unrelated to the fix. Rewritten to go through
+  `run()` itself, which does anchor the clock in the right order — the same category of trap this
+  repo's testing conventions warn about (a fixture unable to distinguish the outcome it means to
+  check), caught by reading the failure's own message rather than its pass/fail alone.
+
+- **One consolidated acceptance test, not scattered assertions with no single place naming the
+  checklist.** `test_phase_2_ci_scale_acceptance_scenario` runs one scenario (population=15,
+  epochs=30, one chaos drill) and asserts every bullet in the brief's own Phase 2 acceptance list by
+  name, each against a specific, checkable claim: zero USD_REAL movement, deterministic replay,
+  carrying capacity never exceeded, conservation intact, drill recovery, more than one occupied
+  niche (`distinct_genomes > 1`), and a regime shift's events actually present. "No duplicate
+  economic effects under event redelivery" is referenced rather than re-proven here — already
+  covered directly by `test_duplicate_funding_call_is_a_safe_noop` (ADR-075) — to keep this test
+  about the checklist as a whole rather than duplicating another test's own assertions.
+
+- **What this slice does not close: the second acceptance-scale configuration.** The brief's own
+  accommodation ("if runtime makes 500x10,000 unsuitable for ordinary CI, keep a small deterministic
+  CI scenario, and a separately documented benchmark command whose result artifact is retained") is
+  not a license to skip running it — it is a license to run it *outside* ordinary CI. A moderate-scale
+  validation (population=50, epochs=200) run to confirm the founding-batch fix at a scale that
+  actually exceeds the birth-rate cap took over fifteen CPU-minutes and was still running when this
+  ADR was written — throughput degrades as population grows (context assembly's own per-wake cost
+  scales with population and history, the same concern the original Slice F plan flagged before any
+  code existed) well below a naive extrapolation from ADR-072's own smaller population 20->70/50-epoch
+  benchmark (~5.6 epochs/sec). The >= 500 Cell/>= 10,000 epoch acceptance run is a genuinely
+  multi-hour undertaking on this hardware, exactly the case the brief's own accommodation describes.
+  The command is documented (`mitosis simulate --population 500 --epochs 10000 --seed <n> --output
+  <path>`) and the mechanism it depends on (founding above the birth-rate cap) is now proven correct;
+  actually running it to completion and retaining its manifest is deferred to a following slice once
+  it can run unattended for the hours it needs, rather than blocking this already-complete,
+  independently-verified manifest/acceptance-test work on it.
+
+- **Verification:** 6 new tests (48 total): the founding-batch fix (via `run()`, not the private
+  function directly, per the trap above); the diversity time series' structural bound *and* that it
+  is not merely "always equals living_cells" (a non-deduplicating count would also satisfy a bare
+  bound); regime-shift events appearing only at the scheduled epoch; `config_hash`'s stability and
+  its sensitivity to each real configuration field, confirmed to exclude `output_path`; the
+  consolidated CI-scale acceptance scenario. Four teeth-checks (deduplication removed, the manifest
+  event-append removed, `population` dropped from the config hash, the founding batch removed),
+  each confirmed to fail for the stated reason and restored verbatim — the founding-batch teeth-check
+  is also the clearest demonstration of the trap above: the *first* attempt at it (before the test
+  was rewritten to use `run()`) failed for the pre-fix reason too, which is exactly why that version
+  of the test could not be trusted, fix or no fix. Full suite green (1286, up from 1281 — 5 new
+  simulation tests plus one flaky Hypothesis deadline elsewhere, confirmed environmental by an
+  isolated rerun passing cleanly with the same code, not a regression: a concurrent CPU-heavy
+  benchmark validation was running on this machine at the same time); golden run unaffected (hash
+  unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both clean.
+
+- Next: the >= 500 Cell/>= 10,000 epoch acceptance benchmark, run to completion with its manifest
+  retained, closes out Slice F; then Slice G's remaining `SelectionPolicy` implementations and
+  Slice H's pre-registered Phase 3 comparisons.

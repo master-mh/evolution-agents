@@ -15,6 +15,7 @@ reproduces (`selection_policy.py`).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import subprocess
@@ -67,6 +68,21 @@ class RunConfig:
     epochs: int
     population: int
     output_path: str | None = None
+
+
+def _config_hash(config: RunConfig) -> str:
+    """SHA-256 over the run's own configuration -- `scenario_name`,
+    `master_seed`, `epochs`, `population` -- not `output_path`, a local
+    write destination rather than configuration. Lets two manifests
+    claiming the same configuration be checked rather than only asserted."""
+    canonical = json.dumps(
+        {
+            "scenario_name": config.scenario_name, "master_seed": config.master_seed,
+            "epochs": config.epochs, "population": config.population,
+        },
+        sort_keys=True, separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _code_version() -> str:
@@ -141,8 +157,22 @@ def _fund_scheduler_eligibility(conn, *, cell_id: str, key: str, amount_minor_un
 
 
 def _found_population(conn, config: RunConfig) -> list[lifecycle.Cell]:
+    """§9.2's `max_births_per_epoch` applies to founding the same as any
+    other birth (`population._check_birth_rate` does not distinguish a
+    founder from a reproduced child) -- a population target above that cap
+    cannot be founded within one kernel epoch, so founding advances the
+    clock between batches, the same `DEFAULT_EPOCH_DURATION_SECONDS` step
+    the main loop uses. This shifts nothing the simulation's own logic
+    reads: `_run_one_epoch`'s `epoch` parameter (used for RNG seeding and
+    the regime-shift comparison) is the simulator's own loop counter
+    (0..epochs-1), never the kernel's `clock.current_epoch` -- founding
+    needing several kernel epochs before the main loop's epoch 0 starts is
+    an internal offset, not a change in simulated behaviour."""
+    max_births_per_epoch = population.get_limits(conn).max_births_per_epoch
     founders = []
     for i in range(config.population):
+        if i > 0 and i % max_births_per_epoch == 0:
+            clock.advance(conn, timedelta(seconds=clock.DEFAULT_EPOCH_DURATION_SECONDS))
         key = f"sim:{config.scenario_name}:{config.master_seed}:founder:{i}"
         cell = lifecycle.create_cell(
             conn, cell_type=CellType.COMMERCIAL,
@@ -325,15 +355,15 @@ def _run_one_epoch(
             # per-grant `PromotionError`.
             pass
 
+    environment_events: list[str] = []
     for event in environment.advance(epoch=epoch):
         # A colony-wide happening the environment produced on its own clock
         # (SPEC.md §8.4's scheduled regime shifts), not one Cell's action --
         # recorded the same way `SelectionDecision` is, since neither
         # deserves a second, schema-level identity for a fact `audit`
-        # already carries. Manifest-level regime-shift bookkeeping is F5's
-        # addition (see `manifest.py`'s own docstring); this is what makes a
-        # shift a real, queryable event now rather than inert Protocol
-        # plumbing nothing ever calls.
+        # already carries. Also carried on the `EpochRecord` itself (F5,
+        # `manifest.py`) so regime-shift recovery is visible directly in the
+        # retained manifest, not only by a separate audit-trail query.
         audit.record(
             conn, event_type="simulation_environment_event", cell_id=None,
             description=event.detail,
@@ -342,12 +372,15 @@ def _run_one_epoch(
                 "environment": environment.name, "kind": event.kind,
             },
         )
+        environment_events.append(f"{event.kind}: {event.detail}")
 
-    living = sum(1 for c in lifecycle.list_cells(conn) if c.status is CellStatus.ALIVE)
+    living_cells = [c for c in lifecycle.list_cells(conn) if c.status is CellStatus.ALIVE]
+    distinct_genomes = len({c.genome_hash for c in living_cells})
     return EpochRecord(
-        epoch=epoch, living_cells=living, experiments_started=started,
+        epoch=epoch, living_cells=len(living_cells), experiments_started=started,
         experiments_concluded=concluded, sales=sales,
         revenue_minor_units=revenue_minor_units, reproductions=reproductions,
+        distinct_genomes=distinct_genomes, environment_events=tuple(environment_events),
     )
 
 
@@ -425,6 +458,7 @@ def run(
             scenario_name=config.scenario_name,
             master_seed=config.master_seed,
             code_version=_code_version(),
+            config_hash=_config_hash(config),
             environment_name=suite.training.name,
             environment_version=suite.training.version,
             policy_name=SIMULATION_PROVIDER,
