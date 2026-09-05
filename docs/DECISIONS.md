@@ -4935,16 +4935,20 @@ out as a Slice G decision, not this one.
   CI scenario, and a separately documented benchmark command whose result artifact is retained") is
   not a license to skip running it — it is a license to run it *outside* ordinary CI. A moderate-scale
   validation (population=50, epochs=200) run to confirm the founding-batch fix at a scale that
-  actually exceeds the birth-rate cap took over fifteen CPU-minutes and was still running when this
-  ADR was written — throughput degrades as population grows (context assembly's own per-wake cost
-  scales with population and history, the same concern the original Slice F plan flagged before any
-  code existed) well below a naive extrapolation from ADR-072's own smaller population 20->70/50-epoch
-  benchmark (~5.6 epochs/sec). The >= 500 Cell/>= 10,000 epoch acceptance run is a genuinely
-  multi-hour undertaking on this hardware, exactly the case the brief's own accommodation describes.
-  The command is documented (`mitosis simulate --population 500 --epochs 10000 --seed <n> --output
-  <path>`) and the mechanism it depends on (founding above the birth-rate cap) is now proven correct;
-  actually running it to completion and retaining its manifest is deferred to a following slice once
-  it can run unattended for the hours it needs, rather than blocking this already-complete,
+  actually exceeds the birth-rate cap completed in 23m47s (604s user + 480s system CPU — roughly 0.14
+  epochs/sec once population reached `max_active_cells`=100 and stayed there), retained at
+  `docs/benchmarks/2026-09-05-founding-fix-validation-p50-e200.json`. That throughput is nearly 40x
+  slower than ADR-072's own smaller population 20->70/50-epoch benchmark (~5.6 epochs/sec) — context
+  assembly's own per-wake cost scales with population and history, the same concern the original
+  Slice F plan flagged before any code existed. Extrapolating this run's own rate to the brief's
+  >= 500-Cell/>= 10,000-epoch acceptance scale (five times the population, fifty times the epochs,
+  and no reason to expect a *lower* per-epoch cost at that size) points to a multi-hour, quite
+  possibly multi-day run on this hardware — exactly the case the brief's own accommodation describes,
+  not a rough guess. The command is documented (`mitosis simulate --population 500 --epochs 10000
+  --seed <n> --output <path>`, see `docs/benchmarks/README.md`) and the mechanism it depends on
+  (founding above the birth-rate cap) is now proven correct; actually running it to completion and
+  retaining its manifest is deferred to a following slice as an explicitly kicked-off, unattended job
+  sized in hours or days, rather than blocking this already-complete,
   independently-verified manifest/acceptance-test work on it.
 
 - **Verification:** 6 new tests (48 total): the founding-batch fix (via `run()`, not the private

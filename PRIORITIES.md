@@ -979,6 +979,7 @@
   across kernel epochs — the >= 500 Cell acceptance scale would have hit it immediately. Still
   missing before Phase 2 itself is done: actually running the >= 500 Cell/>= 10,000 epoch benchmark
   to completion and retaining its manifest — a moderate-scale (population=50/epochs=200) validation
-  of the founding fix alone took over fifteen CPU-minutes, so the full acceptance scale is a
-  genuinely multi-hour, deliberately non-CI job per the brief's own accommodation. Phase 3 (the
+  of the founding fix alone took 23m47s (~0.14 epochs/sec, `docs/benchmarks/`), ~40x slower than the
+  first slice's own smaller benchmark, so the full acceptance scale extrapolates to a genuinely
+  multi-hour-to-multi-day, deliberately non-CI job per the brief's own accommodation. Phase 3 (the
   other four `SelectionPolicy` implementations, the pre-registered comparisons) has not started.
