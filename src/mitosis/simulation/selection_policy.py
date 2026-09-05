@@ -219,6 +219,77 @@ class SingleLeaderboardSelection:
         )
 
 
+#: Every SIM dimension except `economic_potential` -- `ParetoSelection` runs
+#: both gates and consults every axis that can be measured; only the one
+#: permanently-unmeasurable axis is excluded.
+_PARETO_MEASURED_DIMENSIONS: tuple[str, ...] = tuple(
+    d for d in _ALL_SIM_DIMENSIONS if d != "economic_potential"
+)
+
+
+class ParetoSelection:
+    """Brief Slice G policy #3: Pareto selection without MAP-Elites. Gates
+    on `candidate.SIM_GATE_DIMENSIONS` (`not_quarantined`, `reproducibility`)
+    and takes the Pareto front over every measurable axis
+    (`structural_novelty`, `realized_net_revenue`, `experiment_success_rate`
+    — `economic_potential` stays unmeasurable, see `candidate.py`).
+    Reproduces from *every* Cell on the resulting front, not a single
+    winner -- SPEC.md §10.2's portfolio, not a scalar with an extra step,
+    and what actually distinguishes this from `SingleLeaderboardSelection`."""
+
+    name = "pareto"
+    version = "1"
+
+    def __init__(self, *, book: Book = Book.USD_SIM) -> None:
+        self._book = book
+
+    def decide(
+        self, conn, *, epoch: int, rng: random.Random, seed_label: str
+    ) -> SelectionDecision:
+        eligible = _eligible_parents(conn, book=self._book)
+        candidates = [candidate.cell_candidate(conn, cell) for cell in eligible]
+        rejected = sum(1 for c in candidates if not c.passes_gates)
+        # Sorted by cell_id, not discovery order: which requests get
+        # refused if a rate cap is hit mid-epoch (`lineage.reproduce`'s own
+        # caps do the actual bounding, see the Slice G plan's "Reproduction
+        # bounds" note) is then itself seed-reproducible.
+        chosen = tuple(sorted(candidate.pareto_frontier(candidates)))
+        operator_overrides = tuple(
+            (cell_id, rng.choice(sorted(mutation.OPERATORS))) for cell_id in chosen
+        )
+        gate_results = tuple(g for c in candidates for g in c.gates)
+        return SelectionDecision(
+            policy_name=self.name,
+            policy_version=self.version,
+            epoch=epoch,
+            rng_seed_label=seed_label,
+            eligible_cell_ids=tuple(c.cell_id for c in eligible),
+            chosen_parent_cell_ids=chosen,
+            # Vestigial for this policy: every chosen parent has its own
+            # entry in `parent_mutation_operators` below, so `runner.py`
+            # never falls back to this field. `NO_OP_OPERATOR` is used
+            # rather than a drawn value, so nothing implies this field
+            # carries a real decision for a multi-parent policy.
+            mutation_operator=mutation.NO_OP_OPERATOR,
+            child_budget_minor_units=_CHILD_BUDGET_MINOR_UNITS,
+            reason=(
+                f"{len(eligible)} cell(s) eligible, {rejected} rejected by a gate "
+                f"(not_quarantined/reproducibility); {len(chosen)} cell(s) on the Pareto "
+                "front over structural_novelty/realized_net_revenue/experiment_success_rate "
+                "-- brief Slice G policy #3, reproducing the whole front rather than one winner"
+            ),
+            gate_results=gate_results,
+            measured_dimensions=_PARETO_MEASURED_DIMENSIONS,
+            unmeasured_dimensions=("economic_potential",),
+            pareto_front_cell_ids=chosen,
+            parent_mutation_operators=operator_overrides,
+            intended_experiment=(
+                "none -- this policy selects parents by realised standing, not by "
+                "reading a candidate's proposed hypothesis"
+            ),
+        )
+
+
 class UnknownSelectionPolicyError(Exception):
     pass
 
@@ -231,7 +302,9 @@ def build_selection_policy(name: str) -> SelectionPolicy:
         return RandomEligibleSelection()
     if name == SingleLeaderboardSelection.name:
         return SingleLeaderboardSelection()
+    if name == ParetoSelection.name:
+        return ParetoSelection()
     raise UnknownSelectionPolicyError(
         f"no selection policy named {name!r}; available: "
-        f"{RandomEligibleSelection.name}, {SingleLeaderboardSelection.name}"
+        f"{RandomEligibleSelection.name}, {SingleLeaderboardSelection.name}, {ParetoSelection.name}"
     )

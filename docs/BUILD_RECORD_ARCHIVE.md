@@ -6,6 +6,40 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-05 — Closing the evolutionary decision loop, part 2: the second selection policy, and the CLI/factory wiring the rest will reuse (Slice G, part 2)
+
+Continuing the plan from ADR-077/078 without a fresh plan-mode round-trip. ADR-079 is the full
+as-built record.
+
+### What shipped
+
+`SingleLeaderboardSelection` (brief Slice G policy #2): ranks eligible Cells by one named scalar
+(`scalar_metric = "realized_net_revenue_minor_units"`), reproduces the single top-ranked Cell, runs
+no gates — its `reason` states plainly this is the shape SPEC.md §10.2/§13.2 forbid for the
+production kernel, built only as a Slice H comparator. `build_selection_policy(name)` mirrors
+`environment.build_environment`'s existing pattern; `cli.py` gains `simulate --selection-policy`.
+Unmeasured is excluded from the ranking, not treated as a floor value: a Cell with a concluded,
+zero-revenue experiment must outrank one with no concluded experiment at all — the same
+never-zero posture this codebase takes everywhere else, applied here to a policy that (unlike every
+gate/axis in `candidate.py`) needs one total order rather than permission to abstain.
+
+### Another teeth-check that initially passed for the wrong reason
+
+The first version of the "unmeasured ranks last" test created the proven-zero Cell before the
+unmeasured one; removing the exclusion term from the sort key still picked the right Cell, because
+both collapsed to the same primary key and the *secondary* tie-break (creation order) happened to
+favor the older, proven-zero Cell anyway. The same category of trap ADR-077 already hit once this
+slice. Fixed by creating the unmeasured Cell first, so a dropped rule now produces an unambiguously
+wrong answer regardless of generated-id ordering.
+
+### Verification
+
+4 new tests (84 total in the simulation area): the highest-revenue Cell chosen correctly; the
+corrected unmeasured-ranks-last property; the factory's construction and rejection of an unknown
+name; a CLI end-to-end run naming the policy it used in its own manifest. Four teeth-checks, each
+confirmed to fail for the stated reason and restored verbatim. Full suite green; golden run
+unaffected (hash unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both clean.
+
 ## 2026-09-05 — Closing the evolutionary decision loop, part 1: simulator-native fitness dimensions, the full decision-record schema, Thompson sampling (Slice G, part 1)
 
 Continuing the plan from ADR-077 without a fresh plan-mode round-trip. ADR-078 is the full as-built

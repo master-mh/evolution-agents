@@ -974,12 +974,15 @@
   population=50/epochs=200 validation took 23m47s, ~40x slower than the first slice's own smaller
   benchmark — `docs/benchmarks/`; the full scale extrapolates to a multi-hour-to-multi-day,
   deliberately non-CI job). **Closing the evolutionary decision loop underway** (brief's own "Slice
-  G", ADR-077 through ADR-079 so far): `candidate.py`'s simulator-native gates/axes/`dominates()`/
+  G", ADR-077 through ADR-080 so far): `candidate.py`'s simulator-native gates/axes/`dominates()`/
   `niche_elite()`, `SelectionDecision`'s full decision-record schema, `posteriors.sample()`'s
-  Thompson-sampling primitive, and two of five policies wired end to end behind `cli.py`'s new
-  `--selection-policy` flag: `RandomEligibleSelection` and `SingleLeaderboardSelection` (an
+  Thompson-sampling primitive, and three of five policies wired end to end behind `cli.py`'s new
+  `--selection-policy` flag: `RandomEligibleSelection`, `SingleLeaderboardSelection` (an
   intentionally-forbidden single-scalar control, per SPEC.md §10.2/§13.2, kept only as a Phase 3
-  comparator). G0-G2 done; G3-G6 remain: `ParetoSelection`, `MapElitesSelection`,
-  `StagedFundingSelection` (+ the `EnvironmentSuite.validation` consumer), then the cross-policy
-  acceptance harness. Phase 3's own pre-registered
+  comparator), and `ParetoSelection` (reproduces every Cell on the Pareto front, not one winner —
+  found along the way that `not_quarantined` can never actually reject through any policy's own
+  pipeline, since eligibility filtering already excludes non-alive Cells first; kept as correct,
+  reusable defensive code, documented rather than silently left implying otherwise). G0-G3 done;
+  G4-G6 remain: `MapElitesSelection`, `StagedFundingSelection` (+ the `EnvironmentSuite.validation`
+  consumer), then the cross-policy acceptance harness. Phase 3's own pre-registered
   comparisons have not started.

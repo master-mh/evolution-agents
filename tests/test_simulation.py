@@ -30,6 +30,7 @@ from mitosis.simulation.environment import (
 )
 from mitosis.simulation.policy import SimulationPolicyProvider, _extract_genome
 from mitosis.simulation.selection_policy import (
+    ParetoSelection,
     RandomEligibleSelection,
     SelectionDecision,
     SingleLeaderboardSelection,
@@ -878,12 +879,142 @@ def test_single_leaderboard_selection_ranks_an_unmeasured_cell_last(conn):
     assert unmeasured.cell_id in decision.eligible_cell_ids
 
 
+def _cell_with_experiments(conn, *, key, genome_content, outcomes):
+    """`outcomes` is a list of revenue amounts (or `None` for no sale), one
+    concluded experiment per entry, all sharing `genome_content` -- so
+    `structural_novelty` ties or abstains identically across every cell
+    built with the same content, leaving `realized_net_revenue`/
+    `experiment_success_rate` as the only axes that can discriminate."""
+    from mitosis import experiments as experiments_module
+    from mitosis import lifecycle
+    from mitosis import revenue as revenue_module
+    from mitosis.models import CellType
+
+    cell = lifecycle.create_cell(
+        conn, cell_type=CellType.COMMERCIAL, budget_minor_units=1000,
+        book=Book.USD_SIM, idempotency_key=key, genome_content=genome_content,
+    )
+    for i, amount in enumerate(outcomes):
+        experiment = experiments_module.start(conn, cell_id=cell.cell_id, hypothesis="h")
+        if amount is not None:
+            revenue_module.record_revenue(
+                conn, cell_id=cell.cell_id, amount_minor_units=amount, source="test sale",
+                book=Book.USD_SIM, experiment_id=experiment.experiment_id,
+                idempotency_key=f"sale:{key}:{i}",
+            )
+        experiments_module.conclude(
+            conn, experiment_id=experiment.experiment_id, concluded_by="test", note="concluded",
+        )
+    return cell
+
+
+def test_pareto_selection_reproduces_the_whole_front_not_one_winner(conn):
+    """A genuine trade-off (higher revenue but a lower success rate) puts
+    two cells on the front together -- neither dominates the other -- while
+    a third, strictly worse than one of them on every measured axis, is
+    excluded. Reproducing *both* front members is what distinguishes this
+    from `SingleLeaderboardSelection`."""
+    import random
+
+    shared_genome = {"market": {"segment": "shared"}}
+    high_revenue_low_rate = _cell_with_experiments(
+        conn, key="a", genome_content=shared_genome, outcomes=[1000, None],
+    )
+    low_revenue_high_rate = _cell_with_experiments(
+        conn, key="b", genome_content=shared_genome, outcomes=[200],
+    )
+    dominated = _cell_with_experiments(
+        conn, key="c", genome_content=shared_genome, outcomes=[50],
+    )
+
+    policy = ParetoSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    assert set(decision.pareto_front_cell_ids) == {
+        high_revenue_low_rate.cell_id, low_revenue_high_rate.cell_id,
+    }
+    assert dominated.cell_id not in decision.pareto_front_cell_ids
+    assert set(decision.chosen_parent_cell_ids) == set(decision.pareto_front_cell_ids)
+
+
+def test_pareto_selection_never_builds_a_candidate_for_a_quarantined_cell(conn):
+    """A quarantined Cell is excluded at the *eligibility* stage
+    (`_eligible_parents` filters to `CellStatus.ALIVE`, shared by every
+    policy) before `candidate.cell_candidate` -- and its `not_quarantined`
+    gate -- ever sees it; `test_simulation_candidate.py`'s own
+    `test_not_quarantined_gate_passes_alive_and_rejects_quarantined` proves
+    the gate function itself rejects one when actually given one. This test
+    states the accurate, narrower fact for this policy's own pipeline:
+    a quarantined Cell is not even eligible, so it appears in neither the
+    front nor `gate_results` at all."""
+    import random
+
+    from mitosis import lifecycle
+
+    winner = _cell_with_experiments(
+        conn, key="winner", genome_content={"market": {"segment": "a"}}, outcomes=[900],
+    )
+    quarantined = _cell_with_experiments(
+        conn, key="quarantined", genome_content={"market": {"segment": "b"}}, outcomes=[900],
+    )
+    lifecycle.quarantine(conn, quarantined.cell_id, reason="test")
+
+    policy = ParetoSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    assert quarantined.cell_id not in decision.eligible_cell_ids
+    assert quarantined.cell_id not in decision.pareto_front_cell_ids
+    assert not any(g.cell_id == quarantined.cell_id for g in decision.gate_results)
+    assert winner.cell_id in decision.pareto_front_cell_ids
+
+
+def test_pareto_selection_gives_each_chosen_parent_its_own_operator(conn):
+    import random
+
+    shared_genome = {"market": {"segment": "shared"}}
+    high_revenue_low_rate = _cell_with_experiments(
+        conn, key="a", genome_content=shared_genome, outcomes=[1000, None],
+    )
+    low_revenue_high_rate = _cell_with_experiments(
+        conn, key="b", genome_content=shared_genome, outcomes=[200],
+    )
+
+    policy = ParetoSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    overrides = dict(decision.parent_mutation_operators)
+    assert high_revenue_low_rate.cell_id in overrides
+    assert low_revenue_high_rate.cell_id in overrides
+    assert overrides[high_revenue_low_rate.cell_id] in mutation.OPERATORS
+    assert overrides[low_revenue_high_rate.cell_id] in mutation.OPERATORS
+
+
+def test_cli_simulate_accepts_the_pareto_selection_policy(tmp_path):
+    db_path = tmp_path / "sim.db"
+    output_path = tmp_path / "manifest.json"
+    cli.main(["--db", str(db_path), "init"])
+
+    exit_code = cli.main([
+        "--db", str(db_path), "simulate",
+        "--seed", "3", "--epochs", "5", "--population", "3",
+        "--selection-policy", "pareto", "--output", str(output_path),
+    ])
+
+    assert exit_code in (0, None)
+    written = json.loads(output_path.read_text())
+    assert written["selection_policy_name"] == "pareto"
+    assert all(written["conservation_ok"].values())
+
+
 def test_build_selection_policy_selects_the_named_policy_and_rejects_unknown_names():
     assert isinstance(
         selection_policy.build_selection_policy("random_eligible"), RandomEligibleSelection,
     )
     assert isinstance(
         selection_policy.build_selection_policy("single_leaderboard"), SingleLeaderboardSelection,
+    )
+    assert isinstance(
+        selection_policy.build_selection_policy("pareto"), selection_policy.ParetoSelection,
     )
     with pytest.raises(selection_policy.UnknownSelectionPolicyError):
         selection_policy.build_selection_policy("not_a_real_policy")

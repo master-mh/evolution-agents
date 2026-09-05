@@ -5154,3 +5154,52 @@ out as a Slice G decision, not this one.
   front over `structural_novelty`/`realized_net_revenue`/`experiment_success_rate` — reproducing from
   every surviving front member, not a single winner, which is what actually demonstrates §10.2's
   "portfolio, not a scalar" framing against this slice's own `SingleLeaderboardSelection` comparator.
+
+## ADR-080: Pareto selection, reproducing the whole front — and a gate found to be structurally unreachable through this pipeline (Slice G, part 3)
+
+- **Status:** Accepted; new `ParetoSelection` in `selection_policy.py`; `cli.py`'s `--selection-policy`
+  gains `pareto`; 4 new tests in `tests/test_simulation.py` (88 total simulation-area tests)
+- **Spec ref:** implementation brief's Slice G policy #3 ("Pareto selection without MAP-Elites");
+  SPEC.md §10.2 ("select from a Pareto frontier... do not rely on a single weighted scalar")
+
+- **What shipped:** `ParetoSelection` gates every eligible Cell on `not_quarantined`/`reproducibility`
+  (`candidate.py`, ADR-078), takes `candidate.pareto_frontier()` over
+  `structural_novelty`/`realized_net_revenue`/`experiment_success_rate` (`economic_potential` stays
+  unmeasurable), and reproduces from **every** Cell on the resulting front — not one winner. That
+  last point is the entire content of the comparison this policy exists to set up against
+  `SingleLeaderboardSelection` (ADR-079): §10.2's "portfolio, not a scalar" only means something if
+  the portfolio is actually funded, not computed and then collapsed to one pick anyway. Each front
+  member draws its own mutation operator via `parent_mutation_operators` (ADR-078's per-parent
+  override fields, unused until this policy); the shared `mutation_operator` field is set to
+  `NO_OP_OPERATOR` and documented as vestigial for this policy, rather than a drawn value that would
+  imply it carries a real decision nothing actually reads.
+
+- **A gate found to be structurally unreachable through this pipeline, discovered by testing it, not
+  assumed.** `candidate._not_quarantined` is correctly implemented and independently proven
+  (ADR-078's `test_not_quarantined_gate_passes_alive_and_rejects_quarantined`) — but every policy,
+  `ParetoSelection` included, builds its candidates only from `_eligible_parents()`'s own output,
+  which already filters to `CellStatus.ALIVE` before `candidate.cell_candidate()` is ever called. A
+  quarantined Cell therefore never reaches gate evaluation at all in this pipeline: it is excluded at
+  the *eligibility* stage, not the *gate* stage, so `not_quarantined`'s `REJECTED` branch cannot fire
+  through `ParetoSelection.decide()` regardless of colony state. The gate is kept — it is correct,
+  cheap, and a module built for reuse by `MapElitesSelection`/`StagedFundingSelection` next shouldn't
+  assume every future caller pre-filters the same way — but the first version of this ADR's own test
+  asserted a `REJECTED` gate result that can never occur here and failed; rewritten to assert the
+  accurate, narrower fact (quarantined Cells appear in neither `eligible_cell_ids` nor
+  `gate_results` at all), rather than a plausible-sounding claim about a code path this pipeline
+  cannot reach.
+
+- **Verification:** a genuine three-Cell trade-off fixture (higher revenue but a lower success rate
+  vs. lower revenue but a perfect one — engineered by holding `structural_novelty` tied across all
+  three via identical genome content, so only the two controlled axes discriminate) proving mutual
+  non-domination puts both on the front while a strictly-dominated third is excluded; the corrected
+  quarantine test above; every chosen parent receiving its own operator entry; a CLI end-to-end run.
+  Three teeth-checks (truncating the front to one winner, dropping the per-parent operator
+  assignments, renaming the factory's branch), each confirmed to fail for the stated reason and
+  restored verbatim. Full suite green; golden run unaffected (hash unchanged at 38); `ruff check .`
+  and `scripts/check_docs_facts.py` both clean.
+
+- Next: G4 — `MapElitesSelection`, giving `novelty.py`'s archive the elite-per-niche rule
+  `candidate.niche_elite()` already built in G1 its first real caller — then G5
+  (`StagedFundingSelection` + Thompson sampling + the `EnvironmentSuite.validation` consumer) and G6
+  (the cross-policy acceptance harness).
