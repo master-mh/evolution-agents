@@ -4681,3 +4681,100 @@ out as a Slice G decision, not this one.
 - Next: the remaining mutation operators (§14.1, Slice F3), chaos drills (§28), full manifest
   richness (Slice F5), then Slice G's remaining `SelectionPolicy` implementations and Slice H's
   pre-registered Phase 3 comparisons.
+
+## ADR-074: The remaining six mutation operators, wired through a real operator choice instead of a hardcoded no-op (Slice F, part 3)
+
+- **Status:** Accepted; `src/mitosis/simulation/mutation.py` gains six operators and an
+  `OPERATORS` dispatch table; `selection_policy.py` and `runner.py` change to use it; 9 new tests
+  in `tests/test_simulation.py` (33 total)
+- **Spec ref:** §14.1 (mutation operators), §16.3/§16.4 (the closed, inheritable genome schema);
+  implementation brief's "Mutation and reproduction" section, verbatim: market/customer,
+  product/delivery, acquisition-channel, pricing/revenue-model, workflow, model-policy temperature,
+  one no-op/control — the brief's own list, not SPEC.md §14.1's longer one (that clause names two
+  taxonomies, "prompt mutation operators" and "economic mutation operators... from v0.1"; the brief
+  synthesizes six from both lists plus the control already shipped in F1)
+
+- **A hardcoded call was hiding behind a decision-record field that already existed.**
+  `SelectionDecision.mutation_operator: str` has recorded an operator *name* since F1
+  (ADR-072) — but `runner._run_one_epoch`'s reproduction loop never read it: every reproduction
+  called `mutation.no_op(...)` directly, regardless of what the decision said. F1's own `no_op`
+  being the only real operator meant this went unnoticed; wiring five more operators without fixing
+  the dispatch would have shipped them as unit-testable functions nothing in the live pipeline ever
+  calls — exactly the "reserved socket that stays unfilled" pattern this repo's own conventions flag
+  repeatedly. Fixed with an `OPERATORS: dict[str, Callable]` registry in `mutation.py` and
+  `RandomEligibleSelection.decide()` now choosing an operator name uniformly at random (reusing the
+  same `rng` it already draws the parent choice from, so the decision stays one deterministic
+  stream, not two) — `runner.py` dispatches on `decision.mutation_operator` rather than a fixed call.
+
+- **A second, independent bug in the same call site: the bare `master_seed` reused for every
+  mutation in a run.** `mutation.no_op(parent_content, seed=master_seed)` passed the *run's* seed
+  unchanged to every reproduction event — harmless for a no-op that ignores its `seed` parameter
+  entirely, but for a real operator this would make every mutation of one operator across a whole
+  run draw the identical "variation," forever. Fixed by deriving a per-event label,
+  `f"{master_seed}:mutation:{epoch}:{parent_id}"`, matching this package's existing seeding
+  convention (a stable f-string, never `hash()`, for the same cross-process-determinism reason
+  `environment.py` already documents) rather than reusing a raw value.  This is the same shape of
+  bug as F1's tuple-seed bug (ADR-072) and F2's stale-epoch-range test break (ADR-073) — a call site
+  built before its inputs mattered, unexercised until something downstream actually varied by them.
+
+- **Operator signature is uniform on purpose:** every operator is
+  `(parent_content: dict, *, seed: str) -> tuple[dict, str]`, `no_op` included (its own `seed`
+  parameter's declared type changed from `int` to `str` to match — a no-op change to its behaviour,
+  since the parameter was already deleted unused). A caller holding only a name string —
+  exactly what `SelectionDecision` carries — can dispatch through `OPERATORS[name]` without a
+  per-operator special case.
+
+- **Discrete operators guarantee a change; continuous ones don't try to.** Market segment, delivery
+  mode, acquisition channel, and workflow structure each pick from a small fixed candidate set,
+  explicitly excluding the parent's current value — invoking one of these always changes that field,
+  because the operator's entire identity *is* "this field changed." Price and temperature are
+  continuous: any nonzero perturbation already differs, and the one case where clamping produces no
+  change (temperature already at 0.0 or 1.0, pushed further the same way) is a real, honestly
+  recorded outcome, not a bug to retry away — the brief asks to *record* "whether it created
+  genuinely distinct canonical content," not to force every call to produce it.
+
+- **Recording the brief's five required facts without a schema change.** `genome.inherit()` merges
+  a mutation dict key by key (`content.update(mutation)`, no deep merge) — so an operator changing
+  one nested field must read the parent's current value for that whole top-level key, copy it, and
+  return the modified copy, or every other nested fact under that key would be silently dropped from
+  the child (`test_mutation_operators_preserve_unrelated_fields_within_the_same_key` guards this).
+  Parent/child genome hashes already live on `cells`/`cell_genomes`; what the schema doesn't carry —
+  the seed, the before/after diff, whether the result was genuinely distinct — goes through
+  `audit.record(event_type="simulation_mutation", ...)`, the same "explain, don't define a second
+  identity" mechanism `SelectionDecision` (ADR-072) and regime-shift events (ADR-073) already use.
+  This isn't a stylistic echo of those two: it is the *same reason* each time — a mutation that
+  collapses to the parent's own existing `cell_genomes` row (ADR-018) writes no new row at all, so a
+  schema-level column could never carry a fact about *this* reproduction event distinctly from
+  whichever earlier event first created that row. Only the audit trail can.
+
+- **What it displaced:** retrying a continuous operator until it produces a different value from the
+  parent, considered for price/temperature to match the discrete operators' guarantee and rejected —
+  the brief's own phrasing ("whether it created genuinely distinct... content") reads as something to
+  measure and record, not a property to force; a retry loop would also need an arbitrary cutoff (how
+  many attempts before giving up) that recording-only avoids entirely. Also displaced: giving
+  `SelectionDecision.mutation_operator` a per-parent mapping instead of one shared field —
+  `RandomEligibleSelection` only ever chooses at most one parent per epoch today, so a single field
+  already matches its own shape; a collection would be scope built for a Slice G policy that doesn't
+  exist yet.
+
+- **Verification:** 9 new tests (33 total in the file): each discrete operator's guaranteed change;
+  every operator's registry name matching its own returned name; price and temperature staying
+  bounded; determinism given a fixed seed, across all seven operators; a nested-field-preservation
+  check against the `content.update` merge semantics; a per-event seed-uniqueness check (the second
+  bug above, guarded so it cannot silently regress); a full population=10/epochs=20 run's audit trail
+  checked for completeness (every `simulation_mutation` event carries a known operator, a nonempty
+  seed, a parent id, a dict of changed fields, and a boolean distinctness flag) and for at least one
+  real operator actually firing and actually producing distinct content through the live pipeline,
+  not just in isolation. A pre-existing F1 test (`test_population_grows_through_the_real_reproduction
+  _path`) asserted every child's `genome_hash` equals its parent's — true only because `no_op` was
+  the sole operator `RandomEligibleSelection` could ever choose; now false in general, so the
+  assertion was removed from that test and its actually-still-true claim (real funding, a real row)
+  is what remains there, with hash-collapse behaviour covered by the new audit-based tests instead.
+  Four teeth-checks, each confirmed to fail for the stated reason and restored verbatim: the
+  discrete-operator exclusion removed, the dispatch reverted to a hardcoded `no_op`, the mutation
+  audit-recording call skipped, and the per-event seed reverted to the bare `master_seed`. Full suite
+  green; golden run unaffected (hash unchanged at 38); `ruff check .` and
+  `scripts/check_docs_facts.py` both clean.
+
+- Next: chaos drills (§28) and full manifest richness (Slice F5) close out Slice F, then Slice G's
+  remaining `SelectionPolicy` implementations and Slice H's pre-registered Phase 3 comparisons.

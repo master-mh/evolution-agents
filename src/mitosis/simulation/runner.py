@@ -273,7 +273,12 @@ def _run_one_epoch(
         if parent is None:
             continue
         parent_content = _genome_content_of(conn, parent.genome_hash)
-        mutation_dict, operator_name = mutation.no_op(parent_content, seed=master_seed)
+        # A per-event label, not the bare `master_seed` -- every mutation of
+        # the same operator across a whole run would otherwise draw from the
+        # identical seed and produce the identical "variation" every time.
+        mutation_seed = f"{master_seed}:mutation:{epoch}:{parent_id}"
+        operator_fn = mutation.OPERATORS.get(decision.mutation_operator, mutation.no_op)
+        mutation_dict, operator_name = operator_fn(parent_content, seed=mutation_seed)
         reproduce_key = f"sim:{run_id}:epoch:{epoch}:reproduce:{parent_id}"
         try:
             child = lineage.reproduce(
@@ -292,6 +297,26 @@ def _run_one_epoch(
                 amount_minor_units=_FOUNDING_BUDGET_MINOR_UNITS,
             )
             reproductions += 1
+            # Brief: "each mutation must record parent hashes, operator,
+            # seed, before/after changed fields, and whether it created
+            # genuinely distinct canonical content." Parent/child hashes
+            # already live on `cells`/`cell_genomes`; this carries the facts
+            # the schema doesn't, the same "explain, don't define a second
+            # identity" reason `SelectionDecision` and regime-shift events
+            # already use.
+            audit.record(
+                conn, event_type="simulation_mutation", cell_id=child.cell_id,
+                description=f"{operator_name} from parent {parent_id}",
+                metadata={
+                    "run_id": run_id, "epoch": epoch, "parent_cell_id": parent_id,
+                    "operator": operator_name, "seed": mutation_seed,
+                    "changed_fields": {
+                        key: {"before": parent_content.get(key), "after": value}
+                        for key, value in mutation_dict.items()
+                    },
+                    "genuinely_distinct": child.genome_hash != parent.genome_hash,
+                },
+            )
         except (lineage.LineageError, population.PopulationError):
             # A refused reproduction is a fact the audit trail already has
             # (population/lineage caps, insufficient balance) -- not a run

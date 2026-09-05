@@ -80,6 +80,10 @@ class RandomEligibleSelection:
     ) -> SelectionDecision:
         eligible = _eligible_parents(conn, book=self._book)
         chosen = tuple(cell.cell_id for cell in rng.sample(eligible, k=min(1, len(eligible))))
+        # Reuses this same call's `rng` rather than drawing a second one --
+        # the choice is still deterministic given `seed_label`, just a later
+        # value in the one stream this decision already consumes from.
+        operator = rng.choice(sorted(mutation.OPERATORS)) if chosen else mutation.NO_OP_OPERATOR
         return SelectionDecision(
             policy_name=self.name,
             policy_version=self.version,
@@ -87,12 +91,13 @@ class RandomEligibleSelection:
             rng_seed_label=seed_label,
             eligible_cell_ids=tuple(c.cell_id for c in eligible),
             chosen_parent_cell_ids=chosen,
-            mutation_operator=mutation.NO_OP_OPERATOR,
+            mutation_operator=operator,
             child_budget_minor_units=_CHILD_BUDGET_MINOR_UNITS,
             reason=(
                 f"{len(eligible)} cell(s) eligible ({self._book.value} cash >= "
                 f"{_CHILD_BUDGET_MINOR_UNITS + _MIN_RETAINED_CASH_MINOR_UNITS}); "
                 f"chose {len(chosen)} uniformly at random -- brief Slice G policy #1, "
-                "no quality-diversity signal consulted"
+                "no quality-diversity signal consulted; mutation operator chosen "
+                "uniformly at random among all registered operators"
             ),
         )

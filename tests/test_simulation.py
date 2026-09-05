@@ -21,7 +21,7 @@ import pytest
 
 from mitosis import cli, db, ledger
 from mitosis.models import Book
-from mitosis.simulation import environment, runner
+from mitosis.simulation import environment, mutation, runner
 from mitosis.simulation.environment import (
     EnvironmentSuite,
     ExperimentAction,
@@ -135,13 +135,11 @@ def test_population_grows_through_the_real_reproduction_path(conn):
     first child clears it (`2/11 ~= 0.18`), so growth is expected here rather
     than merely tolerated.
 
-    `mutation.no_op` is not separately asserted on `cell_genomes
-    .mutation_operator` here: an empty overlay collapses to the *parent's own*
-    existing genome row by content addressing (ADR-018), so the column this
-    slice's only operator would populate is never actually written -- there
-    is nothing new to attribute a name to. What *is* checked is that
-    collapse: every child shares a real ancestor's genome_hash rather than
-    getting one of its own.
+    Unlike F1 (where `no_op` was the only operator ever chosen, so every
+    child's `genome_hash` necessarily collapsed to its parent's own, ADR-018),
+    F3 wired a real random operator choice -- asserting hash collapse here
+    would now be testing which operator the RNG happened to pick, not
+    reproduction itself. That property moved to its own test below.
     """
     manifest = _run(conn, seed=7, epochs=20, population=10)
 
@@ -153,15 +151,78 @@ def test_population_grows_through_the_real_reproduction_path(conn):
     ).fetchall()}
     children = [row for row in rows.values() if row["parent_cell_id"] is not None]
     assert children
-    for child in children:
-        parent = rows[child["parent_cell_id"]]
-        assert child["genome_hash"] == parent["genome_hash"]
 
     # And the funding was real: each child's ledger shows a
     # `cell_birth_funding`-shaped debit against its own parent, not the pool.
     for child in children:
         credited = ledger.get_balance(conn, f"cell:{child['cell_id']}:cash", Book.USD_SIM)
         assert credited > 0
+
+
+def test_every_reproduction_records_a_complete_mutation_audit_event(conn):
+    """Brief: "each mutation must record parent hashes, operator, seed,
+    before/after changed fields, and whether it created genuinely distinct
+    canonical content." `cell_genomes.mutation_operator` cannot carry this
+    alone: a mutation that collapses to a parent's own existing genome row
+    (ADR-018) writes no new row at all, so nothing would even be attributed
+    to *this* reproduction event. The durable per-event record is
+    `audit_events` (`runner._run_one_epoch`'s `simulation_mutation` events),
+    the same "explain, don't define a second identity" mechanism
+    `SelectionDecision` and regime-shift events already use."""
+    manifest = _run(conn, seed=7, epochs=20, population=10)
+    if manifest.final_living_cells <= 10:
+        pytest.skip("no reproduction happened at this seed/epoch count -- not this test's claim")
+
+    rows = conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE event_type = 'simulation_mutation'"
+    ).fetchall()
+    assert rows
+    for row in rows:
+        metadata = json.loads(row["metadata_json"])
+        assert metadata["operator"] in mutation.OPERATORS
+        assert metadata["seed"]
+        assert metadata["parent_cell_id"]
+        assert isinstance(metadata["changed_fields"], dict)
+        assert isinstance(metadata["genuinely_distinct"], bool)
+
+
+def test_mutation_seeds_differ_across_reproduction_events(conn):
+    """Guards against reusing the bare `master_seed` for every mutation in a
+    run: every `simulation_mutation` audit event must carry a seed unique to
+    *that* reproduction event, or every mutation of one operator in a run
+    would produce byte-identical "variation" forever."""
+    manifest = _run(conn, seed=7, epochs=20, population=10)
+    if manifest.final_living_cells <= 10:
+        pytest.skip("no reproduction happened at this seed/epoch count -- not this test's claim")
+
+    rows = conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE event_type = 'simulation_mutation'"
+    ).fetchall()
+    seeds = [json.loads(row["metadata_json"])["seed"] for row in rows]
+    if len(seeds) <= 1:
+        pytest.skip("fewer than two reproductions happened -- nothing to compare")
+    assert len(set(seeds)) == len(seeds)
+
+
+def test_a_real_operator_actually_changes_genome_content_over_the_run(conn):
+    """The point of F3: unlike F1 (`no_op` was the only operator
+    `RandomEligibleSelection` could ever choose), a real, content-changing
+    operator must actually fire through the live pipeline and produce a
+    child whose genome_hash differs from its parent's -- not just exist as a
+    unit-testable function nothing calls end-to-end."""
+    manifest = _run(conn, seed=7, epochs=20, population=10)
+    if manifest.final_living_cells <= 10:
+        pytest.skip("no reproduction happened at this seed/epoch count -- not this test's claim")
+
+    rows = conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE event_type = 'simulation_mutation'"
+    ).fetchall()
+    records = [json.loads(row["metadata_json"]) for row in rows]
+    operators_used = {record["operator"] for record in records}
+    assert operators_used - {mutation.NO_OP_OPERATOR}, (
+        f"only {operators_used} fired at this seed/scale -- no real operator was ever chosen"
+    )
+    assert any(record["genuinely_distinct"] for record in records)
 
 
 def test_a_reproduced_child_is_scheduler_eligible_not_permanently_inert(conn):
@@ -387,6 +448,74 @@ def test_regime_shift_events_are_recorded_in_the_audit_trail(conn):
     metadata = json.loads(rows[0]["metadata_json"])
     assert metadata["kind"] == "price_compression"
     assert metadata["epoch"] == 10
+
+
+def test_each_discrete_mutation_operator_always_changes_its_field():
+    """Discrete-choice operators exclude the parent's current value from
+    their candidate set -- invoking one always changes that field, which is
+    the operator's whole identity (see `mutation.py`'s module docstring)."""
+    cases = [
+        (mutation.market_customer_variation, "market", "segment", "smb"),
+        (mutation.product_delivery_variation, "product", "delivery_mode", "self_serve"),
+        (mutation.acquisition_channel_variation, "acquisition_channel", "channel", "community"),
+        (mutation.workflow_variation, "workflow", "structure", "sequential"),
+    ]
+    for operator_fn, top_key, sub_key, current_value in cases:
+        parent_content = {top_key: {sub_key: current_value}}
+        for seed in ("s1", "s2", "s3", "s4", "s5"):
+            mutation_dict, _ = operator_fn(parent_content, seed=seed)
+            assert mutation_dict[top_key][sub_key] != current_value
+
+
+def test_mutation_operator_names_match_their_registry_entries():
+    for name, fn in mutation.OPERATORS.items():
+        _, returned_name = fn({}, seed="x")
+        assert returned_name == name
+
+
+def test_pricing_revenue_model_variation_stays_positive_and_bounded():
+    parent_content = {"revenue_model": {"price_minor_units": 500}}
+    for seed in ("a", "b", "c", "d", "e", "f", "g", "h"):
+        mutation_dict, operator_name = mutation.pricing_revenue_model_variation(
+            parent_content, seed=seed
+        )
+        assert mutation_dict["revenue_model"]["price_minor_units"] >= mutation._MIN_PRICE_MINOR_UNITS
+        assert operator_name == mutation.PRICING_REVENUE_MODEL_OPERATOR
+
+
+def test_model_policy_temperature_variation_stays_within_bounds():
+    for current in (0.0, 0.5, 1.0):
+        parent_content = {"model_policy": {"temperature": current}}
+        for seed in ("a", "b", "c", "d", "e"):
+            mutation_dict, operator_name = mutation.model_policy_temperature_variation(
+                parent_content, seed=seed
+            )
+            temperature = mutation_dict["model_policy"]["temperature"]
+            assert 0.0 <= temperature <= 1.0
+            assert operator_name == mutation.MODEL_POLICY_TEMPERATURE_OPERATOR
+
+
+def test_mutation_operators_are_deterministic_given_the_same_seed():
+    parent_content = {
+        "market": {"segment": "smb"}, "product": {"delivery_mode": "api"},
+        "revenue_model": {"price_minor_units": 500}, "model_policy": {"temperature": 0.5},
+    }
+    for operator_fn in mutation.OPERATORS.values():
+        assert operator_fn(parent_content, seed="fixed-seed") == operator_fn(
+            parent_content, seed="fixed-seed"
+        )
+
+
+def test_mutation_operators_preserve_unrelated_fields_within_the_same_key():
+    """`genome.inherit` replaces a top-level key wholesale
+    (`content.update(mutation)`), so an operator touching one field must
+    carry the rest of that same key's own content forward, or a nested fact
+    the mutation didn't intend to touch would be silently dropped from the
+    child."""
+    parent_content = {"market": {"segment": "smb", "region": "emea"}}
+    mutation_dict, _ = mutation.market_customer_variation(parent_content, seed="x")
+    assert mutation_dict["market"]["region"] == "emea"
+    assert mutation_dict["market"]["segment"] != "smb"
 
 
 def test_build_environment_selects_the_named_family_and_rejects_unknown_names():

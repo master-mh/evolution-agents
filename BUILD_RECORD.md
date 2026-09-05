@@ -22,63 +22,70 @@ retry, the argued refusal to extend it to the Auditors or `call-model`,
 an external audit's clean source-distribution archive, its egress-boundary
 repair (robots.txt transport, SSRF, honest personal-data status),
 documentation/safety-claim reconciliation, a narrow runtime-defect lint gate,
-auto-promotion reaching the scheduled `tick`, and the flight simulator's first
-slice (mock Cells deciding through the real deliberation pipeline),
+auto-promotion reaching the scheduled `tick`, the flight simulator's first
+slice (mock Cells deciding through the real deliberation pipeline), and its
+second (a second market family, environment separation, regime shifts),
 2026-07-21 through 2026-09-05):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-05 — Phase 2 flight simulator, second slice: a second market family, real environment separation, and scheduled regime shifts (Slice F, part 2)
+## 2026-09-05 — Phase 2 flight simulator, third slice: the remaining mutation operators, wired through a real operator choice (Slice F, part 3)
 
-Continuing F1's own sub-slice sequence (`docs/DECISIONS.md`'s ADR-072) without a fresh plan-mode
-round-trip — the architecture was already settled there. ADR-073 is the full as-built record.
+Continuing the same sub-slice sequence (ADR-072, ADR-073) without a fresh plan-mode round-trip.
+ADR-074 is the full as-built record.
 
 ### What shipped
 
-- **`RuleBasedMarket`** — the second family brief requirement F.2 (§8.3) requires. Where
-  `UtilityMaximizingMarket` compares a continuous random willingness-to-pay draw against price, this
-  one branches on discrete rules throughout: a price tier, a genome-declared boolean flag required
-  to clear the standard tier, a premium tier gated on a declared quality flag plus a fixed-cutoff
-  coin flip. Proven independently shaped, not just differently named: one fixed genome (price=600,
-  no `durable` flag) sometimes sells in the sibling family and never sells in this one.
-- **`EnvironmentSuite`** (§8.1) — a real three-field config object (`training`/`validation`/
-  `secret_challenge`), enforced structurally rather than by convention: `runner._run_one_epoch`'s
-  own signature takes one environment, not a suite, so the routine loop has no path to
-  `validation`/`secret_challenge` even by mistake. Proven with a fake that raises the instant
-  anything calls it, not an AST check. Wiring a `validation`-consulting selection policy is
-  deliberately left to Slice G — `RandomEligibleSelection` doesn't consult any environment outcome
-  at all, by design, so there is no real consumer yet to wire it to.
-- **Scheduled regime shifts** (§8.4) on both families, at one shared fixed epoch: price compression
-  for the utility-maximizing market, stricter enforcement (a narrower always-clears budget tier) for
-  the rule-based one. A fixed epoch, not a random shock, because §8.4 calls this "part of fitness
-  evaluation" — something a Phase 3 comparison could pre-register against. Recorded via
-  `audit.record` the same way a selection decision already is (ADR-072), rather than a second
-  schema-level identity for the same fact; surfacing it in the manifest itself stays out of scope,
-  per `manifest.py`'s own docstring assigning that to F5.
-- `cli.py`'s `simulate` verb gains `--environment {utility_maximizing_market,rule_based_market}`.
+Six new operators in `src/mitosis/simulation/mutation.py` — market/customer, product/delivery,
+acquisition-channel, pricing/revenue-model, workflow, model-policy temperature — the brief's exact
+list, alongside the no-op/control that shipped in F1. Discrete-choice operators (segment, delivery
+mode, channel, workflow structure) exclude the parent's current value from their candidates, so
+invoking one always changes that field; the two continuous operators (price, temperature) don't
+force a guaranteed change — any nonzero perturbation already differs, and the rare clamped-identical
+case (temperature already at a bound) is recorded honestly rather than retried away.
 
-### A pre-existing test broke, correctly
+### A hardcoded call was hiding behind a decision-record field that already existed
 
-`test_the_two_environment_families_disagree_on_the_same_genome` (written before the regime shift
-existed) sampled 30 epochs at a price that the shift made provably unsellable past epoch 10 in the
-sibling family — the specific seed/price combination had zero hits in the remaining pre-shift
-window. Fixed by restricting to the pre-shift window and picking a price verified, not assumed, to
-hit within it. The `grep every reader of it, not just the enforcer` habit applies to a change in
-what an epoch *means*, not only to a changed field.
+`SelectionDecision.mutation_operator` has recorded an operator *name* since F1, but
+`runner._run_one_epoch` never read it — every reproduction called `mutation.no_op(...)` directly.
+Unnoticed while `no_op` was the only real operator; wiring five more without fixing this would have
+shipped them as functions nothing in the live pipeline ever calls. Fixed with an `OPERATORS`
+dispatch table and `RandomEligibleSelection` now choosing an operator name at random from the same
+`rng` it already draws the parent choice from.
+
+### A second bug in the same call site
+
+The reproduction loop passed the bare `master_seed` to every mutation, unchanged across the whole
+run — harmless for a no-op that ignores its seed, but every real operator would have drawn the
+identical "variation" forever. Fixed with a per-event label,
+`f"{master_seed}:mutation:{epoch}:{parent_id}"`, matching this package's existing seeding
+convention. Same shape as F1's tuple-seed bug and F2's stale-epoch-range test break: a call site
+built before its inputs mattered, unexercised until something downstream actually varied by them.
+
+### Recording the brief's five required facts without a schema change
+
+`genome.inherit()` merges a mutation key by key, not a deep merge — an operator changing one nested
+field must carry the rest of that key's own content forward, or a fact the mutation didn't intend
+to touch would be silently dropped from the child. Parent/child hashes already live on
+`cells`/`cell_genomes`; the seed, before/after diff, and distinctness flag go through
+`audit.record(event_type="simulation_mutation", ...)` — the same "explain, don't define a second
+identity" reason `SelectionDecision` and regime-shift events already use, for the same underlying
+cause each time: a mutation that collapses to the parent's own existing genome row (ADR-018) writes
+no new row, so only the audit trail can attribute a fact to *this* reproduction event.
 
 ### Verification
 
-12 new tests (24 total in `tests/test_simulation.py`): the second family's purity, tier rules, and
-proven disagreement with the first; the environment factory's name-based construction and rejection
-of an unknown name; the CLI flag actually changing which family runs, not just being accepted; the
-routine loop's structural blindness to `validation`/`secret_challenge`; both regime shifts,
-behaviourally (a price chosen so the post-shift outcome is deterministically impossible, not just
-statistically unlikely) and via `advance()`'s returned event; the shift's audit-trail record. Six
-teeth-checks, each confirmed to fail for the stated reason and restored verbatim: the durable-flag
-tier rule, the unknown-name rejection, the CLI wiring, the routine loop's environment source, the
-regime-shift epoch branch, and the audit-recording loop, each removed in turn. Full suite green
-(1263, up from 1251); golden run unaffected (hash unchanged at 38 — no existing scenario touched);
-`ruff check .` and `scripts/check_docs_facts.py` both clean.
+9 new tests (33 total in `tests/test_simulation.py`): each discrete operator's guaranteed change;
+registry names matching returned names; price/temperature bounds; determinism given a fixed seed
+across all seven operators; nested-field preservation against the merge semantics; per-event seed
+uniqueness; a full run's audit trail checked for completeness and for a real operator actually
+firing and producing distinct content through the live pipeline. A pre-existing F1 test asserted
+every child's genome_hash equals its parent's — true only because `no_op` was the sole operator
+ever chosen; the assertion was removed (now false in general) and its still-true claim (real
+funding, a real row) is what remains, with hash-collapse behaviour covered by the new audit-based
+tests. Four teeth-checks, each confirmed to fail for the stated reason and restored verbatim: the
+discrete-operator exclusion, the dispatch, the mutation audit-recording call, and the per-event
+seed, each removed in turn. Full suite green; golden run unaffected (hash unchanged at 38); `ruff
+check .` and `scripts/check_docs_facts.py` both clean.
 
-- Next: the remaining mutation operators (§14.1, Slice F3), chaos drills (§28), full manifest
-  richness including regime-shift bookkeeping (Slice F5), then Slice G's remaining
-  `SelectionPolicy` implementations and Slice H's pre-registered Phase 3 comparisons.
+- Next: chaos drills (§28) and full manifest richness (Slice F5) close out Slice F, then Slice G's
+  remaining `SelectionPolicy` implementations and Slice H's pre-registered Phase 3 comparisons.

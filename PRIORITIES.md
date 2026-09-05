@@ -965,13 +965,13 @@
 
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
-  directive §28. **Underway, not done**: `src/mitosis/simulation/`'s first two slices (ADR-072,
-  ADR-073) prove the seam and now carry two independently-shaped environment families
+  directive §28. **Underway, not done**: `src/mitosis/simulation/`'s first three slices (ADR-072,
+  ADR-073, ADR-074) prove the seam and now carry two independently-shaped environment families
   (`UtilityMaximizingMarket`, `RuleBasedMarket`), real environment separation (§8.1's `training`/
-  `validation`/`secret_challenge`, structurally enforced), and a scheduled regime shift on each
-  family (§8.4) — reproduction/mutation reaching the real kernel paths, population 20 -> 70 over 50
-  epochs with conservation intact and zero real spend. Still missing before Phase 2 itself is done:
-  the five real mutation operators beyond the no-op control (§14.1), chaos drills, full manifest
-  richness (population/diversity time series, regime-shift bookkeeping), and population/benchmark
-  scale. Phase 3 (the other four `SelectionPolicy` implementations, the pre-registered comparisons)
-  has not started.
+  `validation`/`secret_challenge`, structurally enforced), a scheduled regime shift on each family
+  (§8.4), and all six required mutation operators (§14.1) wired through a real random operator
+  choice (not just the no-op control) — reproduction/mutation reaching the real kernel paths,
+  population 20 -> 70 over 50 epochs with conservation intact and zero real spend. Still missing
+  before Phase 2 itself is done: chaos drills, full manifest richness (population/diversity time
+  series, regime-shift bookkeeping), and population/benchmark scale. Phase 3 (the other four
+  `SelectionPolicy` implementations, the pre-registered comparisons) has not started.
