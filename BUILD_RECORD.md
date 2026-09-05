@@ -23,69 +23,61 @@ an external audit's clean source-distribution archive, its egress-boundary
 repair (robots.txt transport, SSRF, honest personal-data status),
 documentation/safety-claim reconciliation, a narrow runtime-defect lint gate,
 auto-promotion reaching the scheduled `tick`, the flight simulator's first
-slice (mock Cells deciding through the real deliberation pipeline), and its
-second (a second market family, environment separation, regime shifts),
+slice (mock Cells deciding through the real deliberation pipeline), its
+second (a second market family, environment separation, regime shifts), and
+its third (the remaining mutation operators, wired through a real choice),
 2026-07-21 through 2026-09-05):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-05 — Phase 2 flight simulator, third slice: the remaining mutation operators, wired through a real operator choice (Slice F, part 3)
+## 2026-09-05 — Phase 2 flight simulator, fourth slice: chaos drills as repeatable scenarios (Slice F, part 4)
 
-Continuing the same sub-slice sequence (ADR-072, ADR-073) without a fresh plan-mode round-trip.
-ADR-074 is the full as-built record.
+Continuing the same sub-slice sequence (ADR-072–074) without a fresh plan-mode round-trip.
+ADR-075 is the full as-built record.
 
 ### What shipped
 
-Six new operators in `src/mitosis/simulation/mutation.py` — market/customer, product/delivery,
-acquisition-channel, pricing/revenue-model, workflow, model-policy temperature — the brief's exact
-list, alongside the no-op/control that shipped in F1. Discrete-choice operators (segment, delivery
-mode, channel, workflow structure) exclude the parent's current value from their candidates, so
-invoking one always changes that field; the two continuous operators (price, temperature) don't
-force a guaranteed change — any nonzero perturbation already differs, and the rare clamped-identical
-case (temperature already at a bound) is recorded honestly rather than retried away.
+New `src/mitosis/simulation/chaos.py`, all five brief-required drills, plus one new seam:
+`runner.run()` gains `epoch_hook`, called once per epoch after that epoch's own processing already
+completed, so every hook-shaped drill shares one addition to `runner.py` rather than one each.
+`KillFractionDrill` kills a seeded fraction of living Cells; `WithdrawCapabilityDrill` disables the
+`auto_promotion` autonomy flag mid-run; `CrashingEnvironment` (a `MarketEnvironment` decorator, no
+runner change needed) raises once from `evaluate()` at a chosen epoch; a regime-shift drill and a
+duplicate/out-of-order drill reuse existing mechanisms rather than adding new ones (below).
 
-### A hardcoded call was hiding behind a decision-record field that already existed
+### Two of five drills needed reframing, stated rather than silently substituted
 
-`SelectionDecision.mutation_operator` has recorded an operator *name* since F1, but
-`runner._run_one_epoch` never read it — every reproduction called `mutation.no_op(...)` directly.
-Unnoticed while `no_op` was the only real operator; wiring five more without fixing this would have
-shipped them as functions nothing in the live pipeline ever calls. Fixed with an `OPERATORS`
-dispatch table and `RandomEligibleSelection` now choosing an operator name at random from the same
-`rng` it already draws the parent choice from.
+"Corrupt or withdraw one shared capability/module" has no module/tool-use surface in this simulator
+yet (`SimulationPolicyProvider` decides from genome content alone) — `auto_promotion` is the one
+capability that actually is shared and colony-wide, so withdrawing it is a real loss, not a
+stand-in. "Crash at reserve, execute, and settlement boundaries" targets the *experiment*
+lifecycle's own three-phase shape (start/evaluate/conclude), not the deeper money-reservation FSM in
+`gateway.py` — that FSM's crash safety is Charter C6's job, already exhaustively verified
+independent of any live population; what's genuinely new is whether a full run's own state
+(population, audit trail, manifest) survives one call failing mid-flight. The other two boundaries
+(`start_from_grant`, `conclude`/`record_revenue`) have no injectable seam today, and building one
+solely for a drill to target would be speculative surface for no other caller.
 
-### A second bug in the same call site
+### A wrong assumption, corrected before it shipped
 
-The reproduction loop passed the bare `master_seed` to every mutation, unchanged across the whole
-run — harmless for a no-op that ignores its seed, but every real operator would have drawn the
-identical "variation" forever. Fixed with a per-event label,
-`f"{master_seed}:mutation:{epoch}:{parent_id}"`, matching this package's existing seeding
-convention. Same shape as F1's tuple-seed bug and F2's stale-epoch-range test break: a call site
-built before its inputs mattered, unexercised until something downstream actually varied by them.
-
-### Recording the brief's five required facts without a schema change
-
-`genome.inherit()` merges a mutation key by key, not a deep merge — an operator changing one nested
-field must carry the rest of that key's own content forward, or a fact the mutation didn't intend
-to touch would be silently dropped from the child. Parent/child hashes already live on
-`cells`/`cell_genomes`; the seed, before/after diff, and distinctness flag go through
-`audit.record(event_type="simulation_mutation", ...)` — the same "explain, don't define a second
-identity" reason `SelectionDecision` and regime-shift events already use, for the same underlying
-cause each time: a mutation that collapses to the parent's own existing genome row (ADR-018) writes
-no new row, so only the audit trail can attribute a fact to *this* reproduction event.
+The plan assumed an out-of-order funding call (a child funded before its birth is visible) would be
+rejected. Checking rather than assuming: `ledger` accounts are plain strings, not a foreign key into
+`cells` (confirmed by reading `scheduler.eligible_cells`, which starts from the `cells` table and
+only then checks balances) — so the call neither corrupts anything nor raises; it parks an inert,
+unreachable balance instead. The test asserts what's actually true, not the rejection that doesn't
+happen.
 
 ### Verification
 
-9 new tests (33 total in `tests/test_simulation.py`): each discrete operator's guaranteed change;
-registry names matching returned names; price/temperature bounds; determinism given a fixed seed
-across all seven operators; nested-field preservation against the merge semantics; per-event seed
-uniqueness; a full run's audit trail checked for completeness and for a real operator actually
-firing and producing distinct content through the live pipeline. A pre-existing F1 test asserted
-every child's genome_hash equals its parent's — true only because `no_op` was the sole operator
-ever chosen; the assertion was removed (now false in general) and its still-true claim (real
-funding, a real row) is what remains, with hash-collapse behaviour covered by the new audit-based
-tests. Four teeth-checks, each confirmed to fail for the stated reason and restored verbatim: the
-discrete-operator exclusion, the dispatch, the mutation audit-recording call, and the per-event
-seed, each removed in turn. Full suite green; golden run unaffected (hash unchanged at 38); `ruff
-check .` and `scripts/check_docs_facts.py` both clean.
+9 new tests (42 total): each drill's real effect verified independently of its own self-report (a
+coroner-report count matching the claimed kill count, not just trusting it; the autonomy flag
+actually flipped; one recorded failure and the interrupted experiment concluding on a later epoch,
+not just "didn't crash"; a >5x aggregate sales drop across the regime-shift boundary at full-economy
+scale; duplicate-call idempotency; out-of-order inertness); the shared post-drill invariant helper;
+two determinism-under-a-drill checks covering both injection mechanisms (epoch-hook and
+environment-wrapper). Five teeth-checks, each confirmed to fail for the stated reason and restored
+verbatim. Full suite green; golden run unaffected (hash unchanged at 38); `ruff check .` and
+`scripts/check_docs_facts.py` both clean.
 
-- Next: chaos drills (§28) and full manifest richness (Slice F5) close out Slice F, then Slice G's
-  remaining `SelectionPolicy` implementations and Slice H's pre-registered Phase 3 comparisons.
+- Next: full manifest richness and the two acceptance-scale configurations (Slice F5) close out
+  Slice F, then Slice G's remaining `SelectionPolicy` implementations and Slice H's pre-registered
+  Phase 3 comparisons.

@@ -4778,3 +4778,95 @@ out as a Slice G decision, not this one.
 
 - Next: chaos drills (§28) and full manifest richness (Slice F5) close out Slice F, then Slice G's
   remaining `SelectionPolicy` implementations and Slice H's pre-registered Phase 3 comparisons.
+
+## ADR-075: Chaos drills as repeatable scenarios, two reframed one layer up from their literal wording (Slice F, part 4)
+
+- **Status:** Accepted; new `src/mitosis/simulation/chaos.py`; `runner.run()` gains an `epoch_hook`
+  parameter; 9 new tests in `tests/test_simulation.py` (42 total)
+- **Spec ref:** §28 Phase 2 ("chaos drills are part of the suite: kill 30% of Cells mid-epoch,
+  corrupt a shared module, crash mid-settlement — conservation must hold and the population must
+  recover"); implementation brief's fuller five-drill list, which this slice follows for specificity
+
+- **One new seam, shared by every drill that needs to fire mid-run:** `runner.run()` gains
+  `epoch_hook: Callable[[conn, epoch], None] | None`, called once per epoch after that epoch's own
+  processing already completed — so a drill starts from a normal, consistent state rather than an
+  in-flight one, and `runner.py` gets exactly one addition regardless of how many drills exist. A
+  drill that needs to intercept one call *inside* an epoch (the crash drill, below) uses a different,
+  already-existing seam instead — `MarketEnvironment` — rather than stretching the epoch-hook shape
+  to fit something it isn't.
+
+- **Two of the five drills needed reframing, and this ADR states the reasoning rather than silently
+  substituting something else:**
+
+  - **"Corrupt or withdraw one shared capability/module"** has no module/tool-use surface to target:
+    `SimulationPolicyProvider` decides from genome content alone (`policy.py`'s own docstring on
+    why). The one genuinely shared, colony-wide capability this simulator actually depends on is the
+    `auto_promotion` autonomy flag `run()` enables at setup (ADR-071/072) — `WithdrawCapabilityDrill`
+    disables it mid-run. This is a real capability loss with real downstream consequences (grants stop
+    auto-approving), not a stand-in for a mechanism that doesn't exist yet.
+  - **"Crash at reserve, execute, and settlement boundaries"** targets the *experiment* lifecycle's
+    own three-phase shape (start / evaluate / conclude+record-revenue) rather than the deeper
+    money-reservation FSM inside `gateway.py`. That FSM's crash safety is Charter C6's job, already
+    exhaustively verified by a provider-agnostic stateful machine
+    (`tests/test_charter_properties.py`) independent of any live population — re-proving individual
+    FSM transitions here would duplicate that coverage, not add to it. What is genuinely new and
+    untested elsewhere is whether a full simulation run's *own* state (population, audit trail,
+    manifest) survives one call failing mid-flight. `CrashingEnvironment` wraps `evaluate` — the one
+    experiment-lifecycle call the simulator drives directly — to raise exactly once, at a chosen
+    epoch. `start_from_grant` ("reserve") and `conclude`/`record_revenue` ("settlement") are direct
+    calls to kernel functions with no injectable seam today; adding one solely so a drill could target
+    them would be speculative surface for no other caller — the same reasoning ADR-073 already used to
+    reject an `EnvironmentRole` enum and a `validation`-consulting selection policy nothing needs yet.
+
+- **The fault-injection classes are callables/decorators, not closures with bolted-on attributes.**
+  `KillFractionDrill`/`WithdrawCapabilityDrill` implement `__call__(conn, epoch)`, matching
+  `epoch_hook`'s type exactly, with `.reports` as a real instance attribute rather than a function
+  object with a monkeypatched one. `CrashingEnvironment` implements the full `MarketEnvironment`
+  Protocol and delegates to the wrapped environment for everything except one `evaluate` call —
+  matching the pattern this package already uses for injectable seams (`SelectionPolicy`,
+  `MarketEnvironment` itself) rather than introducing a new shape.
+
+- **A wrong assumption, corrected before it shipped:** the plan for "duplicate and out-of-order
+  events" assumed a premature/out-of-order operation (funding a Cell before its birth is visible)
+  would be rejected. Checking rather than assuming: `ledger` accounts are plain strings, not a
+  foreign key into `cells` (confirmed by reading `scheduler.eligible_cells`, which starts from `SELECT
+  ... FROM cells` and only *then* checks each real row's balance) — so `_fund_scheduler_eligibility`
+  for a not-yet-existing cell_id neither corrupts anything nor raises; it parks a balance that
+  `eligible_cells` can never reach until a Cell with that same id actually exists, at which point the
+  same already-posted entries become that Cell's real balance by construction. The test asserts what
+  is actually true (inert and unreachable, conservation intact) rather than a rejection that doesn't
+  happen. Duplicate delivery, by contrast, is a direct, already-correct property:
+  `_fund_scheduler_eligibility` called twice with the same key is a verified no-op — the raw kernel
+  event queue's own redelivery safety is Charter C6's job; this proves the simulator's own
+  idempotency-keyed call site is safe under redelivery, which is the layer this slice can actually
+  vouch for.
+
+- **The regime-shift drill reuses F2's mechanism at full-economy scale rather than building a new
+  one.** ADR-073's own tests already prove the shift changes environment *outcomes* in isolation; this
+  drill runs the standard founder population (prices 400/450/500, `runner._founder_genome`) across
+  the shift boundary and shows the *aggregate colony* pays for it: sales in the ten post-shift epochs
+  measured under 10% of the ten pre-shift epochs' total at a fixed seed (33 vs 2, empirically) — not a
+  marginal wobble, exactly what "invalidates the currently dominant strategy" means for a real
+  population rather than one hand-picked price.
+
+- **What it displaced:** three separately-injectable boundaries for the crash drill (considered and
+  rejected above); a CLI verb per drill, considered and rejected because the brief's own CLI section
+  only asks for `mitosis simulate` — the 500-Cell/10,000-epoch acceptance run that would actually
+  *use* the drills at scale is explicitly F5's job (SPEC.md's own Phase 2 acceptance criteria list
+  "recovery from chaos drills" as part of that larger run, not a standalone CLI surface).
+
+- **Verification:** 9 new tests: each drill's real effect (coroner reports for the kill count, not
+  just its own self-reported total; the autonomy flag actually flipped; one recorded failure and the
+  interrupted experiment concluding on a later epoch, not just "the run didn't crash"; the aggregate
+  sales drop; duplicate-call idempotency; out-of-order inertness); the shared post-drill invariant
+  helper; and two explicit determinism-under-a-drill checks (one epoch-hook-shaped drill, one
+  environment-wrapper-shaped drill — the two different injection mechanisms this slice introduces,
+  not the same one twice). Five teeth-checks, each confirmed to fail for the stated reason and
+  restored verbatim: the kill call, the withdraw-capability call, the crash-injection condition, the
+  `epoch_hook` call site itself, and (breaking pre-existing F1 code on purpose to confirm the new
+  test's own teeth) the funding idempotency key. Full suite green; golden run unaffected (hash
+  unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both clean.
+
+- Next: full manifest richness and the two acceptance-scale configurations (Slice F5) close out
+  Slice F, then Slice G's remaining `SelectionPolicy` implementations and Slice H's pre-registered
+  Phase 3 comparisons.

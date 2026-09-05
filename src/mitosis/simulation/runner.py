@@ -20,6 +20,7 @@ import random
 import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any, Callable
 
 from .. import (
     audit,
@@ -354,6 +355,7 @@ def run(
     conn, config: RunConfig, *,
     suite: EnvironmentSuite | None = None,
     selection: SelectionPolicy | None = None,
+    epoch_hook: Callable[[Any, int], None] | None = None,
 ) -> RunManifest:
     suite = suite or EnvironmentSuite.training_only(UtilityMaximizingMarket())
     selection = selection or RandomEligibleSelection()
@@ -396,6 +398,13 @@ def run(
                         master_seed=config.master_seed,
                     )
                 )
+                if epoch_hook is not None:
+                    # A chaos drill's own injection point (`simulation.chaos`)
+                    # -- fires after this epoch's normal processing already
+                    # completed, so a drill starts from a consistent state
+                    # rather than an in-flight one. Any exception it raises
+                    # is handled the same as any other epoch failure below.
+                    epoch_hook(conn, epoch)
             except Exception as exc:  # noqa: BLE001
                 # A drill/scenario failure belongs in the manifest, not a
                 # crashed process (brief: "do not store only a final scalar

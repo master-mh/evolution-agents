@@ -21,7 +21,7 @@ import pytest
 
 from mitosis import cli, db, ledger
 from mitosis.models import Book
-from mitosis.simulation import environment, mutation, runner
+from mitosis.simulation import chaos, environment, mutation, runner
 from mitosis.simulation.environment import (
     EnvironmentSuite,
     ExperimentAction,
@@ -610,6 +610,189 @@ def test_random_eligible_selection_never_chooses_an_ineligible_cell(conn):
 
     assert decision.eligible_cell_ids == ()
     assert decision.chosen_parent_cell_ids == ()
+
+
+def test_kill_fraction_drill_kills_the_expected_share_and_conservation_holds(conn):
+    drill = chaos.KillFractionDrill(fraction=0.3, at_epoch=5)
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="t", master_seed=1, epochs=15, population=10),
+        epoch_hook=drill,
+    )
+
+    assert len(drill.reports) == 1
+    assert drill.reports[0].epoch == 5
+    killed_count = int(drill.reports[0].detail.split("killed ")[1].split("/")[0])
+    assert killed_count > 0
+    coroner_rows = conn.execute(
+        "SELECT COUNT(*) AS n FROM coroner_reports WHERE cause_of_death = 'chaos_drill_kill'"
+    ).fetchone()
+    assert coroner_rows["n"] == killed_count
+    assert manifest.failures == ()
+    invariants = chaos.verify_post_drill_invariants(conn)
+    assert all(invariants.values())
+    # Population recovery or explicit extinction (brief) -- either is a valid
+    # post-drill state; a negative or nonsensical count is not.
+    assert manifest.final_living_cells >= 0
+
+
+def test_kill_fraction_drill_replays_deterministically_from_the_same_seed(conn):
+    conn_b = db.connect_and_migrate()
+    try:
+        first = runner.run(
+            conn, runner.RunConfig(scenario_name="t", master_seed=3, epochs=12, population=8),
+            epoch_hook=chaos.KillFractionDrill(fraction=0.3, at_epoch=4),
+        )
+        second = runner.run(
+            conn_b, runner.RunConfig(scenario_name="t", master_seed=3, epochs=12, population=8),
+            epoch_hook=chaos.KillFractionDrill(fraction=0.3, at_epoch=4),
+        )
+        first_dict = asdict(first)
+        second_dict = asdict(second)
+        del first_dict["run_id"]
+        del second_dict["run_id"]
+        assert first_dict == second_dict
+    finally:
+        conn_b.close()
+
+
+def test_withdraw_capability_drill_disables_the_flag_and_the_run_survives(conn):
+    drill = chaos.WithdrawCapabilityDrill(at_epoch=5)
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="t", master_seed=1, epochs=10, population=5),
+        epoch_hook=drill,
+    )
+
+    from mitosis import tools
+
+    assert len(drill.reports) == 1
+    assert tools.autonomy_enabled(conn, "auto_promotion") is False
+    assert manifest.failures == ()
+    assert all(chaos.verify_post_drill_invariants(conn).values())
+
+
+def test_crashing_environment_records_one_failure_and_the_experiment_recovers_later(conn):
+    """"Crash at ... boundaries" reframed to the experiment lifecycle's
+    execute phase (see `chaos.py`'s module docstring). Recovery means the
+    interrupted experiment is retried and actually concludes on a later
+    epoch -- not merely that the run as a whole didn't crash."""
+    crashing_env = chaos.CrashingEnvironment(environment.UtilityMaximizingMarket(), at_epoch=5)
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="t", master_seed=1, epochs=10, population=5),
+        suite=environment.EnvironmentSuite.training_only(crashing_env),
+    )
+
+    assert len(manifest.failures) == 1
+    assert "epoch 5" in manifest.failures[0]
+    assert len(crashing_env.reports) == 1
+    victim_cell_id = crashing_env.reports[0].detail.rsplit(" ", 1)[-1]
+
+    from mitosis import experiments
+    assert experiments.current_for(conn, victim_cell_id) is None
+    rows = conn.execute(
+        "SELECT status FROM experiments WHERE cell_id = ?", (victim_cell_id,)
+    ).fetchall()
+    assert rows
+    assert all(row["status"] == "concluded" for row in rows)
+    assert all(chaos.verify_post_drill_invariants(conn).values())
+
+
+def test_crashing_environment_replays_deterministically_from_the_same_seed(conn):
+    conn_b = db.connect_and_migrate()
+    try:
+        config = runner.RunConfig(scenario_name="t", master_seed=5, epochs=10, population=5)
+        first = runner.run(
+            conn, config,
+            suite=environment.EnvironmentSuite.training_only(
+                chaos.CrashingEnvironment(environment.UtilityMaximizingMarket(), at_epoch=4)
+            ),
+        )
+        second = runner.run(
+            conn_b, config,
+            suite=environment.EnvironmentSuite.training_only(
+                chaos.CrashingEnvironment(environment.UtilityMaximizingMarket(), at_epoch=4)
+            ),
+        )
+        first_dict = asdict(first)
+        second_dict = asdict(second)
+        del first_dict["run_id"]
+        del second_dict["run_id"]
+        assert first_dict == second_dict
+    finally:
+        conn_b.close()
+
+
+def test_a_regime_shift_measurably_invalidates_a_previously_viable_price(conn):
+    """Brief drill: "a regime shift that invalidates the currently dominant
+    strategy." Uses F2's own scheduled shift (ADR-073) at full-economy scale
+    rather than the isolated environment-level check that ADR-073's own
+    tests already cover -- founders span prices 400/450/500 (`runner.
+    _founder_genome`); every one of those prices sells routinely pre-shift
+    and is severely restricted or impossible post-shift (max post-shift
+    willingness-to-pay is 450)."""
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="t", master_seed=1, epochs=20, population=5),
+    )
+    assert manifest.failures == ()
+
+    pre_shift_sales = sum(record.sales for record in manifest.epochs[:10])
+    post_shift_sales = sum(record.sales for record in manifest.epochs[10:])
+    assert pre_shift_sales > 0
+    assert post_shift_sales < pre_shift_sales / 2
+    assert all(chaos.verify_post_drill_invariants(conn).values())
+
+
+def test_duplicate_funding_call_is_a_safe_noop(conn):
+    """"Duplicate event delivery" at the simulator's own layer: the raw
+    kernel event queue's idempotency is already Charter C6's job (a
+    provider-agnostic stateful machine); this proves the simulator's own
+    idempotency-keyed operation (`_fund_scheduler_eligibility`) is safe under
+    redelivery."""
+    from mitosis import lifecycle
+    from mitosis.models import CellType
+
+    cell = lifecycle.create_cell(
+        conn, cell_type=CellType.COMMERCIAL, budget_minor_units=10,
+        book=Book.USD_SIM, idempotency_key="dup-cell",
+    )
+    runner._fund_scheduler_eligibility(
+        conn, cell_id=cell.cell_id, key="dup-key", amount_minor_units=500,
+    )
+    once = ledger.get_balance(conn, f"cell:{cell.cell_id}:cash", Book.USD_REAL)
+    runner._fund_scheduler_eligibility(
+        conn, cell_id=cell.cell_id, key="dup-key", amount_minor_units=500,
+    )
+    twice = ledger.get_balance(conn, f"cell:{cell.cell_id}:cash", Book.USD_REAL)
+
+    assert once == 500
+    assert twice == once
+
+
+def test_out_of_order_funding_for_a_not_yet_born_cell_is_inert_and_unreachable(conn):
+    """"Out-of-order event delivery": a funding operation for a child can,
+    in principle, be attempted before that child's own birth is visible.
+    `ledger` accounts are plain strings, not a foreign key into `cells` --
+    so this neither corrupts anything nor gets rejected; it parks a balance
+    `scheduler.eligible_cells` (which only ever iterates real `cells` rows)
+    can never reach until a Cell with that same id actually exists, at which
+    point the very same already-posted entries become that Cell's real
+    balance by construction -- no special-case recovery code needed."""
+    from mitosis import scheduler
+
+    orphan_id = "not-born-yet"
+    runner._fund_scheduler_eligibility(
+        conn, cell_id=orphan_id, key="early-fund", amount_minor_units=500,
+    )
+
+    assert ledger.verify_conservation(conn, Book.USD_REAL)
+    assert all(cell.cell_id != orphan_id for cell in scheduler.eligible_cells(conn, epoch_number=0))
+
+
+def test_verify_post_drill_invariants_reports_true_on_a_healthy_run(conn):
+    manifest = _run(conn)
+    assert manifest.failures == ()
+    assert chaos.verify_post_drill_invariants(conn) == {
+        "USD_REAL": True, "USD_SIM": True, "RESOURCE": True, "ledger_chain_valid": True,
+    }
 
 
 def test_no_kernel_module_imports_the_simulation_package():
