@@ -4,12 +4,12 @@ architecture).
 
 `SelectionPolicy` decides which Cell(s) reproduce each epoch and records a
 full decision, not just a list of winners (brief Slice G's own requirement).
-`RandomEligibleSelection` -- brief Slice G's policy #1, shipped in F1 as the
-correct minimum before quality-diversity selection existed to build on -- is
-joined here by the full decision-record shape the other four named policies
-(a single-leaderboard baseline, Pareto without MAP-Elites, MAP-Elites/
-quality-diversity, the intended staged-funding policy) need; those policies
-themselves land in their own sub-slices behind this same interface.
+`RandomEligibleSelection` (policy #1, shipped in F1) and `SingleLeaderboardSelection`
+(policy #2, an intentionally-forbidden single-scalar shape kept only as a
+Phase 3 comparator) both ship here. `ParetoSelection`, `MapElitesSelection`,
+and `StagedFundingSelection` land in their own later sub-slices behind this
+same interface, once `candidate.py`'s gates/axes/niches have real consumers
+worth building around.
 """
 
 from __future__ import annotations
@@ -149,3 +149,89 @@ class RandomEligibleSelection:
                 "hypothesis before choosing it, by design (brief Slice G policy #1)"
             ),
         )
+
+
+#: Brief Slice G policy #2's own named scalar -- a class attribute, not a
+#: buried literal, so the decision record can state exactly what it
+#: collapsed fitness into.
+_SCALAR_METRIC = "realized_net_revenue_minor_units"
+
+
+class SingleLeaderboardSelection:
+    """Brief Slice G policy #2: "a single-leaderboard baseline with an
+    explicitly declared scalar metric, used only as an experimental
+    control." SPEC.md §10.2/§13.2 both forbid exactly this shape for the
+    production kernel — built here on purpose, clearly labelled, so Slice H
+    has a real comparator for "intended selection vs random mutation" and
+    "Pareto vs a single scalar," never as a candidate default."""
+
+    name = "single_leaderboard"
+    version = "1"
+    scalar_metric = _SCALAR_METRIC
+
+    def __init__(self, *, book: Book = Book.USD_SIM) -> None:
+        self._book = book
+
+    def decide(
+        self, conn, *, epoch: int, rng: random.Random, seed_label: str
+    ) -> SelectionDecision:
+        eligible = _eligible_parents(conn, book=self._book)
+
+        def _rank_key(cell: lifecycle.Cell) -> tuple:
+            revenue_axis = candidate._realized_net_revenue(conn, cell.cell_id)
+            # Unmeasured (no concluded experiment yet) ranks last: a
+            # leaderboard needs one total order over every eligible cell,
+            # and "has proven nothing yet" cannot outrank a proven, even
+            # small, positive result -- stated here rather than silently
+            # decided, since `Axis.value is None` is never "zero" elsewhere
+            # in this codebase.
+            has_evidence = revenue_axis.value is not None
+            return (
+                not has_evidence, -(revenue_axis.value or 0.0),
+                cell.generation, cell.created_at_utc, cell.cell_id,
+            )
+
+        ranked = sorted(eligible, key=_rank_key)
+        chosen = (ranked[0].cell_id,) if ranked else ()
+        operator = rng.choice(sorted(mutation.OPERATORS)) if chosen else mutation.NO_OP_OPERATOR
+        return SelectionDecision(
+            policy_name=self.name,
+            policy_version=self.version,
+            epoch=epoch,
+            rng_seed_label=seed_label,
+            eligible_cell_ids=tuple(c.cell_id for c in eligible),
+            chosen_parent_cell_ids=chosen,
+            mutation_operator=operator,
+            child_budget_minor_units=_CHILD_BUDGET_MINOR_UNITS,
+            reason=(
+                f"{len(eligible)} cell(s) eligible; ranked by {_SCALAR_METRIC} descending "
+                "(a cell with no concluded experiment yet ranks last, never tied with a "
+                "proven zero), chose the single top-ranked cell -- brief Slice G policy #2, "
+                "an intentionally-forbidden single-scalar shape (SPEC.md §10.2/§13.2) built "
+                "only as a Phase 3 experimental control, never a default. No gates run."
+            ),
+            measured_dimensions=("realized_net_revenue",),
+            unmeasured_dimensions=tuple(d for d in _ALL_SIM_DIMENSIONS if d != "realized_net_revenue"),
+            intended_experiment=(
+                "none -- this policy ranks by realized revenue alone and does not read a "
+                "candidate's proposed hypothesis before choosing it"
+            ),
+        )
+
+
+class UnknownSelectionPolicyError(Exception):
+    pass
+
+
+def build_selection_policy(name: str) -> SelectionPolicy:
+    """A name -> instance factory, mirroring `environment.build_environment`,
+    so a CLI flag or scenario config can select a policy without importing
+    every concrete class itself."""
+    if name == RandomEligibleSelection.name:
+        return RandomEligibleSelection()
+    if name == SingleLeaderboardSelection.name:
+        return SingleLeaderboardSelection()
+    raise UnknownSelectionPolicyError(
+        f"no selection policy named {name!r}; available: "
+        f"{RandomEligibleSelection.name}, {SingleLeaderboardSelection.name}"
+    )

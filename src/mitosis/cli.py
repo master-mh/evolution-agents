@@ -66,6 +66,7 @@ from . import (
 )
 from .simulation import environment as simulation_environment
 from .simulation import runner as simulation_runner
+from .simulation import selection_policy as simulation_selection_policy
 from .accounts import cell_cash
 from .models import (
     DEFAULT_POPULATION_LIMITS,
@@ -946,6 +947,7 @@ def cmd_simulate(args: argparse.Namespace) -> None:
         suite=simulation_environment.EnvironmentSuite.training_only(
             simulation_environment.build_environment(args.environment)
         ),
+        selection=simulation_selection_policy.build_selection_policy(args.selection_policy),
     )
     print(manifest.summary())
     if args.output:
@@ -3320,6 +3322,18 @@ def build_parser() -> argparse.ArgumentParser:
         ],
         default=simulation_environment.UtilityMaximizingMarket.name,
         help="market family (SPEC.md §8.3; default: utility_maximizing_market)",
+    )
+    simulate_parser.add_argument(
+        "--selection-policy",
+        choices=[
+            simulation_selection_policy.RandomEligibleSelection.name,
+            simulation_selection_policy.SingleLeaderboardSelection.name,
+        ],
+        default=simulation_selection_policy.RandomEligibleSelection.name,
+        help=(
+            "which Cell reproduces each epoch (implementation brief Slice G; "
+            "default: random_eligible)"
+        ),
     )
     simulate_parser.set_defaults(func=cmd_simulate)
 

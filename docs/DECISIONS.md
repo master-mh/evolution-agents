@@ -5041,8 +5041,9 @@ out as a Slice G decision, not this one.
 
 - **Status:** Accepted; new `src/mitosis/simulation/candidate.py`; `SelectionDecision` gains nine new
   fields (all defaulted); `posteriors.py` gains `sample()`; `RandomEligibleSelection` and `runner.py`
-  updated to use the new fields honestly; 30 new tests across `tests/test_simulation_candidate.py`
-  (new), `tests/test_posteriors.py`, and `tests/test_simulation.py` (80 total simulation-area tests)
+  updated to use the new fields honestly; 21 new tests across `tests/test_simulation_candidate.py`
+  (new, 16), `tests/test_posteriors.py` (3), and `tests/test_simulation.py` (2) — 80 total tests
+  across those three files
 - **Spec ref:** the approved Slice G plan's central finding (see ADR-077); SPEC.md §10.2/§13.2 (gate-
   then-frontier, never a scalar), §12.1-§12.3 (niches, MAP-Elites, Thompson sampling), §0.3
   (`economic_potential`'s structural refusal)
@@ -5104,3 +5105,52 @@ out as a Slice G decision, not this one.
 - Next: G2 — `SingleLeaderboardSelection`, the smallest new policy (no gates, no niches), proving the
   CLI/factory wiring pattern before G3 (`ParetoSelection`), G4 (`MapElitesSelection`), and G5
   (`StagedFundingSelection` + the `EnvironmentSuite.validation` consumer) build on it.
+
+## ADR-079: The second selection policy, and the CLI/factory wiring pattern the remaining three will reuse (Slice G, part 2)
+
+- **Status:** Accepted; new `SingleLeaderboardSelection`, `build_selection_policy()`, and
+  `UnknownSelectionPolicyError` in `selection_policy.py`; `cli.py` gains `simulate
+  --selection-policy`; 4 new tests in `tests/test_simulation.py` (84 total simulation-area tests)
+- **Spec ref:** implementation brief's Slice G policy #2 ("a single-leaderboard baseline with an
+  explicitly declared scalar metric, used only as an experimental control"); SPEC.md §10.2/§13.2
+  (the production kernel's own refusal of exactly this shape)
+
+- **What shipped:** `SingleLeaderboardSelection` ranks eligible Cells by one named scalar
+  (`scalar_metric = "realized_net_revenue_minor_units"`, a class attribute so the decision record
+  states exactly what it collapsed fitness into) and reproduces the single top-ranked Cell — runs no
+  gates at all, and its `reason` states plainly that this is the shape §10.2/§13.2 forbid for the
+  production kernel, built only as a Slice H comparator. `build_selection_policy(name)` mirrors
+  `environment.build_environment`'s existing pattern exactly, so `cli.py`'s new `--selection-policy`
+  flag (`choices=[...]`, argparse validating at the CLI boundary, matching `--environment`'s own
+  precedent) needed no new wiring idiom.
+
+- **Unmeasured is excluded from the ranking, not treated as a floor value.** A Cell with a concluded,
+  zero-revenue experiment (a *measured* zero) must outrank a Cell with no concluded experiment at
+  all (unmeasured) — the sort key is `(not has_evidence, -value_or_0, generation, created_at_utc,
+  cell_id)`, so "has proven nothing yet" can never tie with, let alone beat, a proven result. This is
+  the same distinction this codebase draws everywhere else (`Axis.value is None` is never "zero"),
+  applied to a policy that — unlike every gate/axis in `candidate.py` — needs one total order over
+  every eligible Cell rather than permission to abstain.
+
+- **A teeth-check that initially passed for the wrong reason, caught before it shipped.** The first
+  version of the "unmeasured ranks last" test created the proven-zero Cell first and the unmeasured
+  one second; removing the `not has_evidence` term from the sort key still picked the right Cell,
+  because both cells' primary key collapsed to the same value (`0.0`) and the *secondary* tie-break
+  (`created_at_utc` ascending) happened to favor the older, proven-zero Cell anyway — the same
+  category of trap ADR-077 already hit once this slice (a mutation that doesn't move the observed
+  outcome). Fixed by creating the unmeasured Cell *first*: now a dropped "unmeasured ranks last" rule
+  would make the tie-break favor the wrong Cell unambiguously, regardless of generated-id ordering.
+
+- **Verification:** the highest-revenue Cell chosen correctly; the unmeasured-ranks-last property (via
+  the corrected fixture above); `build_selection_policy`'s construction and rejection of an unknown
+  name; a CLI end-to-end run naming the policy it used in its own manifest. Four teeth-checks (the
+  ranking direction, the unmeasured-exclusion term, the factory's silent-fallback temptation, the CLI
+  wiring), each confirmed to fail for the stated reason and restored verbatim — the second entry in
+  this ADR's own list is the fix for the first teeth-check's own false pass, not a fifth independent
+  check. Full suite green; golden run unaffected (hash unchanged at 38); `ruff check .` and
+  `scripts/check_docs_facts.py` both clean.
+
+- Next: G3 — `ParetoSelection`, gating on `not_quarantined`/`reproducibility` and taking the Pareto
+  front over `structural_novelty`/`realized_net_revenue`/`experiment_success_rate` — reproducing from
+  every surviving front member, not a single winner, which is what actually demonstrates §10.2's
+  "portfolio, not a scalar" framing against this slice's own `SingleLeaderboardSelection` comparator.

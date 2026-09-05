@@ -21,7 +21,7 @@ import pytest
 
 from mitosis import cli, db, ledger
 from mitosis.models import Book
-from mitosis.simulation import chaos, environment, mutation, runner
+from mitosis.simulation import chaos, environment, mutation, runner, selection_policy
 from mitosis.simulation.environment import (
     EnvironmentSuite,
     ExperimentAction,
@@ -29,7 +29,11 @@ from mitosis.simulation.environment import (
     UtilityMaximizingMarket,
 )
 from mitosis.simulation.policy import SimulationPolicyProvider, _extract_genome
-from mitosis.simulation.selection_policy import RandomEligibleSelection, SelectionDecision
+from mitosis.simulation.selection_policy import (
+    RandomEligibleSelection,
+    SelectionDecision,
+    SingleLeaderboardSelection,
+)
 
 
 @pytest.fixture
@@ -798,6 +802,108 @@ def test_per_parent_mutation_operator_and_budget_overrides_take_precedence(conn)
         ).fetchone()
         assert row is not None
         assert row["amount"] == 250
+
+
+def test_single_leaderboard_selection_chooses_the_highest_revenue_eligible_cell(conn):
+    """Brief Slice G policy #2: an explicit single-scalar leaderboard, built
+    only as a Phase 3 comparator -- SPEC.md §10.2/§13.2 forbid this shape
+    for the production kernel."""
+    import random
+
+    from mitosis import experiments as experiments_module
+    from mitosis import lifecycle
+    from mitosis import revenue as revenue_module
+    from mitosis.models import CellType
+
+    low = lifecycle.create_cell(
+        conn, cell_type=CellType.COMMERCIAL, budget_minor_units=1000,
+        book=Book.USD_SIM, idempotency_key="low",
+    )
+    high = lifecycle.create_cell(
+        conn, cell_type=CellType.COMMERCIAL, budget_minor_units=1000,
+        book=Book.USD_SIM, idempotency_key="high",
+    )
+    for cell, amount in ((low, 50), (high, 900)):
+        experiment = experiments_module.start(conn, cell_id=cell.cell_id, hypothesis="h")
+        revenue_module.record_revenue(
+            conn, cell_id=cell.cell_id, amount_minor_units=amount, source="test sale",
+            book=Book.USD_SIM, experiment_id=experiment.experiment_id,
+            idempotency_key=f"sale:{cell.cell_id}",
+        )
+        experiments_module.conclude(
+            conn, experiment_id=experiment.experiment_id, concluded_by="test", note="concluded",
+        )
+
+    policy = SingleLeaderboardSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    assert decision.chosen_parent_cell_ids == (high.cell_id,)
+    assert decision.gate_results == ()
+    assert decision.measured_dimensions == ("realized_net_revenue",)
+
+
+def test_single_leaderboard_selection_ranks_an_unmeasured_cell_last(conn):
+    """A cell with a concluded, zero-revenue experiment (a *measured* zero)
+    must still outrank a cell with no concluded experiment at all
+    (unmeasured) -- unmeasured is never treated as a worse number, it is
+    excluded from the comparison entirely and sorted to the bottom."""
+    import random
+
+    from mitosis import experiments as experiments_module
+    from mitosis import lifecycle
+    from mitosis.models import CellType
+
+    # `unmeasured` is created *first* deliberately: its earlier
+    # `created_at_utc` would win a same-value tie-break if "unmeasured
+    # ranks last" were ever silently dropped, making that specific bug
+    # unambiguous rather than depending on which cell happened to sort
+    # first by generated id.
+    unmeasured = lifecycle.create_cell(
+        conn, cell_type=CellType.COMMERCIAL, budget_minor_units=1000,
+        book=Book.USD_SIM, idempotency_key="unmeasured",
+    )
+    proven_zero = lifecycle.create_cell(
+        conn, cell_type=CellType.COMMERCIAL, budget_minor_units=1000,
+        book=Book.USD_SIM, idempotency_key="proven-zero",
+    )
+    experiment = experiments_module.start(conn, cell_id=proven_zero.cell_id, hypothesis="h")
+    experiments_module.conclude(
+        conn, experiment_id=experiment.experiment_id, concluded_by="test", note="no sale",
+    )
+
+    policy = SingleLeaderboardSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    assert decision.chosen_parent_cell_ids == (proven_zero.cell_id,)
+    assert unmeasured.cell_id in decision.eligible_cell_ids
+
+
+def test_build_selection_policy_selects_the_named_policy_and_rejects_unknown_names():
+    assert isinstance(
+        selection_policy.build_selection_policy("random_eligible"), RandomEligibleSelection,
+    )
+    assert isinstance(
+        selection_policy.build_selection_policy("single_leaderboard"), SingleLeaderboardSelection,
+    )
+    with pytest.raises(selection_policy.UnknownSelectionPolicyError):
+        selection_policy.build_selection_policy("not_a_real_policy")
+
+
+def test_cli_simulate_accepts_the_single_leaderboard_selection_policy(tmp_path):
+    db_path = tmp_path / "sim.db"
+    output_path = tmp_path / "manifest.json"
+    cli.main(["--db", str(db_path), "init"])
+
+    exit_code = cli.main([
+        "--db", str(db_path), "simulate",
+        "--seed", "3", "--epochs", "5", "--population", "3",
+        "--selection-policy", "single_leaderboard", "--output", str(output_path),
+    ])
+
+    assert exit_code in (0, None)
+    written = json.loads(output_path.read_text())
+    assert written["selection_policy_name"] == "single_leaderboard"
+    assert all(written["conservation_ok"].values())
 
 
 def test_kill_fraction_drill_kills_the_expected_share_and_conservation_holds(conn):

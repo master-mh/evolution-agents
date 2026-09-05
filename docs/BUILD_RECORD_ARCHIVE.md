@@ -6,6 +6,50 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-05 — Closing the evolutionary decision loop, part 1: simulator-native fitness dimensions, the full decision-record schema, Thompson sampling (Slice G, part 1)
+
+Continuing the plan from ADR-077 without a fresh plan-mode round-trip. ADR-078 is the full as-built
+record.
+
+### What shipped
+
+New `src/mitosis/simulation/candidate.py`: simulator-native gates (`not_quarantined`;
+`reproducibility` — a genuine canonical measurement via cross-Cell replication of a revenue-producing
+result, not a port of the kernel's permanently-unmeasurable version) and axes (`structural_novelty`,
+reused from `novelty.descriptors()` by direct call since it's genome-content-only;
+`realized_net_revenue`; `experiment_success_rate`; `economic_potential`, permanently unmeasurable
+even here — §0.3's refusal is structural, and the simulator has no self-reported-upside field to even
+decline). `dominates()`/`pareto_frontier()` reimplement `selection.py`'s exact rule over the new
+candidate shape; `niche_elite()` gives `novelty.py`'s archive the elite-per-niche rule its own
+docstring says it deliberately lacks. `posteriors.sample()` adds one Thompson-sampling draw without
+disturbing the module's stated boundary — comparing niches' draws stays absent, reserved for G5.
+
+`SelectionDecision` gains nine new fields, all defaulted, so no existing policy or test needed to
+change shape: gate results, measured/unmeasured dimensions, Pareto-front membership,
+`niches: tuple[NicheStanding, ...]`, per-parent operator/budget overrides (ADR-074 logged deferring
+exactly this generalization), and `intended_experiment`. `RandomEligibleSelection` now reports every
+known dimension as `unmeasured_dimensions` — an explicit "nothing consulted," not a silent empty
+tuple. `runner.py`'s reproduction loop consults the per-parent overrides with a fallback that keeps
+every prior run's behaviour byte-identical.
+
+### A wrong first verification, caught before it shipped
+
+The first draft of the budget-override test checked the child's *current* USD_SIM cash balance —
+wrong, since a child born early in a 20-epoch run has since earned its own revenue. Fixed to query
+the `cell_reproduction_funding` transaction itself (fixed at birth, and — found while fixing this —
+a genuinely different transaction type from founding's `cell_birth_funding`).
+
+### Verification
+
+21 new tests across three files (80 total in the simulation area): every gate/axis function on
+constructed fixtures; `dominates()`'s strict-improvement and disjoint-measured-axes cases;
+`pareto_frontier()`'s gate filtering; `niche_elite()`'s evaluated-vs-exploratory split;
+`posteriors.sample()`'s statistical convergence, determinism, and seed-sensitivity; the
+decision-record honesty field; the per-parent override mechanism through a live run. Seven
+teeth-checks, each confirmed to fail for the stated reason and restored verbatim. Full suite green;
+golden run unaffected (hash unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both
+clean.
+
 ## 2026-09-05 — Closing the evolutionary decision loop, part 0: a run record that never named its own selection policy, and founder concentration as a real time series (Slice G, part 0)
 
 A plan was written first, given the genuine architectural forks Slice G surfaces (a full Explore

@@ -974,11 +974,12 @@
   population=50/epochs=200 validation took 23m47s, ~40x slower than the first slice's own smaller
   benchmark — `docs/benchmarks/`; the full scale extrapolates to a multi-hour-to-multi-day,
   deliberately non-CI job). **Closing the evolutionary decision loop underway** (brief's own "Slice
-  G", ADR-077/078 so far): `RandomEligibleSelection` is still the only *policy* wired end to end, but
-  the ground it needs is built — `candidate.py`'s simulator-native gates/axes/`dominates()`/
+  G", ADR-077 through ADR-079 so far): `candidate.py`'s simulator-native gates/axes/`dominates()`/
   `niche_elite()`, `SelectionDecision`'s full decision-record schema, `posteriors.sample()`'s
-  Thompson-sampling primitive. G0-G1 done (a run record that never named its own selection policy,
-  fixed; founder concentration a real time series); G2-G6 remain: `SingleLeaderboardSelection`,
-  `ParetoSelection`, `MapElitesSelection`, `StagedFundingSelection` (+ the `EnvironmentSuite
-  .validation` consumer), then the cross-policy acceptance harness. Phase 3's own pre-registered
+  Thompson-sampling primitive, and two of five policies wired end to end behind `cli.py`'s new
+  `--selection-policy` flag: `RandomEligibleSelection` and `SingleLeaderboardSelection` (an
+  intentionally-forbidden single-scalar control, per SPEC.md §10.2/§13.2, kept only as a Phase 3
+  comparator). G0-G2 done; G3-G6 remain: `ParetoSelection`, `MapElitesSelection`,
+  `StagedFundingSelection` (+ the `EnvironmentSuite.validation` consumer), then the cross-policy
+  acceptance harness. Phase 3's own pre-registered
   comparisons have not started.

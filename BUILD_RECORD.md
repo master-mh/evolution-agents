@@ -33,52 +33,45 @@ selection policy, founder concentration as a real time series),
 2026-07-21 through 2026-09-05):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-05 — Closing the evolutionary decision loop, part 1: simulator-native fitness dimensions, the full decision-record schema, Thompson sampling (Slice G, part 1)
+## 2026-09-05 — Closing the evolutionary decision loop, part 2: the second selection policy, and the CLI/factory wiring the rest will reuse (Slice G, part 2)
 
-Continuing the plan from ADR-077 without a fresh plan-mode round-trip. ADR-078 is the full as-built
-record.
+Continuing the plan from ADR-077/078 without a fresh plan-mode round-trip. ADR-079 is the full
+as-built record.
 
 ### What shipped
 
-New `src/mitosis/simulation/candidate.py`: simulator-native gates (`not_quarantined`;
-`reproducibility` — a genuine canonical measurement via cross-Cell replication of a revenue-producing
-result, not a port of the kernel's permanently-unmeasurable version) and axes (`structural_novelty`,
-reused from `novelty.descriptors()` by direct call since it's genome-content-only;
-`realized_net_revenue`; `experiment_success_rate`; `economic_potential`, permanently unmeasurable
-even here — §0.3's refusal is structural, and the simulator has no self-reported-upside field to even
-decline). `dominates()`/`pareto_frontier()` reimplement `selection.py`'s exact rule over the new
-candidate shape; `niche_elite()` gives `novelty.py`'s archive the elite-per-niche rule its own
-docstring says it deliberately lacks. `posteriors.sample()` adds one Thompson-sampling draw without
-disturbing the module's stated boundary — comparing niches' draws stays absent, reserved for G5.
+`SingleLeaderboardSelection` (brief Slice G policy #2): ranks eligible Cells by one named scalar
+(`scalar_metric = "realized_net_revenue_minor_units"`), reproduces the single top-ranked Cell, runs
+no gates — its `reason` states plainly this is the shape SPEC.md §10.2/§13.2 forbid for the
+production kernel, built only as a Slice H comparator. `build_selection_policy(name)` mirrors
+`environment.build_environment`'s existing pattern; `cli.py` gains `simulate --selection-policy`.
+Unmeasured is excluded from the ranking, not treated as a floor value: a Cell with a concluded,
+zero-revenue experiment must outrank one with no concluded experiment at all — the same
+never-zero posture this codebase takes everywhere else, applied here to a policy that (unlike every
+gate/axis in `candidate.py`) needs one total order rather than permission to abstain.
 
-`SelectionDecision` gains nine new fields, all defaulted, so no existing policy or test needed to
-change shape: gate results, measured/unmeasured dimensions, Pareto-front membership,
-`niches: tuple[NicheStanding, ...]`, per-parent operator/budget overrides (ADR-074 logged deferring
-exactly this generalization), and `intended_experiment`. `RandomEligibleSelection` now reports every
-known dimension as `unmeasured_dimensions` — an explicit "nothing consulted," not a silent empty
-tuple. `runner.py`'s reproduction loop consults the per-parent overrides with a fallback that keeps
-every prior run's behaviour byte-identical.
+### Another teeth-check that initially passed for the wrong reason
 
-### A wrong first verification, caught before it shipped
-
-The first draft of the budget-override test checked the child's *current* USD_SIM cash balance —
-wrong, since a child born early in a 20-epoch run has since earned its own revenue. Fixed to query
-the `cell_reproduction_funding` transaction itself (fixed at birth, and — found while fixing this —
-a genuinely different transaction type from founding's `cell_birth_funding`).
+The first version of the "unmeasured ranks last" test created the proven-zero Cell before the
+unmeasured one; removing the exclusion term from the sort key still picked the right Cell, because
+both collapsed to the same primary key and the *secondary* tie-break (creation order) happened to
+favor the older, proven-zero Cell anyway. The same category of trap ADR-077 already hit once this
+slice. Fixed by creating the unmeasured Cell first, so a dropped rule now produces an unambiguously
+wrong answer regardless of generated-id ordering.
 
 ### Verification
 
-30 new tests across three files (80 total in the simulation area): every gate/axis function on
-constructed fixtures; `dominates()`'s strict-improvement and disjoint-measured-axes cases;
-`pareto_frontier()`'s gate filtering; `niche_elite()`'s evaluated-vs-exploratory split;
-`posteriors.sample()`'s statistical convergence, determinism, and seed-sensitivity; the
-decision-record honesty field; the per-parent override mechanism through a live run. Seven
-teeth-checks, each confirmed to fail for the stated reason and restored verbatim. Full suite green;
-golden run unaffected (hash unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both
-clean.
+4 new tests (84 total in the simulation area): the highest-revenue Cell chosen correctly; the
+corrected unmeasured-ranks-last property; the factory's construction and rejection of an unknown
+name; a CLI end-to-end run naming the policy it used in its own manifest. Four teeth-checks, each
+confirmed to fail for the stated reason and restored verbatim. Full suite green; golden run
+unaffected (hash unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both clean.
 
-- Next: G2 — `SingleLeaderboardSelection`, the smallest new policy (no gates, no niches), proving the
-  CLI/factory wiring pattern before G3 (`ParetoSelection`), G4 (`MapElitesSelection`), and G5
-  (`StagedFundingSelection` + the `EnvironmentSuite.validation` consumer) build on it — then Slice
-  H's pre-registered Phase 3 comparisons. The >= 500 Cell/>= 10,000 epoch Phase 2 acceptance
-  benchmark itself remains documented but not yet run to completion (ADR-076).
+- Next: G3 — `ParetoSelection`, gating on `not_quarantined`/`reproducibility` and taking the Pareto
+  front over `structural_novelty`/`realized_net_revenue`/`experiment_success_rate` — reproducing from
+  every surviving front member, not a single winner, against this slice's own
+  `SingleLeaderboardSelection` comparator — then G4 (`MapElitesSelection`), G5
+  (`StagedFundingSelection` + the `EnvironmentSuite.validation` consumer), G6 (the cross-policy
+  acceptance harness), and Slice H's pre-registered Phase 3 comparisons. The >= 500 Cell/>= 10,000
+  epoch Phase 2 acceptance benchmark itself remains documented but not yet run to completion
+  (ADR-076).
