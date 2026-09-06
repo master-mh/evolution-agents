@@ -5339,3 +5339,76 @@ out as a Slice G decision, not this one.
   `test_the_routine_epoch_loop_never_touches_validation_or_secret_challenge_environments` unmodified)
   — then Slice H's pre-registered Phase 3 comparisons. The >= 500 Cell/>= 10,000 epoch Phase 2
   acceptance benchmark itself remains documented but not yet run to completion (ADR-076).
+
+## ADR-083: The cross-policy acceptance harness, and a validation-choice defect found in ADR-082's own live-run test (Slice G, part 6)
+
+- **Status:** Accepted; no production code changed except one already-restored teeth-check; 5 new
+  tests in `tests/test_simulation.py` plus 3 already-committed tests corrected (104 total
+  simulation-area tests: 76 + 16 + 12 across `test_simulation.py`/`test_simulation_candidate.py`/
+  `test_posteriors.py`)
+- **Spec ref:** implementation brief's Slice G acceptance criteria (same seed bundle across
+  policies; reproduction traceability; the validation-isolation regression guard)
+
+- **What shipped:** G6 needed no new mechanism — every property the brief asks G6 to verify was
+  already produced by earlier sub-slices (`runner._run_one_epoch` has recorded
+  `simulation_selection_decision` and `simulation_mutation` audit events since F1/G0;
+  `RunManifest.config_hash`/`environment_name`/`selection_policy_name` since ADR-077). G6 is
+  therefore purely an acceptance-test suite proving those properties hold under real, live-run
+  conditions rather than by code inspection: the same `RunConfig` run once with
+  `RandomEligibleSelection` and once with `StagedFundingSelection` (two independent in-memory
+  databases, not one shared connection — a second run against the same connection would inherit the
+  first run's population and genome history, which is not "the same seed bundle") produces matching
+  `config_hash`/`environment_name` and differing `selection_policy_name`; every `simulation_mutation`
+  event's `parent_cell_id` appears in a same-epoch `simulation_selection_decision` event's
+  `chosen_parent_cell_ids`; `founder_concentration` is a valid probability every epoch and
+  `distinct_genomes` grows across a run that reproduces; `StagedFundingSelection` holding its own,
+  separate validation environment never reaches `EnvironmentSuite`'s isolated `validation`/
+  `secret_challenge` roles, re-verifying ADR-073's guarantee with a policy that actually exercises
+  the constructor seam that guarantee depends on.
+
+- **A defect found in ADR-082's own live-run test while building this harness, on an
+  already-pushed commit.** Building G6's traceability and diversity-time-series tests required a
+  scenario that genuinely reproduces under `StagedFundingSelection` — and a 24-way seed/scale sweep
+  (seeds 1/2/3/7/11/42 × epochs 20-60 × population 10-20) found `final_living_cells == population`
+  in *every* combination: zero reproduction, always. Tracing `decide()` directly showed why: no
+  operator in `mutation.py` ever sets `product.durable` or `product.quality`, so `RuleBasedMarket`'s
+  standard/premium tiers (SPEC.md §8.3's own by-design "fails every time, at every price in that
+  band, regardless of seed") are permanently unreachable, and no founder genome starts priced at or
+  below the budget tier that *is* reachable — so with `RuleBasedMarket` as validation, every elite is
+  rejected, forever, which means no mutation (including a price mutation that might eventually reach
+  the budget tier) ever gets a chance to run. A genuine structural deadlock, confirmed by switching
+  validation to the same family (`UtilityMaximizingMarket`) or to `None`, both of which reproduce
+  reliably at the same seeds. This means ADR-082's own
+  `test_staged_funding_selection_runs_cleanly_across_a_live_multi_epoch_run` — which used
+  `RuleBasedMarket` as validation and asserted only `failures == ()`/`conservation_ok` — has never
+  once exercised real reproduction since it was written; conservation holds trivially for a colony
+  that never reproduces, so it was passing without ever proving what its name claims. Two of this
+  slice's own first-draft tests (`test_every_mutation_traces_to_a_same_epoch_selection_decision`,
+  `test_founder_concentration_and_genome_diversity_form_a_real_time_series`) made the identical
+  choice and were `pytest.skip`-ing on every single run for the same reason, silently providing zero
+  coverage. All three are fixed here (switched to `UtilityMaximizingMarket` validation at a seed
+  verified, not assumed, to reproduce well past founding: `master_seed=1, epochs=30, population=15`
+  reliably reaches 21+ living cells) — corrected forward in this commit, per this repo's own rule
+  against rewriting pushed history, rather than amending ADR-082 or its commit. The deadlock itself
+  is real, checked, and not a bug in `validation_probe`'s own logic (proven correct in isolation by
+  ADR-082's dedicated unit tests) — it is an honest consequence of `RuleBasedMarket`'s intentionally
+  harsh design meeting mutation operators that were never given a way to satisfy it. Logged to
+  `FUTURE_BUILD_HOOKS.md` with both viable fixes (a `durable`/`quality`-capable mutation operator, or
+  founder prices seeded in the budget tier) named — neither is Slice G's job, matching the same
+  reasoning already used to defer `buyer_type`/`revenue_recurrence`. A new, permanent test
+  (`test_a_harsh_cross_family_validation_probe_can_permanently_prevent_reproduction`) checks this
+  finding itself, so it stays a known, monitored fact rather than something a future refactor could
+  silently change without anyone noticing either way.
+
+- **Verification:** one teeth-check — recording a `simulation_mutation` event's `parent_cell_id` as
+  the *child's* id instead of the parent's — confirmed to fail
+  `test_every_mutation_traces_to_a_same_epoch_selection_decision` for the stated reason and restored
+  verbatim (the traceability property itself has held since F1/G0; this teeth-check proves the new
+  *test* actually catches a violation rather than passing regardless). Full suite green (1334 total);
+  golden run unaffected (hash unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both
+  clean.
+
+- Next: Slice H's pre-registered Phase 3 comparisons (a pre-registration document plus the six
+  required comparison runs). The >= 500 Cell/>= 10,000 epoch Phase 2 acceptance benchmark itself
+  remains documented but not yet run to completion (ADR-076); whoever schedules it should pick a
+  policy/validation combination known to reproduce (this ADR's own finding matters directly here).

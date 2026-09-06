@@ -695,6 +695,31 @@ def test_the_routine_epoch_loop_never_touches_validation_or_secret_challenge_env
     assert manifest.epochs_completed == 6
 
 
+def test_staged_funding_selection_never_reaches_the_suites_isolated_validation_or_secret_challenge_environments(conn):
+    """`StagedFundingSelection`'s own `validation` constructor argument is a
+    wholly separate concern from `EnvironmentSuite.validation`/
+    `secret_challenge` (Slice G, G6's re-verification of ADR-073's isolation
+    guarantee with a policy that actually holds a validation environment).
+    Proven live: the suite's own validation/secret_challenge roles stay
+    `_NeverCallMarket` stubs that fail loudly if touched by the routine loop,
+    while `StagedFundingSelection` is given its own, separate, real
+    validation environment and genuinely calls it -- the run must still
+    complete with no failures, since `decide()` never receives the suite at
+    all and has no path to reach either isolated role."""
+    suite = EnvironmentSuite(
+        training=UtilityMaximizingMarket(),
+        validation=_NeverCallMarket(),
+        secret_challenge=_NeverCallMarket(),
+    )
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="test", master_seed=1, epochs=6, population=3),
+        suite=suite,
+        selection=selection_policy.StagedFundingSelection(validation=RuleBasedMarket()),
+    )
+    assert manifest.failures == ()
+    assert manifest.epochs_completed == 6
+
+
 def test_environment_suite_training_only_leaves_the_other_roles_unset():
     suite = EnvironmentSuite.training_only(UtilityMaximizingMarket())
     assert suite.validation is None
@@ -1308,12 +1333,61 @@ def test_staged_funding_selection_scales_child_budget_with_posterior_mean(conn):
 
 
 def test_staged_funding_selection_runs_cleanly_across_a_live_multi_epoch_run(conn):
+    """Same-family validation (`UtilityMaximizingMarket`, matching training),
+    not `RuleBasedMarket` -- no mutation operator ever sets `product.durable`
+    or `product.quality`, so `RuleBasedMarket`'s standard/premium tiers are
+    permanently unreachable by evolution here (only the budget tier, price <=
+    300/150, ever clears); using it as validation gates every elite out
+    forever and this test would silently never exercise reproduction at all.
+    See `test_a_harsh_cross_family_validation_probe_can_permanently_prevent_
+    reproduction` for that finding as its own checked fact, and
+    `FUTURE_BUILD_HOOKS.md` for the deeper fix. seed=1/epochs=30/population=15
+    is verified (not assumed) to reproduce well past founding under this
+    policy with this validation environment."""
     manifest = runner.run(
-        conn, runner.RunConfig(scenario_name="test", master_seed=11, epochs=20, population=10),
-        selection=selection_policy.StagedFundingSelection(validation=RuleBasedMarket()),
+        conn, runner.RunConfig(scenario_name="test", master_seed=1, epochs=30, population=15),
+        selection=selection_policy.StagedFundingSelection(validation=UtilityMaximizingMarket()),
     )
     assert manifest.failures == ()
     assert all(manifest.conservation_ok.values())
+    assert manifest.final_living_cells > 15
+
+
+def test_a_harsh_cross_family_validation_probe_can_permanently_prevent_reproduction(conn):
+    """A genuine finding from building this policy, checked here rather than
+    left as something only a throwaway script would show: `RuleBasedMarket`'s
+    standard tier requires `product.durable` and its premium tier requires
+    `product.quality == 'premium'` (SPEC.md §8.3's own by-design "fails every
+    time, at every price in that band, regardless of seed"). No mutation
+    operator in `mutation.py` ever sets either field, and no founder genome
+    from `policy.py` starts with one -- so under `RuleBasedMarket` as
+    validation, the *only* way an elite can ever clear the probe is a price
+    mutation landing at or below the budget tier ceiling (300 pre-shift). If
+    no elite across the whole archive happens to start there, nothing is ever
+    funded, so no mutation -- including a price mutation that might
+    eventually clear the budget tier -- ever gets a chance to run: a genuine,
+    structural deadlock, not bad luck at one seed. `cmd_simulate` still
+    defaults `--validation-environment` to the *other* family (SPEC.md §8.1's
+    intended cross-family check), so this is the actual, honest behavior of
+    `staged_funding`'s own CLI default today, not a contrived edge case --
+    see `FUTURE_BUILD_HOOKS.md` for the deeper fix (give a mutation operator
+    a path to `durable`/`quality`, or seed some founder prices in the budget
+    tier) that would need to land before this default reproduces reliably.
+    """
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="test", master_seed=1, epochs=30, population=15),
+        selection=selection_policy.StagedFundingSelection(validation=RuleBasedMarket()),
+    )
+    assert manifest.failures == ()
+    assert manifest.final_living_cells == 15
+    rejected_rows = conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE event_type = 'simulation_selection_decision'"
+    ).fetchall()
+    assert rejected_rows
+    ever_funded = any(
+        json.loads(row["metadata_json"])["chosen_parent_cell_ids"] for row in rejected_rows
+    )
+    assert not ever_funded
 
 
 def test_cli_simulate_accepts_the_staged_funding_selection_policy_and_defaults_validation(tmp_path):
@@ -1707,3 +1781,102 @@ def test_no_kernel_module_imports_the_simulation_package():
                 imported.update(a.name.split(".")[-1] for a in node.names)
         collision = forbidden & imported
         assert not collision, f"{name}.py imports {collision}, breaking the dependency inversion"
+
+
+def test_cross_policy_runs_share_config_and_environment_but_record_different_selection_policies(conn):
+    """Slice G's own acceptance requirement (G6): the same seed bundle and
+    the same environment family, run once with `RandomEligibleSelection` and
+    once with `StagedFundingSelection`, must both complete with no failures
+    and agree on everything the run's own inputs determine (`config_hash`,
+    `environment_name`) while disagreeing on exactly the one thing that
+    changed (`selection_policy_name`) -- proving policies are genuinely
+    swappable behind one seam, not coupled to run setup by accident. Two
+    independent in-memory databases, not one shared `conn`: a second run
+    against the same connection would inherit the first run's population and
+    genome history, which is not "the same seed bundle" at all."""
+    config = runner.RunConfig(scenario_name="test", master_seed=42, epochs=15, population=8)
+
+    random_manifest = runner.run(
+        conn, config, suite=EnvironmentSuite.training_only(UtilityMaximizingMarket()),
+        selection=RandomEligibleSelection(),
+    )
+    second_conn = db.connect_and_migrate()
+    try:
+        staged_manifest = runner.run(
+            second_conn, config, suite=EnvironmentSuite.training_only(UtilityMaximizingMarket()),
+            selection=selection_policy.StagedFundingSelection(validation=UtilityMaximizingMarket()),
+        )
+    finally:
+        second_conn.close()
+
+    assert random_manifest.failures == ()
+    assert staged_manifest.failures == ()
+    assert random_manifest.config_hash == staged_manifest.config_hash
+    assert random_manifest.environment_name == staged_manifest.environment_name
+    assert random_manifest.selection_policy_name == "random_eligible"
+    assert staged_manifest.selection_policy_name == "staged_funding"
+    assert random_manifest.selection_policy_name != staged_manifest.selection_policy_name
+
+
+def test_every_mutation_traces_to_a_same_epoch_selection_decision():
+    """Brief: "every reproduction traces to a recorded decision." Every
+    `simulation_mutation` audit event's `parent_cell_id` must appear in a
+    `simulation_selection_decision` event's own `chosen_parent_cell_ids` for
+    that *same* epoch -- not merely somewhere in the run's history, which
+    would let a stale or cross-epoch id slip through unnoticed.
+
+    Same-family validation, not `RuleBasedMarket` -- see
+    `test_staged_funding_selection_runs_cleanly_across_a_live_multi_epoch_run`
+    on why that would silently skip this test on every run instead of
+    exercising it. seed=1/epochs=30/population=15 is verified to reproduce
+    well past founding, so this asserts directly rather than skipping on a
+    stochastic condition that would otherwise never fire.
+    """
+    second_conn = db.connect_and_migrate()
+    try:
+        manifest = runner.run(
+            second_conn,
+            runner.RunConfig(scenario_name="test", master_seed=1, epochs=30, population=15),
+            selection=selection_policy.StagedFundingSelection(validation=UtilityMaximizingMarket()),
+        )
+        assert manifest.final_living_cells > 15
+
+        decision_rows = second_conn.execute(
+            "SELECT metadata_json FROM audit_events WHERE event_type = 'simulation_selection_decision'"
+        ).fetchall()
+        chosen_by_epoch: dict[int, set] = {}
+        for row in decision_rows:
+            metadata = json.loads(row["metadata_json"])
+            chosen_by_epoch.setdefault(metadata["epoch"], set()).update(
+                metadata["chosen_parent_cell_ids"]
+            )
+
+        mutation_rows = second_conn.execute(
+            "SELECT metadata_json FROM audit_events WHERE event_type = 'simulation_mutation'"
+        ).fetchall()
+        assert mutation_rows
+        for row in mutation_rows:
+            metadata = json.loads(row["metadata_json"])
+            assert metadata["parent_cell_id"] in chosen_by_epoch.get(metadata["epoch"], set())
+    finally:
+        second_conn.close()
+
+
+def test_founder_concentration_and_genome_diversity_form_a_real_time_series(conn):
+    """Brief: founder concentration and genome diversity must be inspectable
+    as real time series across a run, not only an end-of-run snapshot. Every
+    epoch's `founder_concentration` is a valid probability, and since the
+    colony genuinely grows past its founding population under this seed
+    (verified, not assumed -- same-family validation, see the sibling tests'
+    docstrings on why `RuleBasedMarket` would silently prevent that instead),
+    `distinct_genomes` at the final epoch exceeds its value at the first --
+    diversity is observed across the run, not merely asserted to exist."""
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="test", master_seed=1, epochs=30, population=15),
+        selection=selection_policy.StagedFundingSelection(validation=UtilityMaximizingMarket()),
+    )
+    assert manifest.epochs
+    for record in manifest.epochs:
+        assert 0.0 <= record.founder_concentration <= 1.0
+    assert manifest.final_living_cells > 15
+    assert manifest.epochs[-1].distinct_genomes > manifest.epochs[0].distinct_genomes

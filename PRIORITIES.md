@@ -973,24 +973,19 @@
   actually running the >= 500 Cell/>= 10,000 epoch acceptance benchmark to completion (a
   population=50/epochs=200 validation took 23m47s, ~40x slower than the first slice's own smaller
   benchmark — `docs/benchmarks/`; the full scale extrapolates to a multi-hour-to-multi-day,
-  deliberately non-CI job). **Closing the evolutionary decision loop underway** (brief's own "Slice
-  G", ADR-077 through ADR-082 so far): `candidate.py`'s simulator-native gates/axes/`dominates()`/
-  `niche_elite()`/`validation_probe`, `SelectionDecision`'s full decision-record schema,
-  `posteriors.sample()`'s Thompson-sampling primitive, and all five policies wired end to end behind
-  `cli.py`'s `--selection-policy` flag: `RandomEligibleSelection`, `SingleLeaderboardSelection` (an
-  intentionally-forbidden single-scalar control, per SPEC.md §10.2/§13.2, kept only as a Phase 3
-  comparator), `ParetoSelection` (reproduces every Cell on the Pareto front, not one winner —
-  found along the way that `not_quarantined` can never actually reject through any policy's own
-  pipeline, since eligibility filtering already excludes non-alive Cells first; kept as correct,
-  reusable defensive code, documented rather than silently left implying otherwise),
-  `MapElitesSelection` (one elite per occupied `novelty.archive()` niche; a coincidental-pass test
-  found and fixed before shipping — a zero-trial posterior is numerically identical to a broken
-  lookup's fallback, so the test now injects a real posterior to tell them apart), and
-  `StagedFundingSelection` ("the intended policy" -- composes the earlier gates/niche rule, adds
-  `validation_probe` as `EnvironmentSuite.validation`'s first real consumer via constructor
-  injection, and funds only the top-3 Thompson-sampled niches per epoch at a posterior-scaled
-  budget; honestly documented that the archive's real cap today is 3 niches regardless, so this
-  cap doesn't yet bind in practice). G0-G5 done; G6 remains: the cross-policy acceptance harness
-  (same seed bundle run once with `RandomEligibleSelection` and once with `StagedFundingSelection`;
-  a reproduction-traceability test; the validation-isolation regression guard re-run unmodified).
-  Phase 3's own pre-registered comparisons have not started.
+  deliberately non-CI job). **Closing the evolutionary decision loop is done** (brief's own "Slice
+  G", ADR-077 through ADR-083, G0-G6 all shipped): `candidate.py`'s simulator-native
+  gates/axes/`dominates()`/`niche_elite()`/`validation_probe`, `SelectionDecision`'s full
+  decision-record schema, `posteriors.sample()`'s Thompson-sampling primitive, all five policies
+  wired end to end behind `cli.py`'s `--selection-policy` flag (`RandomEligibleSelection`,
+  `SingleLeaderboardSelection`, `ParetoSelection`, `MapElitesSelection`, `StagedFundingSelection` —
+  "the intended policy," composing every earlier gate/niche rule plus `validation_probe` as
+  `EnvironmentSuite.validation`'s first real consumer), and G6's cross-policy acceptance harness
+  proving the seam holds under a real live run. **Known limitation, checked and documented rather
+  than silently left (ADR-083):** `StagedFundingSelection` with cross-family validation against
+  `RuleBasedMarket` can permanently deadlock reproduction — no mutation operator ever sets
+  `product.durable`/`product.quality` (`RuleBasedMarket`'s standard/premium tiers), and no founder
+  starts priced in the one tier that is reachable; same-family validation or no validation
+  reproduces fine. Two fixes are named in `FUTURE_BUILD_HOOKS.md`, neither built (out of Slice G's
+  scope). **Next actionable work is Slice H**: the pre-registration document plus the six required
+  Phase 3 comparison runs — pick a policy/validation combination known to reproduce.

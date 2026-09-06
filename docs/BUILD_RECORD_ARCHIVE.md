@@ -6,6 +6,57 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-06 — Closing the evolutionary decision loop, part 5: staged funding, the composed policy (Slice G, part 5)
+
+Continuing the plan from ADR-077 through ADR-081 without a fresh plan-mode round-trip. ADR-082 is
+the full as-built record.
+
+### What shipped
+
+`StagedFundingSelection` (brief Slice G policy #5, "the intended policy"): composes every earlier
+sub-slice rather than adding a sixth mechanism. Gates every eligible Cell on `ParetoSelection`'s two
+dimensions before a gate-survivor can be considered a niche elite; niches/elites come from
+`MapElitesSelection`'s own rule, restricted to gate survivors; each niche gets one real
+Thompson-sampled draw (`posteriors.sample()`, its first real caller), funding only the top 3 sampled
+niches at a budget scaling with that niche's posterior mean. A new `candidate.validation_probe` gate
+— `EnvironmentSuite.validation`'s first real consumer (ADR-073's own named obligation) — runs against
+a niche's chosen elite only, injected via this policy's own constructor rather than a new `decide()`
+parameter, so the routine epoch loop's existing "no path to `validation`" guarantee stays unmodified
+for every policy. `cmd_simulate` defaults `--validation-environment` to the other market family from
+`--environment` when `staged_funding` is chosen.
+
+### A shared-constant edit that would have made `ParetoSelection` dishonest if left alone
+
+Adding `validation_probe` to `candidate.SIM_GATE_DIMENSIONS` automatically flows into every
+dynamically-derived `unmeasured_dimensions` tuple — correct everywhere except `ParetoSelection`,
+whose measured-dimensions constant and `unmeasured_dimensions` were both hardcoded literals that
+would have silently started claiming it measures a gate it never runs. Fixed by excluding
+`validation_probe` explicitly in both places; `StagedFundingSelection`'s own `unmeasured_dimensions`
+is derived rather than hardcoded, precisely so this doesn't recur for the next dimension added.
+
+### Verification
+
+7 new tests (99 total in the simulation area). Four teeth-checks — the validation-rejection filter,
+the gate-survivor restriction into `niche_elite`, the top-K slice, the budget-scaling formula — each
+confirmed to fail for the stated reason and restored verbatim. Full suite green (1329 total; one
+unrelated Hypothesis deadline flake on `test_charter_ledger_balanced` reproduced as a clean pass in
+isolation and on a full re-run); golden run unaffected (hash unchanged at 38); `ruff check .` and
+`scripts/check_docs_facts.py` both clean. Documented honestly: the archive can have at most 3 niches
+today (only `structural_novelty` ever measures for a simulated genome), so the top-K=3 cap cannot yet
+exclude anything in a real run — its ranking-and-cap logic is still verified by monkeypatching the
+constant down to 1 in a dedicated test.
+
+**Correction (2026-09-06, ADR-083):** this entry's own live-run test used `RuleBasedMarket` as the
+validation environment, which (a defect found while building G6) can never be cleared by any
+simulated genome and so silently never exercised real reproduction. Fixed in the G6 commit; see
+ADR-083 for the full finding.
+
+- Next: G6 — the cross-policy acceptance harness (same seed bundle run once with
+  `RandomEligibleSelection` and once with `StagedFundingSelection`; a reproduction-traceability test;
+  the validation-isolation regression guard re-run unmodified) — then Slice H's pre-registered
+  Phase 3 comparisons. The >= 500 Cell/>= 10,000 epoch Phase 2 acceptance benchmark itself remains
+  documented but not yet run to completion (ADR-076).
+
 ## 2026-09-06 — Closing the evolutionary decision loop, part 4: MAP-Elites, one elite per occupied niche (Slice G, part 4)
 
 Continuing the plan from ADR-077 through ADR-080 without a fresh plan-mode round-trip. ADR-081 is

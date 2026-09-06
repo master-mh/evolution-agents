@@ -1700,3 +1700,38 @@ actually queued for building — this file is memory, not a backlog to work thro
     a limitation the repo already states rather than hides.
   All four are real; none should displace Slice F (flight simulator) or the Phase 3 validation it
   gates — the brief's own point is that evidence risk now outweighs governance-concept risk.
+- **`novelty.py`'s `buyer_type`/`revenue_recurrence` dimensions could be made real for simulated
+  Cells, and were deliberately left unmeasured through all of Slice G (ADR-077-082).** Both need
+  counterparty-keyed revenue data (`revenue_counterparties`/`counterparty.current_buyer_types`),
+  which `runner.py`'s `revenue.record_revenue()` calls never post — no `counterparty_hash` is ever
+  supplied for a simulated sale. This could be made real by having `runner._run_one_epoch` pass a
+  synthetic counterparty id (e.g. derived from the environment's own market segment/tier) into each
+  sale. Not built in Slice G: it modifies an existing, well-tested revenue-posting call site for a
+  benefit orthogonal to closing the selection loop (niche diversity is already satisfied by the real
+  `novelty_distance` dimension, the one descriptor that *does* work unmodified — see
+  `candidate.py`'s own module docstring), and bolting it onto a slice about selection policies risks
+  conflating two unrelated changes. The practical effect: `novelty.archive()`'s niche coordinate is,
+  for now, always exactly the `novelty_distance` bin alone (adjacent/moderate/radical, at most 3
+  niches) — `StagedFundingSelection`'s `_STAGED_FUNDING_TOP_K = 3` funding cap (ADR-082) therefore
+  cannot yet exclude anything in a real run, since there is never more than 3 fundable niches to
+  choose among. Whoever builds this should re-check that cap's value once niches can actually
+  exceed 3.
+- **A cross-family `validation_probe` (ADR-082, `StagedFundingSelection`) against `RuleBasedMarket`
+  can permanently deadlock reproduction, found and checked by
+  `test_a_harsh_cross_family_validation_probe_can_permanently_prevent_reproduction`
+  (`tests/test_simulation.py`) rather than left as a one-off diagnostic finding.** No operator in
+  `mutation.py` ever sets `product.durable` or `product.quality`, and no founder genome from
+  `policy.py` starts with either field — so `RuleBasedMarket`'s standard/premium tiers (SPEC.md
+  §8.3's own by-design "fails every time, at every price in that band, regardless of seed") are
+  permanently unreachable by evolution here; only the budget tier (price <= 300 pre-shift, <= 150
+  post-shift) can ever clear. If no elite's price happens to start there, nothing is ever funded, so
+  no mutation — including a price mutation that might eventually reach the budget tier — ever gets a
+  chance to run. `cmd_simulate` still defaults `--validation-environment` to the *other* family
+  (correctly, per SPEC.md §8.1's intended cross-family check), so this is `staged_funding`'s honest,
+  checked default behavior today, not a contrived edge case. Two independent fixes would each break
+  the deadlock, and either (not necessarily both) would be enough: (1) give some mutation operator a
+  path to `product.durable`/`product.quality` (`mutation.product_delivery_variation` is the natural
+  home), or (2) seed some founder prices at or below the budget tier ceiling in `policy.py`'s initial
+  genome generation. Neither is Slice G's job — both touch Slice F's already-shipped, tested mutation
+  operators and founder generation for a benefit orthogonal to closing the selection loop, the same
+  reasoning as the `buyer_type`/`revenue_recurrence` deferral above.
