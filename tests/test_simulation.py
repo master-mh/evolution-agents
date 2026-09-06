@@ -1006,6 +1006,125 @@ def test_cli_simulate_accepts_the_pareto_selection_policy(tmp_path):
     assert all(written["conservation_ok"].values())
 
 
+def test_map_elites_selection_funds_one_elite_per_occupied_niche(conn):
+    """`novelty.archive()`'s own niche computation drives this policy
+    directly -- two genomes forced into different niches (one shares an
+    earlier market and lands "adjacent", one names a fresh market and lands
+    "radical") each fund their own elite; a founder genome with nothing
+    earlier to compare against is unbinned (§12.1) and funds nothing.
+    `niche_elite()`'s own tie-break logic is unit-tested in
+    `test_simulation_candidate.py`; this proves the *policy* correctly uses
+    the archive and assembles the decision record from it."""
+    import random
+
+    from mitosis.simulation.selection_policy import MapElitesSelection
+
+    # `founder` and `adjacent` cannot share identical genome_content -- under
+    # ADR-018's content addressing that would be the *same* genome_hash (one
+    # archive record, not two). `adjacent` shares `founder`'s market but adds
+    # one more novelty field (`product`), which is exactly one field
+    # difference from its nearest earlier genome -- "adjacent" by
+    # `novelty._novelty_distance`'s own "nearest == 1" branch.
+    founder = _cell_with_experiments(
+        conn, key="founder", genome_content={"market": {"segment": "shared"}}, outcomes=[500],
+    )
+    adjacent = _cell_with_experiments(
+        conn, key="adjacent",
+        genome_content={"market": {"segment": "shared"}, "product": {"name": "variant"}},
+        outcomes=[500],
+    )
+    radical = _cell_with_experiments(
+        conn, key="radical", genome_content={"market": {"segment": "different"}}, outcomes=[500],
+    )
+
+    policy = MapElitesSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    assert len(decision.niches) == 2
+    elites = {n.elite_cell_id for n in decision.niches}
+    assert elites == {adjacent.cell_id, radical.cell_id}
+    assert set(decision.chosen_parent_cell_ids) == elites
+    assert founder.cell_id not in decision.chosen_parent_cell_ids
+    assert all(n.funded_this_epoch for n in decision.niches)
+    assert all(n.thompson_sample is None for n in decision.niches)
+
+
+def test_map_elites_selection_records_the_real_posterior_even_though_unused(conn, monkeypatch):
+    """`decide()` must carry through whatever `posteriors.posteriors()` reports
+    for a niche's own coordinate, keyed correctly, rather than silently
+    falling back to the uninformative prior. A *zero-trial* real posterior is
+    numerically identical to the hardcoded fallback (alpha=beta=1.0 either
+    way, per `_posterior`'s own formula) -- so asserting only that shape
+    cannot tell a real lookup from a broken one that always misses. This
+    injects a posterior with real, non-prior trials/conversions and asserts
+    those exact values survive into the decision record."""
+    import random
+
+    from mitosis import novelty
+    from mitosis import posteriors as posteriors_module
+    from mitosis.simulation.selection_policy import MapElitesSelection
+
+    _cell_with_experiments(
+        conn, key="founder", genome_content={"market": {"segment": "shared"}}, outcomes=[500],
+    )
+    _cell_with_experiments(
+        conn, key="adjacent",
+        genome_content={"market": {"segment": "shared"}, "product": {"name": "variant"}},
+        outcomes=[500],
+    )
+
+    real_niche = novelty.archive(conn).niches[0]
+    fake_posterior = posteriors_module.StageConversionPosterior(
+        coordinate=real_niche.coordinate, trials=5, conversions=2,
+        alpha=3.0, beta=4.0, posterior_mean=3.0 / 7.0, reason="fake posterior for this test",
+    )
+    monkeypatch.setattr(
+        posteriors_module, "posteriors",
+        lambda conn: posteriors_module.Posteriors(
+            niches=(fake_posterior,), unbinned_trials=0, unbinned_conversions=0,
+        ),
+    )
+
+    policy = MapElitesSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    assert len(decision.niches) == 1
+    niche = decision.niches[0]
+    assert niche.posterior_trials == 5
+    assert niche.posterior_conversions == 2
+    assert niche.posterior_alpha == pytest.approx(3.0)
+    assert niche.posterior_beta == pytest.approx(4.0)
+    assert niche.posterior_mean == pytest.approx(3.0 / 7.0)
+
+
+def test_map_elites_selection_runs_cleanly_across_a_live_multi_epoch_run(conn):
+    from mitosis.simulation.selection_policy import MapElitesSelection
+
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="test", master_seed=7, epochs=20, population=10),
+        selection=MapElitesSelection(),
+    )
+    assert manifest.failures == ()
+    assert all(manifest.conservation_ok.values())
+
+
+def test_cli_simulate_accepts_the_map_elites_selection_policy(tmp_path):
+    db_path = tmp_path / "sim.db"
+    output_path = tmp_path / "manifest.json"
+    cli.main(["--db", str(db_path), "init"])
+
+    exit_code = cli.main([
+        "--db", str(db_path), "simulate",
+        "--seed", "3", "--epochs", "5", "--population", "3",
+        "--selection-policy", "map_elites", "--output", str(output_path),
+    ])
+
+    assert exit_code in (0, None)
+    written = json.loads(output_path.read_text())
+    assert written["selection_policy_name"] == "map_elites"
+    assert all(written["conservation_ok"].values())
+
+
 def test_build_selection_policy_selects_the_named_policy_and_rejects_unknown_names():
     assert isinstance(
         selection_policy.build_selection_policy("random_eligible"), RandomEligibleSelection,
@@ -1015,6 +1134,9 @@ def test_build_selection_policy_selects_the_named_policy_and_rejects_unknown_nam
     )
     assert isinstance(
         selection_policy.build_selection_policy("pareto"), selection_policy.ParetoSelection,
+    )
+    assert isinstance(
+        selection_policy.build_selection_policy("map_elites"), selection_policy.MapElitesSelection,
     )
     with pytest.raises(selection_policy.UnknownSelectionPolicyError):
         selection_policy.build_selection_policy("not_a_real_policy")

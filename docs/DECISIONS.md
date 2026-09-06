@@ -5203,3 +5203,56 @@ out as a Slice G decision, not this one.
   `candidate.niche_elite()` already built in G1 its first real caller — then G5
   (`StagedFundingSelection` + Thompson sampling + the `EnvironmentSuite.validation` consumer) and G6
   (the cross-policy acceptance harness).
+
+## ADR-081: MAP-Elites selection, one elite per occupied niche (Slice G, part 4)
+
+- **Status:** Accepted; new `MapElitesSelection` in `selection_policy.py`; `cli.py`'s
+  `--selection-policy` gains `map_elites`; 4 new tests in `tests/test_simulation.py` (92 total
+  simulation-area tests: 64 + 16 + 12 across `test_simulation.py`/`test_simulation_candidate.py`/
+  `test_posteriors.py`)
+- **Spec ref:** implementation brief's Slice G policy #4 ("MAP-Elites / quality-diversity");
+  SPEC.md §12.1/§12.2 (the novelty archive, a derived view over niche coordinates)
+
+- **What shipped:** `MapElitesSelection` calls `novelty.archive()` directly (unmodified — niches are
+  still a derived view, never a stored table) and, for every occupied niche, calls
+  `candidate.niche_elite()` (built in G1, its first real caller) to pick that niche's elite: highest
+  `realized_net_revenue` among evaluated occupants, or a uniform-random pick among unevaluated ones
+  when nothing has evidence yet — an explicit "no evidence, explore" rule, never a silent default.
+  Every occupied niche reproduces each epoch (MAP-Elites' classical behaviour — keep re-trying every
+  niche, not allocate a scarce budget across them; that comes in G5 via Thompson sampling). Each
+  niche's real §12.3 posterior (`posteriors.posteriors()`) is recorded on its `NicheStanding`
+  regardless of whether this policy uses it — `thompson_sample` stays `None` because this policy
+  never draws one, not because the posterior is unavailable. A new `_living_cell_ids_in_niche` helper
+  reuses `novelty.py`'s own broader "living" definition (`status != DEAD`) rather than
+  `_eligible_parents`'s narrower alive-with-cash filter, deliberately: niche *occupancy* is a colony
+  fact, reproduction *eligibility* is a separate one the decision record already carries.
+
+- **A coincidental-pass test found and fixed before this shipped, not after.** The first version of
+  `test_map_elites_selection_records_the_real_posterior_even_though_unused` asserted only that a
+  niche with no rung-7 promotions ever issued gets the uninformative Beta(1,1) prior
+  (`alpha=beta=1.0`, `trials=0`) — true, but numerically identical to what
+  `posterior_by_coordinate.get(niche.coordinate)` returns when the lookup is silently broken and
+  falls back to the hardcoded default (`posteriors.PRIOR_ALPHA`/`PRIOR_BETA`). A zero-trial real
+  posterior and a missing one are indistinguishable by value under `_posterior`'s own formula
+  (`alpha = PRIOR_ALPHA + conversions`, `beta = PRIOR_BETA + (trials - conversions)`), so this
+  assertion could not tell a working lookup from a broken one. Rewritten to monkeypatch
+  `posteriors.posteriors()` to return a real, non-prior posterior (`trials=5, conversions=2,
+  alpha=3.0, beta=4.0`) for the fixture's own niche coordinate, and assert those exact values survive
+  into the decision record — a lookup that always misses now produces a visibly wrong result instead
+  of a coincidentally correct one. Caught by the same discipline ADR-077/ADR-079 already needed twice
+  this slice: distrust a teeth-check-shaped assertion that a broken implementation could also satisfy.
+
+- **Verification:** a three-genome fixture forcing two distinct niches (one "adjacent" to a shared
+  market, one "radical" against a fresh one) plus an unbinned founder, proving each occupied niche
+  funds its own elite and the founder funds nothing; the corrected posterior-wiring test above; a
+  20-epoch live run; a CLI end-to-end run. Three teeth-checks — breaking the posterior lookup
+  (`posterior_by_coordinate.get(...)` forced to `None`), breaking the eligibility threading into
+  `candidate.niche_elite()` (forced to `frozenset()`, which starved every niche of an elite), and
+  renaming the factory's dispatch branch — each confirmed to fail for the stated reason and restored
+  verbatim. Full suite green (1322 total, up from 1318); golden run unaffected (hash unchanged at
+  38); `ruff check .` and `scripts/check_docs_facts.py` both clean.
+
+- Next: G5 — `StagedFundingSelection`, composing `ParetoSelection`'s gates with `MapElitesSelection`'s
+  niche/elite rule, adding a `validation_probe` gate and a Thompson-sampled draw per niche
+  (`posteriors.sample()`, built in G1 but still uncalled) to fund only the top-K sampled niches per
+  epoch — then G6's cross-policy acceptance harness and Slice H.

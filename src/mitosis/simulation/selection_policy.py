@@ -4,12 +4,13 @@ architecture).
 
 `SelectionPolicy` decides which Cell(s) reproduce each epoch and records a
 full decision, not just a list of winners (brief Slice G's own requirement).
-`RandomEligibleSelection` (policy #1, shipped in F1) and `SingleLeaderboardSelection`
+`RandomEligibleSelection` (policy #1, F1), `SingleLeaderboardSelection`
 (policy #2, an intentionally-forbidden single-scalar shape kept only as a
-Phase 3 comparator) both ship here. `ParetoSelection`, `MapElitesSelection`,
-and `StagedFundingSelection` land in their own later sub-slices behind this
-same interface, once `candidate.py`'s gates/axes/niches have real consumers
-worth building around.
+Phase 3 comparator), `ParetoSelection` (policy #3, reproduces the whole
+Pareto front), and `MapElitesSelection` (policy #4, one elite per occupied
+niche) all ship here. `StagedFundingSelection` lands in its own later
+sub-slice, once Thompson sampling and the `EnvironmentSuite.validation`
+consumer have a policy to compose them into.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import random
 from dataclasses import dataclass
 from typing import Protocol
 
-from .. import ledger, lifecycle
+from .. import ledger, lifecycle, novelty, posteriors
 from ..accounts import cell_cash
 from ..models import Book, CellStatus
 from . import candidate, mutation
@@ -290,6 +291,113 @@ class ParetoSelection:
         )
 
 
+def _living_cell_ids_in_niche(conn, niche: novelty.Niche) -> tuple[str, ...]:
+    """Every living Cell in a niche, matching `novelty.py`'s own definition
+    of living (`status IN ('created','alive','dormant','quarantined')`,
+    i.e. not dead) -- broader than `_eligible_parents`'s alive-with-cash
+    filter on purpose: this field describes niche *occupancy*, a colony
+    fact, not reproduction *eligibility*, which the decision record already
+    carries separately."""
+    return tuple(sorted(
+        cell.cell_id for cell in lifecycle.list_cells(conn)
+        if cell.status is not CellStatus.DEAD and cell.genome_hash in niche.genome_hashes
+    ))
+
+
+class MapElitesSelection:
+    """Brief Slice G policy #4: MAP-Elites/quality-diversity selection with
+    a defined elite rule. Niches come from a direct, unmodified call to
+    `novelty.archive()`; `candidate.niche_elite()` (built in G1, its first
+    real caller) picks one elite per occupied niche. Reproduces from
+    *every* occupied niche's elite each epoch -- MAP-Elites' classical
+    behaviour is to keep re-trying every occupied niche, not to allocate a
+    scarce budget across them (that budget-constrained choice is
+    `StagedFundingSelection`'s job, via Thompson sampling, in a later
+    sub-slice). Each niche's real posterior is still recorded on its
+    `NicheStanding` for transparency -- `thompson_sample` stays `None`
+    because this policy never draws one, not because the posterior itself
+    is unavailable."""
+
+    name = "map_elites"
+    version = "1"
+
+    def __init__(self, *, book: Book = Book.USD_SIM) -> None:
+        self._book = book
+
+    def decide(
+        self, conn, *, epoch: int, rng: random.Random, seed_label: str
+    ) -> SelectionDecision:
+        eligible = _eligible_parents(conn, book=self._book)
+        eligible_ids = frozenset(c.cell_id for c in eligible)
+        archive = novelty.archive(conn)
+        posterior_by_coordinate = {p.coordinate: p for p in posteriors.posteriors(conn).niches}
+
+        niche_standings: list[NicheStanding] = []
+        chosen: list[str] = []
+        operator_overrides: list[tuple[str, str]] = []
+        # Sorted by coordinate, not archive discovery order: which niches
+        # get to reproduce first (relevant only if a colony-wide rate cap
+        # is hit mid-epoch, `lineage.reproduce`'s own job to enforce) is
+        # then itself seed-reproducible.
+        for niche in sorted(archive.niches, key=lambda n: n.coordinate):
+            elite_cell_id = candidate.niche_elite(conn, niche, eligible_ids, rng=rng)
+            funded = elite_cell_id is not None
+            if funded:
+                chosen.append(elite_cell_id)
+                operator_overrides.append(
+                    (elite_cell_id, rng.choice(sorted(mutation.OPERATORS)))
+                )
+            posterior = posterior_by_coordinate.get(niche.coordinate)
+            niche_standings.append(NicheStanding(
+                coordinate=niche.coordinate,
+                living_cell_ids=_living_cell_ids_in_niche(conn, niche),
+                elite_cell_id=elite_cell_id,
+                posterior_trials=posterior.trials if posterior else 0,
+                posterior_conversions=posterior.conversions if posterior else 0,
+                posterior_alpha=posterior.alpha if posterior else posteriors.PRIOR_ALPHA,
+                posterior_beta=posterior.beta if posterior else posteriors.PRIOR_BETA,
+                posterior_mean=posterior.posterior_mean if posterior else 0.5,
+                thompson_sample=None,
+                funded_this_epoch=funded,
+            ))
+        chosen_tuple = tuple(chosen)
+        return SelectionDecision(
+            policy_name=self.name,
+            policy_version=self.version,
+            epoch=epoch,
+            rng_seed_label=seed_label,
+            eligible_cell_ids=tuple(c.cell_id for c in eligible),
+            chosen_parent_cell_ids=chosen_tuple,
+            # Vestigial, as in `ParetoSelection`: every chosen parent has
+            # its own entry in `parent_mutation_operators`.
+            mutation_operator=mutation.NO_OP_OPERATOR,
+            child_budget_minor_units=_CHILD_BUDGET_MINOR_UNITS,
+            reason=(
+                f"{len(archive.niches)} niche(s) in the archive ({len(archive.unbinned_genome_hashes)} "
+                "unbinned genome(s) outside any of them); an elite chosen for "
+                f"{sum(1 for n in niche_standings if n.funded_this_epoch)} occupied niche(s) -- "
+                "brief Slice G policy #4, reproducing every occupied niche's elite, not a "
+                "budget-constrained subset (posteriors recorded per niche but not sampled from; "
+                "see StagedFundingSelection)"
+            ),
+            # `structural_novelty` decides niche coordinates (`novelty.archive`);
+            # `realized_net_revenue` decides the elite *within* an occupied
+            # niche (`candidate.niche_elite`'s own tie-break). No gate runs --
+            # this policy never calls `candidate.cell_candidate()` at all.
+            measured_dimensions=("structural_novelty", "realized_net_revenue"),
+            unmeasured_dimensions=tuple(
+                d for d in _ALL_SIM_DIMENSIONS
+                if d not in ("structural_novelty", "realized_net_revenue")
+            ),
+            niches=tuple(niche_standings),
+            parent_mutation_operators=tuple(operator_overrides),
+            intended_experiment=(
+                "none -- this policy selects parents by niche occupancy and realised "
+                "standing, not by reading a candidate's proposed hypothesis"
+            ),
+        )
+
+
 class UnknownSelectionPolicyError(Exception):
     pass
 
@@ -304,7 +412,10 @@ def build_selection_policy(name: str) -> SelectionPolicy:
         return SingleLeaderboardSelection()
     if name == ParetoSelection.name:
         return ParetoSelection()
+    if name == MapElitesSelection.name:
+        return MapElitesSelection()
     raise UnknownSelectionPolicyError(
         f"no selection policy named {name!r}; available: "
-        f"{RandomEligibleSelection.name}, {SingleLeaderboardSelection.name}, {ParetoSelection.name}"
+        f"{RandomEligibleSelection.name}, {SingleLeaderboardSelection.name}, "
+        f"{ParetoSelection.name}, {MapElitesSelection.name}"
     )

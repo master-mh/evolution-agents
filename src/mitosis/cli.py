@@ -3329,6 +3329,7 @@ def build_parser() -> argparse.ArgumentParser:
             simulation_selection_policy.RandomEligibleSelection.name,
             simulation_selection_policy.SingleLeaderboardSelection.name,
             simulation_selection_policy.ParetoSelection.name,
+            simulation_selection_policy.MapElitesSelection.name,
         ],
         default=simulation_selection_policy.RandomEligibleSelection.name,
         help=(

@@ -28,52 +28,49 @@ market family with environment separation and regime shifts; the remaining
 mutation operators wired through a real choice; chaos drills as repeatable
 scenarios; manifest richness, a CI-scale acceptance test, a founding cap bug
 fix, and a retained benchmark artifact), and closing the evolutionary
-decision loop's first three sub-slices (a run record that never named its
+decision loop's first four sub-slices (a run record that never named its
 own selection policy and founder concentration as a real time series;
 simulator-native fitness dimensions, the full decision-record schema, and
-Thompson sampling; the single-leaderboard control policy),
+Thompson sampling; the single-leaderboard control policy; Pareto selection
+reproducing the whole front, and a gate found structurally unreachable
+through this pipeline),
 2026-07-21 through 2026-09-05):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-05 — Closing the evolutionary decision loop, part 3: Pareto selection, reproducing the whole front (Slice G, part 3)
+## 2026-09-06 — Closing the evolutionary decision loop, part 4: MAP-Elites, one elite per occupied niche (Slice G, part 4)
 
-Continuing the plan from ADR-077 through ADR-079 without a fresh plan-mode round-trip. ADR-080 is
+Continuing the plan from ADR-077 through ADR-080 without a fresh plan-mode round-trip. ADR-081 is
 the full as-built record.
 
 ### What shipped
 
-`ParetoSelection` (brief Slice G policy #3): gates every eligible Cell on
-`not_quarantined`/`reproducibility`, takes the Pareto front over
-`structural_novelty`/`realized_net_revenue`/`experiment_success_rate`, and reproduces from **every**
-Cell on the front — not one winner. That last point is the whole content of the comparison this
-policy sets up against `SingleLeaderboardSelection`: SPEC.md §10.2's "portfolio, not a scalar" only
-means something if the portfolio is actually funded. Each front member draws its own mutation
-operator via the per-parent override fields ADR-078 built but nothing had used yet.
+`MapElitesSelection` (brief Slice G policy #4): calls `novelty.archive()` directly and, for every
+occupied niche, calls `candidate.niche_elite()` (built in G1, its first real caller) — highest
+`realized_net_revenue` among evaluated occupants, or a uniform-random pick among unevaluated ones.
+Every occupied niche reproduces each epoch (classical MAP-Elites; budget-constrained prioritization
+across niches is G5's job via Thompson sampling). Each niche's real §12.3 posterior is recorded on
+its `NicheStanding` regardless of whether this policy reads it.
 
-### A gate found to be structurally unreachable through this pipeline
+### A coincidental-pass test found and fixed before it shipped
 
-`candidate._not_quarantined` is correctly implemented and independently proven (ADR-078) — but every
-policy builds its candidates only from `_eligible_parents()`'s own output, which already filters to
-`CellStatus.ALIVE` before a gate ever runs. A quarantined Cell is excluded at the *eligibility*
-stage, not the *gate* stage, so this gate's `REJECTED` branch cannot fire through any policy's
-`decide()` regardless of colony state. Kept anyway — correct, cheap, and a module built for reuse by
-`MapElitesSelection`/`StagedFundingSelection` next shouldn't assume every future caller pre-filters
-the same way — but the first version of this slice's own test asserted a rejection that can never
-happen here and failed; rewritten to assert the accurate, narrower fact instead.
+The first version of the posterior-recording test asserted only that a niche with zero rung-7
+promotions gets the uninformative Beta(1,1) prior — true, but numerically identical to what a
+silently-broken posterior lookup falls back to (`_posterior`'s formula gives `alpha=beta=1.0` at
+`trials=0` either way). Rewritten to inject a real, non-prior posterior via monkeypatch and assert
+those exact values survive into the decision record, so a broken lookup now produces a visibly wrong
+result. Same root cause as ADR-077/ADR-079's own coincidental-pass teeth-checks this slice: a
+too-easy CAUGHT deserves a second look before being trusted.
 
 ### Verification
 
-4 new tests (88 total in the simulation area): a genuine three-Cell trade-off fixture (higher revenue
-but a lower success rate vs. lower revenue but a perfect one, with `structural_novelty` held tied via
-identical genome content so only the two controlled axes discriminate) proving mutual
-non-domination puts both on the front while a dominated third is excluded; the corrected quarantine
-test; every chosen parent receiving its own operator; a CLI end-to-end run. Three teeth-checks, each
-confirmed to fail for the stated reason and restored verbatim. Full suite green; golden run
+4 new tests (92 total in the simulation area). Three teeth-checks — the posterior lookup, the
+eligibility threading into `candidate.niche_elite()`, the factory's dispatch branch — each confirmed
+to fail for the stated reason and restored verbatim. Full suite green (1322 total); golden run
 unaffected (hash unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both clean.
 
-- Next: G4 — `MapElitesSelection`, giving `novelty.py`'s archive the elite-per-niche rule
-  `candidate.niche_elite()` already built in G1 its first real caller — then G5
-  (`StagedFundingSelection` + Thompson sampling + the `EnvironmentSuite.validation` consumer), G6
-  (the cross-policy acceptance harness), and Slice H's pre-registered Phase 3 comparisons. The
+- Next: G5 — `StagedFundingSelection`, composing `ParetoSelection`'s gates with this policy's
+  niche/elite rule, a new `validation_probe` gate, and a Thompson-sampled draw per niche
+  (`posteriors.sample()`, built in G1 but still uncalled) funding only the top-K sampled niches — then
+  G6's cross-policy acceptance harness and Slice H's pre-registered Phase 3 comparisons. The
   >= 500 Cell/>= 10,000 epoch Phase 2 acceptance benchmark itself remains documented but not yet run
   to completion (ADR-076).
