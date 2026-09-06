@@ -45,6 +45,7 @@ from enum import StrEnum
 
 from .. import experiments, ledger, lifecycle, novelty, revenue
 from ..models import Book, CellStatus
+from . import environment
 
 #: Mirrors `selection.GATE_DIMENSIONS`'s shape (name -> description) with a
 #: deliberately disjoint set of names -- see the module docstring for why
@@ -58,6 +59,13 @@ SIM_GATE_DIMENSIONS: dict[str, str] = {
         "did any of them ever convert it to revenue? A different "
         "operationalization from the kernel's own human-adoption sense, "
         "stated explicitly rather than reused by accident (see `_reproducibility`)"
+    ),
+    "validation_probe": (
+        "does this genome also clear a *different* market mechanism than the one "
+        "it trained against (SPEC.md §8.1's validation role: 'influences capital "
+        "allocation, partially hidden')? UNEVALUABLE, not a silent pass, when no "
+        "validation environment is configured -- only StagedFundingSelection ever "
+        "supplies one (see `validation_probe`)"
     ),
 }
 
@@ -192,6 +200,47 @@ def _reproducibility(conn, cell: lifecycle.Cell) -> GateResult:
         cell.cell_id, "reproducibility", GateOutcome.REJECTED,
         f"{len(tried)} independent Cell(s) tried this genome and concluded an experiment; "
         "none ever produced revenue",
+    )
+
+
+def validation_probe(
+    validation: environment.MarketEnvironment | None, *,
+    cell_id: str, genome_content: dict, epoch: int,
+) -> GateResult:
+    """Whether a niche's chosen elite also clears a *different* market
+    mechanism than the one it trained against -- `EnvironmentSuite.
+    validation`'s first real consumer (`StagedFundingSelection` only).
+
+    `UNEVALUABLE`, not a silent `PASSED`, when no validation environment is
+    configured (every policy but `StagedFundingSelection`, and even that one
+    when its own caller supplied none): "nothing to judge" is a different
+    fact from "judged and found no problem," the same posture
+    `_reproducibility` already takes below the independent-tries threshold.
+
+    Side-effect-free by construction, not by convention: `evaluate()` is a
+    pure function of its inputs (`environment.py`'s own docstring), so this
+    probe posts no grant, no experiment row, no revenue -- it is a second
+    read of a market's rule, not a second experiment.
+    """
+    if validation is None:
+        return GateResult(
+            cell_id, "validation_probe", GateOutcome.UNEVALUABLE,
+            "no validation environment configured for this run",
+        )
+    outcome = validation.evaluate(
+        experiment=environment.ExperimentAction(
+            cell_id=cell_id, genome_content=genome_content, hypothesis="validation probe",
+        ),
+        epoch=epoch,
+    )
+    if outcome.purchased:
+        return GateResult(
+            cell_id, "validation_probe", GateOutcome.PASSED,
+            f"cleared {validation.name}: {outcome.note}",
+        )
+    return GateResult(
+        cell_id, "validation_probe", GateOutcome.REJECTED,
+        f"failed {validation.name}: {outcome.note}",
     )
 
 

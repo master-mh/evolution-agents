@@ -7,22 +7,24 @@ full decision, not just a list of winners (brief Slice G's own requirement).
 `RandomEligibleSelection` (policy #1, F1), `SingleLeaderboardSelection`
 (policy #2, an intentionally-forbidden single-scalar shape kept only as a
 Phase 3 comparator), `ParetoSelection` (policy #3, reproduces the whole
-Pareto front), and `MapElitesSelection` (policy #4, one elite per occupied
-niche) all ship here. `StagedFundingSelection` lands in its own later
-sub-slice, once Thompson sampling and the `EnvironmentSuite.validation`
-consumer have a policy to compose them into.
+Pareto front), `MapElitesSelection` (policy #4, one elite per occupied
+niche), and `StagedFundingSelection` (policy #5, "the intended policy" --
+composes #3's gates plus a new `validation_probe` gate, #4's niche/elite
+rule, and a genuinely budget-constrained Thompson-sampled choice across
+niches) all ship here.
 """
 
 from __future__ import annotations
 
 import random
+import zlib
 from dataclasses import dataclass
 from typing import Protocol
 
 from .. import ledger, lifecycle, novelty, posteriors
 from ..accounts import cell_cash
 from ..models import Book, CellStatus
-from . import candidate, mutation
+from . import candidate, environment, mutation
 
 #: Generous for a toy F1 economy: a parent needs this much left over *after*
 #: funding a child so it can still pay for its own next wake (§15.4).
@@ -220,11 +222,12 @@ class SingleLeaderboardSelection:
         )
 
 
-#: Every SIM dimension except `economic_potential` -- `ParetoSelection` runs
-#: both gates and consults every axis that can be measured; only the one
-#: permanently-unmeasurable axis is excluded.
+#: Every SIM dimension except `economic_potential` (permanently unmeasurable)
+#: and `validation_probe` (only `StagedFundingSelection` ever supplies a
+#: validation environment to judge it) -- `ParetoSelection` runs both gates
+#: and consults every axis it *can* measure, nothing more.
 _PARETO_MEASURED_DIMENSIONS: tuple[str, ...] = tuple(
-    d for d in _ALL_SIM_DIMENSIONS if d != "economic_potential"
+    d for d in _ALL_SIM_DIMENSIONS if d not in ("economic_potential", "validation_probe")
 )
 
 
@@ -281,7 +284,7 @@ class ParetoSelection:
             ),
             gate_results=gate_results,
             measured_dimensions=_PARETO_MEASURED_DIMENSIONS,
-            unmeasured_dimensions=("economic_potential",),
+            unmeasured_dimensions=("economic_potential", "validation_probe"),
             pareto_front_cell_ids=chosen,
             parent_mutation_operators=operator_overrides,
             intended_experiment=(
@@ -398,14 +401,216 @@ class MapElitesSelection:
         )
 
 
+#: How many niches this colony backs per epoch under staged funding -- a
+#: small, explicit cap on a scarce budget (the entire point of a Thompson
+#: *sampled* choice across niches, as opposed to `MapElitesSelection`'s own
+#: "fund every occupied niche" posture). Not derived from anything else in
+#: this module; a future Slice would need a real reason to change it.
+_STAGED_FUNDING_TOP_K = 3
+
+#: A niche's per-parent child budget scales with its own posterior mean --
+#: a niche with a real rung-7->8 track record gets more than the untested
+#: base amount, one with a poor track record gets less. `1.0` doubles the
+#: base budget at full confidence (mean=1.0); the uninformative prior
+#: (mean=0.5, the common case for a niche with zero trials) yields 1.5x.
+_STAGED_FUNDING_BUDGET_SCALE = 1.0
+
+
+def _staged_child_budget(posterior_mean: float) -> int:
+    return _CHILD_BUDGET_MINOR_UNITS + round(
+        _CHILD_BUDGET_MINOR_UNITS * _STAGED_FUNDING_BUDGET_SCALE * posterior_mean
+    )
+
+
+#: Derived, not hardcoded as its own complement, so a future dimension added
+#: to `candidate.py` shows up in `unmeasured_dimensions` automatically rather
+#: than needing this policy remembered too.
+_STAGED_FUNDING_MEASURED_DIMENSIONS: tuple[str, ...] = (
+    "not_quarantined", "reproducibility", "structural_novelty",
+    "realized_net_revenue", "validation_probe",
+)
+
+
+def _uninformative_posterior(coordinate: tuple[tuple[str, str], ...]) -> posteriors.StageConversionPosterior:
+    return posteriors.StageConversionPosterior(
+        coordinate=coordinate, trials=0, conversions=0,
+        alpha=posteriors.PRIOR_ALPHA, beta=posteriors.PRIOR_BETA, posterior_mean=0.5,
+        reason="no rung-7 promotion has been issued to a Cell in this niche yet",
+    )
+
+
+class StagedFundingSelection:
+    """Brief Slice G policy #5 -- "the intended policy," composing every
+    earlier sub-slice rather than adding a sixth independent mechanism.
+
+    Gates every eligible Cell on `ParetoSelection`'s own two dimensions
+    (`not_quarantined`, `reproducibility`) before a gate-survivor can even be
+    considered as a niche elite. Niches and their elites come from
+    `MapElitesSelection`'s own rule (`novelty.archive()` +
+    `candidate.niche_elite()`, restricted to gate survivors). Each niche's
+    real §12.3 posterior gets one Thompson-sampled draw
+    (`posteriors.sample()`, built in G1, its first real caller) -- funding
+    only the top `_STAGED_FUNDING_TOP_K` sampled niches this epoch, at a
+    per-niche budget that scales with that niche's own posterior mean
+    (`_staged_child_budget`), rather than MAP-Elites' own "fund every
+    occupied niche" posture.
+
+    Before a niche's elite is even eligible to be funded, it must also clear
+    `candidate.validation_probe` -- `EnvironmentSuite.validation`'s first
+    real consumer, injected through *this constructor*, not a new
+    `decide()` parameter. `SelectionPolicy.decide()` and
+    `runner._run_one_epoch()` stay byte-identical to every other policy's,
+    so `test_the_routine_epoch_loop_never_touches_validation_or_
+    secret_challenge_environments`'s existing guarantee keeps holding,
+    unmodified, for this policy and every other one alike. `validation=None`
+    (the default) makes `validation_probe` report `UNEVALUABLE` for every
+    elite -- an honestly weaker policy, not a crash, when a caller has
+    nothing to probe with.
+    """
+
+    name = "staged_funding"
+    version = "1"
+
+    def __init__(
+        self, *, book: Book = Book.USD_SIM,
+        validation: environment.MarketEnvironment | None = None,
+    ) -> None:
+        self._book = book
+        self._validation = validation
+
+    def decide(
+        self, conn, *, epoch: int, rng: random.Random, seed_label: str
+    ) -> SelectionDecision:
+        if self._validation is not None:
+            # A stable int derived from `seed_label`, not `rng` -- resetting
+            # an environment does not consume from the one draw stream this
+            # decision's other choices (operators, `niche_elite`'s explore
+            # branch) already share, and is harmless to repeat every call:
+            # `evaluate()` is a pure function of its own inputs regardless of
+            # how many times `reset()` ran first (`environment.py`'s own
+            # docstring), so resetting with the same derived seed every
+            # epoch is idempotent, not merely convenient.
+            self._validation.reset(seed=zlib.crc32(seed_label.encode()))
+
+        eligible = _eligible_parents(conn, book=self._book)
+        eligible_by_id = {cell.cell_id: cell for cell in eligible}
+        candidates = [candidate.cell_candidate(conn, cell) for cell in eligible]
+        gate_results: list[candidate.GateResult] = [g for c in candidates for g in c.gates]
+        gate_survivor_ids = frozenset(c.cell_id for c in candidates if c.passes_gates)
+        rejected_by_gate = sum(1 for c in candidates if not c.passes_gates)
+
+        archive = novelty.archive(conn)
+        posterior_by_coordinate = {p.coordinate: p for p in posteriors.posteriors(conn).niches}
+        genome_content_by_hash = {r.genome_hash: r.content for r in novelty.genome_records(conn)}
+
+        # One row per niche, computed before any funding decision so the
+        # top-K ranking below sees every niche's real draw, not a partial
+        # set biased by evaluation order.
+        rows: list[tuple[
+            novelty.Niche, str | None, posteriors.StageConversionPosterior, float,
+            candidate.GateResult | None,
+        ]] = []
+        for niche in sorted(archive.niches, key=lambda n: n.coordinate):
+            elite_cell_id = candidate.niche_elite(conn, niche, gate_survivor_ids, rng=rng)
+            posterior = posterior_by_coordinate.get(niche.coordinate) or _uninformative_posterior(
+                niche.coordinate
+            )
+            thompson_sample = posteriors.sample(posterior, rng=rng)
+            validation_gate = None
+            if elite_cell_id is not None:
+                elite_genome_hash = eligible_by_id[elite_cell_id].genome_hash
+                validation_gate = candidate.validation_probe(
+                    self._validation, cell_id=elite_cell_id,
+                    genome_content=genome_content_by_hash[elite_genome_hash], epoch=epoch,
+                )
+                gate_results.append(validation_gate)
+            rows.append((niche, elite_cell_id, posterior, thompson_sample, validation_gate))
+
+        fundable = [
+            row for row in rows
+            if row[1] is not None
+            and (row[4] is None or row[4].outcome is not candidate.GateOutcome.REJECTED)
+        ]
+        fundable.sort(key=lambda row: (-row[3], row[0].coordinate))
+        funded_rows = fundable[:_STAGED_FUNDING_TOP_K]
+        funded_coordinates = {row[0].coordinate for row in funded_rows}
+        rejected_by_validation = sum(
+            1 for row in rows
+            if row[4] is not None and row[4].outcome is candidate.GateOutcome.REJECTED
+        )
+
+        niche_standings = tuple(
+            NicheStanding(
+                coordinate=niche.coordinate,
+                living_cell_ids=_living_cell_ids_in_niche(conn, niche),
+                elite_cell_id=elite_cell_id,
+                posterior_trials=posterior.trials,
+                posterior_conversions=posterior.conversions,
+                posterior_alpha=posterior.alpha,
+                posterior_beta=posterior.beta,
+                posterior_mean=posterior.posterior_mean,
+                thompson_sample=thompson_sample,
+                funded_this_epoch=niche.coordinate in funded_coordinates,
+            )
+            for niche, elite_cell_id, posterior, thompson_sample, _ in rows
+        )
+        chosen = tuple(row[1] for row in funded_rows)
+        operator_overrides = tuple(
+            (row[1], rng.choice(sorted(mutation.OPERATORS))) for row in funded_rows
+        )
+        budget_overrides = tuple(
+            (row[1], _staged_child_budget(row[2].posterior_mean)) for row in funded_rows
+        )
+
+        return SelectionDecision(
+            policy_name=self.name,
+            policy_version=self.version,
+            epoch=epoch,
+            rng_seed_label=seed_label,
+            eligible_cell_ids=tuple(eligible_by_id),
+            chosen_parent_cell_ids=chosen,
+            # Vestigial, as in `ParetoSelection`/`MapElitesSelection`: every
+            # funded parent has its own entries below.
+            mutation_operator=mutation.NO_OP_OPERATOR,
+            child_budget_minor_units=_CHILD_BUDGET_MINOR_UNITS,
+            reason=(
+                f"{len(eligible)} cell(s) eligible, {rejected_by_gate} rejected by a gate "
+                f"(not_quarantined/reproducibility); {len(archive.niches)} niche(s) in the "
+                f"archive, {rejected_by_validation} elite(s) rejected by validation_probe; "
+                f"funded the top {len(funded_rows)} of {len(fundable)} fundable niche(s) by a "
+                f"Thompson-sampled draw each (cap={_STAGED_FUNDING_TOP_K}) -- brief Slice G "
+                "policy #5, composing ParetoSelection's gates plus validation_probe, "
+                "MapElitesSelection's niche/elite rule, and a budget-constrained sampled choice "
+                "across niches instead of funding every one"
+            ),
+            gate_results=tuple(gate_results),
+            measured_dimensions=_STAGED_FUNDING_MEASURED_DIMENSIONS,
+            unmeasured_dimensions=tuple(
+                d for d in _ALL_SIM_DIMENSIONS if d not in _STAGED_FUNDING_MEASURED_DIMENSIONS
+            ),
+            niches=niche_standings,
+            parent_mutation_operators=operator_overrides,
+            parent_child_budgets=budget_overrides,
+            intended_experiment=(
+                "none -- this policy selects parents by niche occupancy, realised standing, "
+                "and a sampled capital-allocation draw, not by reading a candidate's proposed "
+                "hypothesis"
+            ),
+        )
+
+
 class UnknownSelectionPolicyError(Exception):
     pass
 
 
-def build_selection_policy(name: str) -> SelectionPolicy:
+def build_selection_policy(
+    name: str, *, validation: environment.MarketEnvironment | None = None,
+) -> SelectionPolicy:
     """A name -> instance factory, mirroring `environment.build_environment`,
     so a CLI flag or scenario config can select a policy without importing
-    every concrete class itself."""
+    every concrete class itself. `validation` is used only when `name` is
+    `StagedFundingSelection.name` -- see that class's own docstring for why
+    the seam is a constructor argument, never a new `decide()` parameter."""
     if name == RandomEligibleSelection.name:
         return RandomEligibleSelection()
     if name == SingleLeaderboardSelection.name:
@@ -414,8 +619,10 @@ def build_selection_policy(name: str) -> SelectionPolicy:
         return ParetoSelection()
     if name == MapElitesSelection.name:
         return MapElitesSelection()
+    if name == StagedFundingSelection.name:
+        return StagedFundingSelection(validation=validation)
     raise UnknownSelectionPolicyError(
         f"no selection policy named {name!r}; available: "
         f"{RandomEligibleSelection.name}, {SingleLeaderboardSelection.name}, "
-        f"{ParetoSelection.name}, {MapElitesSelection.name}"
+        f"{ParetoSelection.name}, {MapElitesSelection.name}, {StagedFundingSelection.name}"
     )

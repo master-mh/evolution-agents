@@ -25,6 +25,7 @@ from mitosis.simulation import chaos, environment, mutation, runner, selection_p
 from mitosis.simulation.environment import (
     EnvironmentSuite,
     ExperimentAction,
+    Outcome,
     RuleBasedMarket,
     UtilityMaximizingMarket,
 )
@@ -1125,6 +1126,217 @@ def test_cli_simulate_accepts_the_map_elites_selection_policy(tmp_path):
     assert all(written["conservation_ok"].values())
 
 
+class _AlwaysRejectsValidation:
+    """A minimal `MarketEnvironment` stub that never clears a probe --
+    deterministic, unlike the real market families, so a test can assert
+    exclusion without fighting either family's own random/tiered mechanics."""
+
+    name = "always_rejects_validation"
+    version = "1"
+
+    def reset(self, *, seed: int) -> None:
+        pass
+
+    def observe(self, *, cell_id: str, epoch: int):
+        raise NotImplementedError("not used by validation_probe")
+
+    def evaluate(self, *, experiment: ExperimentAction, epoch: int) -> Outcome:
+        return Outcome(purchased=False, revenue_minor_units=0, note="stub always rejects")
+
+    def advance(self, *, epoch: int) -> tuple:
+        return ()
+
+
+def test_staged_funding_selection_never_elects_an_elite_whose_genome_failed_reproducibility(conn):
+    """Three independent Cells try the same genome and none ever convert to
+    revenue -- `candidate._reproducibility` REJECTs that genome
+    (`_MIN_INDEPENDENT_TRIES = 3`). `StagedFundingSelection` composes this
+    gate (`ParetoSelection`'s own) before `niche_elite` ever runs, so this
+    niche's only occupants are all excluded from the candidate pool and the
+    niche funds nothing -- proving gate composition actually restricts who
+    can become an elite, not merely that gates run and get recorded."""
+    import random
+
+    _cell_with_experiments(
+        conn, key="founder", genome_content={"market": {"segment": "shared"}}, outcomes=[1],
+    )
+    never_converts_genome = {"market": {"segment": "shared"}, "product": {"name": "tried"}}
+    for i in range(3):
+        _cell_with_experiments(
+            conn, key=f"tried-{i}", genome_content=never_converts_genome, outcomes=[None],
+        )
+
+    policy = selection_policy.StagedFundingSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    assert len(decision.niches) == 1
+    niche = decision.niches[0]
+    assert niche.elite_cell_id is None
+    assert not niche.funded_this_epoch
+    assert decision.chosen_parent_cell_ids == ()
+    assert any(
+        g.dimension == "reproducibility" and g.outcome.value == "rejected"
+        for g in decision.gate_results
+    )
+
+
+def test_staged_funding_selection_excludes_an_elite_that_fails_the_validation_probe(conn):
+    """The headline new mechanism: an elite that would otherwise be funded
+    (alive, ungated, the sole occupant of its niche) is excluded once a
+    validation environment rejects it -- SPEC.md §8.1's validation role,
+    'influences capital allocation,' given real teeth. `elite_cell_id` is
+    still recorded on the `NicheStanding` (this niche's real elite *is* this
+    Cell) but `funded_this_epoch` is `False` and it never reaches
+    `chosen_parent_cell_ids`."""
+    import random
+
+    _cell_with_experiments(
+        conn, key="founder", genome_content={"market": {"segment": "shared"}}, outcomes=[1],
+    )
+    elite = _cell_with_experiments(
+        conn, key="elite",
+        genome_content={"market": {"segment": "shared"}, "product": {"name": "variant"}},
+        outcomes=[500],
+    )
+
+    policy = selection_policy.StagedFundingSelection(validation=_AlwaysRejectsValidation())
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    assert len(decision.niches) == 1
+    niche = decision.niches[0]
+    assert niche.elite_cell_id == elite.cell_id
+    assert not niche.funded_this_epoch
+    assert elite.cell_id not in decision.chosen_parent_cell_ids
+    assert any(
+        g.cell_id == elite.cell_id and g.dimension == "validation_probe"
+        and g.outcome.value == "rejected"
+        for g in decision.gate_results
+    )
+
+
+def test_staged_funding_selection_reports_validation_probe_as_unevaluable_without_an_environment(conn):
+    """`validation=None` (the default) is an honestly weaker policy, not a
+    crash: every elite's `validation_probe` gate is `UNEVALUABLE` -- 'nothing
+    to judge' -- and `UNEVALUABLE` never excludes, matching
+    `_reproducibility`'s own posture below its evidence threshold."""
+    import random
+
+    _cell_with_experiments(
+        conn, key="founder", genome_content={"market": {"segment": "shared"}}, outcomes=[1],
+    )
+    elite = _cell_with_experiments(
+        conn, key="elite",
+        genome_content={"market": {"segment": "shared"}, "product": {"name": "variant"}},
+        outcomes=[500],
+    )
+
+    policy = selection_policy.StagedFundingSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    assert elite.cell_id in decision.chosen_parent_cell_ids
+    assert any(
+        g.cell_id == elite.cell_id and g.dimension == "validation_probe"
+        and g.outcome.value == "unevaluable"
+        for g in decision.gate_results
+    )
+
+
+def test_staged_funding_selection_funds_at_most_the_top_k_niches(conn, monkeypatch):
+    """The archive has at most 3 niches today (only `structural_novelty`
+    ever measures for a simulated genome -- see `candidate.py`'s own module
+    docstring), so `_STAGED_FUNDING_TOP_K = 3` cannot yet exclude anything
+    by itself. This monkeypatches the cap down to 1 so the ranking-and-cap
+    logic itself is still verified: exactly one of two fundable niches gets
+    funded, and it is the one with the higher Thompson sample -- proving the
+    cap and the ranking it orders by, not just that funding happens at all."""
+    import random
+
+    monkeypatch.setattr(selection_policy, "_STAGED_FUNDING_TOP_K", 1)
+
+    _cell_with_experiments(
+        conn, key="founder", genome_content={"market": {"segment": "shared"}}, outcomes=[1],
+    )
+    _cell_with_experiments(
+        conn, key="adjacent",
+        genome_content={"market": {"segment": "shared"}, "product": {"name": "variant"}},
+        outcomes=[500],
+    )
+    _cell_with_experiments(
+        conn, key="radical", genome_content={"market": {"segment": "different"}}, outcomes=[500],
+    )
+
+    policy = selection_policy.StagedFundingSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    assert len(decision.niches) == 2
+    funded = [n for n in decision.niches if n.funded_this_epoch]
+    assert len(funded) == 1
+    assert len(decision.chosen_parent_cell_ids) == 1
+    unfunded = [n for n in decision.niches if not n.funded_this_epoch]
+    assert len(unfunded) == 1
+    assert funded[0].thompson_sample >= unfunded[0].thompson_sample
+
+
+def test_staged_funding_selection_scales_child_budget_with_posterior_mean(conn):
+    """A niche with zero rung-7 trials gets the uninformative prior
+    (mean=0.5); `_staged_child_budget`'s own formula
+    (`base + round(base * scale * mean)`) at `scale=1.0` says that niche's
+    funded elite should get exactly 1.5x the base child budget -- checked
+    against the real formula's output, not a re-derived number, so this
+    fails if either the formula or the wiring from posterior to budget
+    drifts."""
+    import random
+
+    from mitosis.simulation.selection_policy import _CHILD_BUDGET_MINOR_UNITS, _staged_child_budget
+
+    _cell_with_experiments(
+        conn, key="founder", genome_content={"market": {"segment": "shared"}}, outcomes=[1],
+    )
+    elite = _cell_with_experiments(
+        conn, key="elite",
+        genome_content={"market": {"segment": "shared"}, "product": {"name": "variant"}},
+        outcomes=[500],
+    )
+
+    policy = selection_policy.StagedFundingSelection()
+    decision = policy.decide(conn, epoch=0, rng=random.Random(0), seed_label="seed=0")
+
+    assert elite.cell_id in decision.chosen_parent_cell_ids
+    budgets = dict(decision.parent_child_budgets)
+    assert budgets[elite.cell_id] == _staged_child_budget(0.5)
+    assert budgets[elite.cell_id] > _CHILD_BUDGET_MINOR_UNITS
+
+
+def test_staged_funding_selection_runs_cleanly_across_a_live_multi_epoch_run(conn):
+    manifest = runner.run(
+        conn, runner.RunConfig(scenario_name="test", master_seed=11, epochs=20, population=10),
+        selection=selection_policy.StagedFundingSelection(validation=RuleBasedMarket()),
+    )
+    assert manifest.failures == ()
+    assert all(manifest.conservation_ok.values())
+
+
+def test_cli_simulate_accepts_the_staged_funding_selection_policy_and_defaults_validation(tmp_path):
+    """No `--validation-environment` given: `cmd_simulate` defaults it to the
+    *other* family from `--environment` (SPEC.md §8.3's two independently
+    shaped families) rather than leaving `validation=None`."""
+    db_path = tmp_path / "sim.db"
+    output_path = tmp_path / "manifest.json"
+    cli.main(["--db", str(db_path), "init"])
+
+    exit_code = cli.main([
+        "--db", str(db_path), "simulate",
+        "--seed", "3", "--epochs", "5", "--population", "3",
+        "--environment", "utility_maximizing_market",
+        "--selection-policy", "staged_funding", "--output", str(output_path),
+    ])
+
+    assert exit_code in (0, None)
+    written = json.loads(output_path.read_text())
+    assert written["selection_policy_name"] == "staged_funding"
+    assert all(written["conservation_ok"].values())
+
+
 def test_build_selection_policy_selects_the_named_policy_and_rejects_unknown_names():
     assert isinstance(
         selection_policy.build_selection_policy("random_eligible"), RandomEligibleSelection,
@@ -1138,6 +1350,9 @@ def test_build_selection_policy_selects_the_named_policy_and_rejects_unknown_nam
     assert isinstance(
         selection_policy.build_selection_policy("map_elites"), selection_policy.MapElitesSelection,
     )
+    staged = selection_policy.build_selection_policy("staged_funding", validation=RuleBasedMarket())
+    assert isinstance(staged, selection_policy.StagedFundingSelection)
+    assert isinstance(staged._validation, RuleBasedMarket)
     with pytest.raises(selection_policy.UnknownSelectionPolicyError):
         selection_policy.build_selection_policy("not_a_real_policy")
 

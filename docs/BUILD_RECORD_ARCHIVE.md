@@ -6,6 +6,44 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-06 — Closing the evolutionary decision loop, part 4: MAP-Elites, one elite per occupied niche (Slice G, part 4)
+
+Continuing the plan from ADR-077 through ADR-080 without a fresh plan-mode round-trip. ADR-081 is
+the full as-built record.
+
+### What shipped
+
+`MapElitesSelection` (brief Slice G policy #4): calls `novelty.archive()` directly and, for every
+occupied niche, calls `candidate.niche_elite()` (built in G1, its first real caller) — highest
+`realized_net_revenue` among evaluated occupants, or a uniform-random pick among unevaluated ones.
+Every occupied niche reproduces each epoch (classical MAP-Elites; budget-constrained prioritization
+across niches is G5's job via Thompson sampling). Each niche's real §12.3 posterior is recorded on
+its `NicheStanding` regardless of whether this policy reads it.
+
+### A coincidental-pass test found and fixed before it shipped
+
+The first version of the posterior-recording test asserted only that a niche with zero rung-7
+promotions gets the uninformative Beta(1,1) prior — true, but numerically identical to what a
+silently-broken posterior lookup falls back to (`_posterior`'s formula gives `alpha=beta=1.0` at
+`trials=0` either way). Rewritten to inject a real, non-prior posterior via monkeypatch and assert
+those exact values survive into the decision record, so a broken lookup now produces a visibly wrong
+result. Same root cause as ADR-077/ADR-079's own coincidental-pass teeth-checks this slice: a
+too-easy CAUGHT deserves a second look before being trusted.
+
+### Verification
+
+4 new tests (92 total in the simulation area). Three teeth-checks — the posterior lookup, the
+eligibility threading into `candidate.niche_elite()`, the factory's dispatch branch — each confirmed
+to fail for the stated reason and restored verbatim. Full suite green (1322 total); golden run
+unaffected (hash unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both clean.
+
+- Next: G5 — `StagedFundingSelection`, composing `ParetoSelection`'s gates with this policy's
+  niche/elite rule, a new `validation_probe` gate, and a Thompson-sampled draw per niche
+  (`posteriors.sample()`, built in G1 but still uncalled) funding only the top-K sampled niches — then
+  G6's cross-policy acceptance harness and Slice H's pre-registered Phase 3 comparisons. The
+  >= 500 Cell/>= 10,000 epoch Phase 2 acceptance benchmark itself remains documented but not yet run
+  to completion (ADR-076).
+
 ## 2026-09-05 — Closing the evolutionary decision loop, part 3: Pareto selection, reproducing the whole front (Slice G, part 3)
 
 Continuing the plan from ADR-077 through ADR-079 without a fresh plan-mode round-trip. ADR-080 is

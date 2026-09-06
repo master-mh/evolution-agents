@@ -5256,3 +5256,86 @@ out as a Slice G decision, not this one.
   niche/elite rule, adding a `validation_probe` gate and a Thompson-sampled draw per niche
   (`posteriors.sample()`, built in G1 but still uncalled) to fund only the top-K sampled niches per
   epoch — then G6's cross-policy acceptance harness and Slice H.
+
+## ADR-082: Staged funding — the composed policy, and `EnvironmentSuite.validation`'s first real consumer (Slice G, part 5)
+
+- **Status:** Accepted; new `StagedFundingSelection` in `selection_policy.py`; new
+  `candidate.validation_probe`; `cli.py` gains `--selection-policy staged_funding` and
+  `--validation-environment`; 7 new tests in `tests/test_simulation.py` (99 total simulation-area
+  tests: 71 + 16 + 12 across `test_simulation.py`/`test_simulation_candidate.py`/`test_posteriors.py`)
+- **Spec ref:** implementation brief's Slice G policy #5 ("the intended policy," composing the
+  earlier four); SPEC.md §8.1 (`validation` "influences capital allocation, partially hidden")
+
+- **What shipped:** `StagedFundingSelection` composes every earlier Slice G sub-slice rather than
+  adding a sixth independent mechanism. It gates every eligible Cell on `ParetoSelection`'s own two
+  dimensions (`not_quarantined`, `reproducibility`) before a gate-survivor can even be considered as
+  a niche elite; niches and elites come from `MapElitesSelection`'s own rule
+  (`novelty.archive()` + `candidate.niche_elite()`, restricted to gate survivors); each niche gets
+  one real Thompson-sampled draw (`posteriors.sample()`, built in G1, its first real caller), and
+  only the top `_STAGED_FUNDING_TOP_K` (3) sampled niches are funded each epoch, each at a budget
+  scaling with that niche's own posterior mean (`_staged_child_budget`: `base + round(base * scale *
+  mean)`, `scale=1.0` — a niche with the uninformative prior, mean=0.5, the common case, gets 1.5x
+  the base child budget). This is the genuinely budget-constrained choice `MapElitesSelection`
+  explicitly deferred (ADR-081: "fund every occupied niche," not a scarce allocation).
+
+- **A new gate, composed onto an elite rather than every eligible Cell.** `candidate.validation_probe`
+  is `EnvironmentSuite.validation`'s first real consumer (ADR-073 named this a Slice G obligation).
+  Unlike `not_quarantined`/`reproducibility`, it runs only against a niche's already-chosen elite
+  (probing every eligible Cell would be wasted work for Cells that could never be funded anyway) and
+  needs an `environment.MarketEnvironment` — a dependency only `StagedFundingSelection` carries, via
+  constructor injection (`StagedFundingSelection(validation=...)`), exactly as the Slice G plan
+  specified: `SelectionPolicy.decide()` and `runner._run_one_epoch()` stay byte-identical to every
+  other policy's, so `test_the_routine_epoch_loop_never_touches_validation_or_secret_challenge_
+  environments`'s existing guarantee keeps holding, unmodified, for this policy and every other one
+  alike. `validation=None` (the constructor default, and `build_selection_policy`'s default) makes
+  every `validation_probe` report `UNEVALUABLE`, not a silent `PASSED` — "nothing to judge" is a
+  different fact from "judged and found no problem," `_reproducibility`'s own posture below its
+  evidence threshold. `cmd_simulate`, when `staged_funding` is chosen, defaults
+  `--validation-environment` to the *other* family from `--environment` (SPEC.md §8.3's two
+  independently shaped families) unless the caller names one explicitly.
+
+- **A shared-constant edit that would have made `ParetoSelection` dishonest if left alone.** Adding
+  `validation_probe` to `candidate.SIM_GATE_DIMENSIONS` automatically flows into `_ALL_SIM_DIMENSIONS`
+  and therefore into every policy's dynamically-derived `unmeasured_dimensions` tuple — correct for
+  `RandomEligibleSelection`/`SingleLeaderboardSelection`/`MapElitesSelection`, which compute that
+  field from `_ALL_SIM_DIMENSIONS` at call time. `ParetoSelection`'s own `_PARETO_MEASURED_DIMENSIONS`
+  is instead a stored, pre-computed tuple (`_ALL_SIM_DIMENSIONS` minus a literal exclusion list) and
+  its `unmeasured_dimensions` was a bare literal (`("economic_potential",)`) — left alone, both would
+  have silently started claiming `ParetoSelection` measures `validation_probe`, which it never does
+  (it has no validation environment at all). Fixed by excluding `validation_probe` from
+  `_PARETO_MEASURED_DIMENSIONS` explicitly and updating the literal to
+  `("economic_potential", "validation_probe")`. `StagedFundingSelection`'s own
+  `unmeasured_dimensions` is derived from `_ALL_SIM_DIMENSIONS` rather than hardcoded as its own
+  complement, precisely so the next dimension `candidate.py` gains doesn't need this policy
+  remembered too.
+
+- **Honest scope note, stated plainly rather than left implicit:** the archive can have at most 3
+  niches today (only `structural_novelty` ever measures for a simulated genome —
+  `buyer_type`/`revenue_recurrence` need counterparty data this simulator never produces, per
+  `candidate.py`'s own module docstring), so `_STAGED_FUNDING_TOP_K = 3` cannot yet exclude anything
+  by itself in a real run. The cap is forward-looking (those two dimensions are a named, deferred
+  FUTURE_BUILD_HOOKS.md item) and its ranking-and-cap logic is still independently verified by
+  monkeypatching the constant down to 1 in a dedicated test, rather than skipped as untestable.
+
+- **Verification:** a genome whose only 3 independent tries all failed to convert (`reproducibility`
+  REJECTED) proving gate composition excludes it from ever becoming an elite, not merely that gates
+  run and get recorded; a stub `MarketEnvironment` that always rejects, proving a training-only
+  winner is excluded from funding while still recorded as the niche's real elite; the same fixture
+  with `validation=None`, proving `UNEVALUABLE` never excludes; the top-K cap and its ranking
+  (monkeypatched to 1 of 2 fundable niches); the budget-scaling formula checked against its own
+  literal output, not re-derived; a 20-epoch live run with a real validation environment; a CLI
+  end-to-end run proving the "other family" default. Four teeth-checks — dropping the
+  validation-rejection filter, bypassing the gate-survivor restriction into `niche_elite`, removing
+  the top-K slice, and flattening the budget formula to a constant — each confirmed to fail for the
+  stated reason and restored verbatim. Full suite green (1329 total, one unrelated Hypothesis
+  deadline flake on `test_charter_ledger_balanced` reproduced as a pass in isolation and on a clean
+  re-run of the whole suite — not touched by this slice); golden run unaffected (hash unchanged at
+  38); `ruff check .` and `scripts/check_docs_facts.py` both clean.
+
+- Next: G6 — the cross-policy acceptance harness (same seed bundle + `EnvironmentSuite` run once with
+  `RandomEligibleSelection` and once with `StagedFundingSelection`; a traceability test that every
+  `simulation_mutation` audit event's `parent_cell_id` appears in a same-epoch
+  `simulation_selection_decision` event's `chosen_parent_cell_ids`; re-running
+  `test_the_routine_epoch_loop_never_touches_validation_or_secret_challenge_environments` unmodified)
+  — then Slice H's pre-registered Phase 3 comparisons. The >= 500 Cell/>= 10,000 epoch Phase 2
+  acceptance benchmark itself remains documented but not yet run to completion (ADR-076).

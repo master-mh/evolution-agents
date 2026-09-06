@@ -938,6 +938,16 @@ def cmd_simulate(args: argparse.Namespace) -> None:
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
 
+    selection_kwargs: dict = {}
+    if args.selection_policy == simulation_selection_policy.StagedFundingSelection.name:
+        other_family = (
+            simulation_environment.RuleBasedMarket.name
+            if args.environment == simulation_environment.UtilityMaximizingMarket.name
+            else simulation_environment.UtilityMaximizingMarket.name
+        )
+        validation_name = args.validation_environment or other_family
+        selection_kwargs["validation"] = simulation_environment.build_environment(validation_name)
+
     manifest = simulation_runner.run(
         conn,
         simulation_runner.RunConfig(
@@ -947,7 +957,9 @@ def cmd_simulate(args: argparse.Namespace) -> None:
         suite=simulation_environment.EnvironmentSuite.training_only(
             simulation_environment.build_environment(args.environment)
         ),
-        selection=simulation_selection_policy.build_selection_policy(args.selection_policy),
+        selection=simulation_selection_policy.build_selection_policy(
+            args.selection_policy, **selection_kwargs,
+        ),
     )
     print(manifest.summary())
     if args.output:
@@ -3330,11 +3342,25 @@ def build_parser() -> argparse.ArgumentParser:
             simulation_selection_policy.SingleLeaderboardSelection.name,
             simulation_selection_policy.ParetoSelection.name,
             simulation_selection_policy.MapElitesSelection.name,
+            simulation_selection_policy.StagedFundingSelection.name,
         ],
         default=simulation_selection_policy.RandomEligibleSelection.name,
         help=(
             "which Cell reproduces each epoch (implementation brief Slice G; "
             "default: random_eligible)"
+        ),
+    )
+    simulate_parser.add_argument(
+        "--validation-environment",
+        choices=[
+            simulation_environment.UtilityMaximizingMarket.name,
+            simulation_environment.RuleBasedMarket.name,
+        ],
+        default=None,
+        help=(
+            "market family staged_funding probes an elite against before funding it "
+            "(SPEC.md §8.1; only meaningful with --selection-policy staged_funding; "
+            "default: the other family from --environment)"
         ),
     )
     simulate_parser.set_defaults(func=cmd_simulate)
