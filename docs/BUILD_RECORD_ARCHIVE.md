@@ -6,6 +6,43 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-14 — A sealed simulated run (ADR-085)
+
+Second of the research-driven slices. Prompted by Anthropic's 2026-09-09 alignment assessment:
+four incidents in which models were told they were in a simulation without internet while an
+outer configuration error left real connectivity on.
+
+### What shipped
+
+`network_seal.py` installs one PEP 578 audit hook per process that refuses connect, bind, name
+resolution, datagram sends, `http.client`/`urllib` requests and every child-process start while a
+`sealed()` block is active; outside a block the hook returns on one integer test. `runner.run`
+seals the whole run, founding included, and reads `git rev-parse` once before sealing (it is a child
+process, and the run record and manifest previously read it twice).
+
+### Found while building
+
+- **A refusal escaping a provider stranded both reservations.** The provider-path test passed on
+  its real assertion — nothing reached the listener — but `gateway.call_model` only caught
+  `ProviderError`, so a `NetworkSealed` left the call's USD_REAL and RESOURCE reservations committed
+  for the sweeper to guess about. The gateway now maps it onto the definitely-unbilled path, and
+  `providers._is_execution_unknown` finds it down an exception's cause chain so an SDK wrapping it in
+  a connection error cannot strand funds in `execution_unknown` either. Every other failure keeps
+  the conservative default.
+
+### Verification
+
+8 tests: three put a real listener on loopback and require that no connection arrives from an
+epoch hook, a replaced provider, or a bare gateway call; one requires a child process be refused;
+three pin nesting, lifting on exception, and inertness outside a seal; one pins the SDK-wrapped
+classification. (Corrected on archiving: the live entry read as 8 + 1 + 3.) Six teeth-checks, all failing on the
+intended assertion (two first scored MISS by a wrong expected-text string in the checker, not by the
+tests). Full suite 1361 passed; golden unchanged; lint and docs-facts clean. Not a sandbox — logged in
+`FUTURE_BUILD_HOOKS.md` along with sealing the golden run.
+
+- Next: judge entanglement, verbalized sampling, the workflow gene, the tool-evaluator guard,
+  evaluator epochs, the §11.3 amendment, the teeth-check runner, the claim-drift checker; then Slice H.
+
 ## 2026-09-14 — Seed-paired batch comparisons (ADR-084)
 
 The first of a set of slices acting on a research pass over recent agent-swarm, evolutionary-agent

@@ -235,6 +235,45 @@ def test_nothing_in_the_kernel_can_drive_a_browser():
         )
 
 
+def test_every_tool_names_what_observes_its_effect():
+    """§0.3 + ADR-086: a tool is where an unevaluated quality dimension is
+    created (arXiv 2603.28063), so each one names the independent system that
+    sees what it did — or, if read-only, declares there is nothing to see."""
+    assert tool_registry.unevaluated_tools() == frozenset()
+
+
+def test_the_evaluator_declaration_cannot_be_satisfied_by_the_wrong_answer():
+    """Built against a constructed registry, because the real one holds a
+    single read-only tool and would pass a guard that checked nothing."""
+
+    def spec(tool_id, *, read_only, evaluated_by):
+        return tool_registry.ToolSpec(
+            tool_id=tool_id, description="x", autonomy_flag="public_web_read",
+            read_only=read_only, parameters={}, validate=lambda _args: None,
+            evaluated_by=evaluated_by,
+        )
+
+    registry = {
+        "acting_claims_nothing_to_observe": spec(
+            "acting_claims_nothing_to_observe", read_only=False,
+            evaluated_by=tool_registry.OBSERVATION_ONLY,
+        ),
+        "acting_observed_by_ledger": spec(
+            "acting_observed_by_ledger", read_only=False, evaluated_by="ledger",
+        ),
+        "read_only_undeclared": spec(
+            "read_only_undeclared", read_only=True, evaluated_by=tool_registry.UNDECLARED,
+        ),
+        "read_only_observation": spec(
+            "read_only_observation", read_only=True, evaluated_by=tool_registry.OBSERVATION_ONLY,
+        ),
+        "a_ninth_source": spec("a_ninth_source", read_only=False, evaluated_by="vibes"),
+    }
+    assert tool_registry.unevaluated_tools(registry) == frozenset(
+        {"acting_claims_nothing_to_observe", "read_only_undeclared", "a_ninth_source"}
+    )
+
+
 def test_every_tool_names_an_autonomy_flag():
     """§0.4: autonomy is granted tool by tool. A tool with no flag is a
     capability nobody ever decided to allow."""

@@ -35,43 +35,35 @@ Thompson sampling; the single-leaderboard control policy; Pareto selection
 reproducing the whole front, and a gate found structurally unreachable
 through this pipeline; MAP-Elites, one elite per occupied niche; staged
 funding composing everything, and the cross-family validation deadlock it
-surfaced; the cross-policy acceptance harness), and seed-paired batch
-comparisons,
+surfaced; the cross-policy acceptance harness), seed-paired batch
+comparisons, and a sealed simulated run,
 2026-07-21 through 2026-09-14):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-14 — A sealed simulated run (ADR-085)
+## 2026-09-14 — Tools name what observes their effect (ADR-086)
 
-Second of the research-driven slices. Prompted by Anthropic's 2026-09-09 alignment assessment:
-four incidents in which models were told they were in a simulation without internet while an
-outer configuration error left real connectivity on.
+Third of the research-driven slices. "Reward Hacking as Equilibrium under Finite Evaluation" (arXiv
+2603.28063) proves an optimised agent under-invests in every quality dimension its evaluation does not
+cover, and that coverage falls toward zero as tools are added. A tool is where such a dimension enters
+the colony, and nothing tied one to §0.3's list of independent systems.
 
 ### What shipped
 
-`network_seal.py` installs one PEP 578 audit hook per process that refuses connect, bind, name
-resolution, datagram sends, `http.client`/`urllib` requests and every child-process start while a
-`sealed()` block is active; outside a block the hook returns on one integer test. `runner.run`
-seals the whole run, founding included, and reads `git rev-parse` once before sealing (it is a child
-process, and the run record and manifest previously read it twice).
+`ToolSpec.evaluated_by` names a key of `tool_registry.EVIDENCE_SOURCES` (§0.3's eight systems as
+keys) or `OBSERVATION_ONLY`, which only a read-only tool may declare. The default is `UNDECLARED`,
+and `unevaluated_tools()` — mirroring `accounts.unclassified_accounts()` — must be empty. `http_get`
+declares `observation_only`.
 
-### Found while building
+### Worth knowing
 
-- **A refusal escaping a provider stranded both reservations.** The provider-path test passed on
-  its real assertion — nothing reached the listener — but `gateway.call_model` only caught
-  `ProviderError`, so a `NetworkSealed` left the call's USD_REAL and RESOURCE reservations committed
-  for the sweeper to guess about. The gateway now maps it onto the definitely-unbilled path, and
-  `providers._is_execution_unknown` finds it down an exception's cause chain so an SDK wrapping it in
-  a connection error cannot strand funds in `execution_unknown` either. Every other failure keeps
-  the conservative default.
+It cannot fire on today's registry: `test_no_registered_tool_acts_on_the_world` still refuses any
+acting tool. So its test runs against a constructed registry, and it is the guard an acting tool
+must satisfy when that refusal is argued down.
 
 ### Verification
 
-8 tests put a real listener on loopback and require that no connection arrives from an epoch hook,
-a replaced provider, or a bare gateway call; one requires a child process be refused; three pin
-nesting, lifting on exception, and inertness outside a seal. Six teeth-checks, all failing on the
-intended assertion (two first scored MISS by a wrong expected-text string in the checker, not by the
-tests). Full suite 1361 passed; golden unchanged; lint and docs-facts clean. Not a sandbox — logged in
-`FUTURE_BUILD_HOOKS.md` along with sealing the golden run.
+2 tests; three teeth-checks caught (acting tool claiming observation-only; `UNDECLARED` accepted;
+`http_get` left undeclared). Full suite 1363 passed; golden unchanged; lint and docs-facts clean.
 
-- Next: judge entanglement, verbalized sampling, the workflow gene, the tool-evaluator guard,
-  evaluator epochs, the §11.3 amendment, the teeth-check runner, the claim-drift checker; then Slice H.
+- Next: judge entanglement and evaluator epochs (measurement instruments), verbalized sampling, the
+  workflow gene, the §11.3 amendment, the teeth-check runner, the claim-drift checker; then Slice H.

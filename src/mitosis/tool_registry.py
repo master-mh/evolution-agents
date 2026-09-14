@@ -102,6 +102,11 @@ class ToolSpec:
     #: reaches the network cannot forget the Charter C12 allowlist check — it
     #: either declares the argument or it has no egress at all.
     egress_argument: str | None = None
+    #: Which §0.3 independent system observes what this tool *does* — a key of
+    #: `EVIDENCE_SOURCES` — or `OBSERVATION_ONLY` for a read-only tool that
+    #: does nothing to observe. Defaults to `UNDECLARED`, which
+    #: `unevaluated_tools()` refuses: the decision has to be written down.
+    evaluated_by: str = "undeclared"
 
 
 def _validate_http_get(arguments: dict[str, Any]) -> None:
@@ -127,8 +132,67 @@ REGISTRY: dict[str, ToolSpec] = {
         parameters={"url": "the absolute http(s) URL to fetch"},
         validate=_validate_http_get,
         egress_argument="url",
+        # Rung 4: the fetch changes nothing outside the colony. What a Cell
+        # *concludes* from it is scored where every forecast is — §8.5's
+        # register — not at the tool.
+        evaluated_by="observation_only",
     ),
 }
+
+
+#: §0.3, verbatim: "Canonical metrics come only from independent systems:
+#: payment records, synthetic-market events, independent test runners,
+#: analytics, sandbox execution results, external evaluators, Auditor Cells,
+#: and the ledger." Keys, not free text, so a tool names one of these and a
+#: typo is refused rather than read as a ninth source.
+EVIDENCE_SOURCES: dict[str, str] = {
+    "payment_records": "§0.3 payment records",
+    "synthetic_market_events": "§0.3 synthetic-market events",
+    "independent_test_runners": "§0.3 independent test runners",
+    "analytics": "§0.3 analytics",
+    "sandbox_execution_results": "§0.3 sandbox execution results",
+    "external_evaluators": "§0.3 external evaluators",
+    "auditor_cells": "§0.3 Auditor Cells",
+    "ledger": "§0.3 the ledger",
+}
+
+#: A read-only tool's declaration that its call has no effect to observe.
+#: Accepted only together with `read_only=True`.
+OBSERVATION_ONLY = "observation_only"
+
+#: `ToolSpec.evaluated_by`'s default: nobody decided.
+UNDECLARED = "undeclared"
+
+
+def unevaluated_tools(registry: dict[str, ToolSpec] | None = None) -> frozenset[str]:
+    """Tools whose effect no §0.3 independent system is declared to observe.
+
+    Mirrors `accounts.unclassified_accounts()` and `genome.unclassified_fields()`:
+    a new registry entry has to *decide* this rather than default into it.
+
+    **Why a tool, specifically.** "Reward Hacking as Equilibrium under Finite
+    Evaluation" (arXiv 2603.28063) proves that an optimised agent under-invests
+    in every quality dimension its evaluation does not cover, and that
+    coverage falls toward zero as tools are added — quality dimensions multiply
+    with each tool while evaluation grows at most linearly. §0.3 already says
+    who may define a canonical result; this makes each tool name *which* of
+    those systems will see what it did, at the moment the tool is added, which
+    is the moment the uncovered dimension is created.
+
+    An acting tool may not declare `OBSERVATION_ONLY` — that exemption is what
+    a rung-8 tool would reach for — and `test_no_registered_tool_acts_on_the_world`
+    still refuses acting tools outright; this is the guard that has to be
+    satisfied when that one is argued down.
+    """
+    registry = REGISTRY if registry is None else registry
+    return frozenset(
+        tool_id
+        for tool_id, spec in registry.items()
+        if not (
+            spec.evaluated_by in EVIDENCE_SOURCES
+            or (spec.read_only and spec.evaluated_by == OBSERVATION_ONLY)
+        )
+    )
 
 
 def get_spec(tool_id: str) -> ToolSpec:

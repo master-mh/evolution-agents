@@ -985,6 +985,14 @@
   arriving at a loopback listener from inside `runner.run`, or a `simulation_runs` row whose run
   started a child process.
 
+- [x] **Tools name what observes their effect — DONE** (2026-09-14), ADR-086.
+  `ToolSpec.evaluated_by` is a §0.3 evidence-source key or `observation_only` (read-only tools
+  only); `tool_registry.unevaluated_tools()` must be empty. Grounded in arXiv 2603.28063's result
+  that evaluation coverage falls toward zero as tools are added. Cannot fire on today's one-tool
+  registry — tested against a constructed one — and is the guard an acting tool must satisfy when
+  `test_no_registered_tool_acts_on_the_world` is argued down. *Disproved by:* a `REGISTRY` entry
+  whose `evaluated_by` is not in `EVIDENCE_SOURCES` while `unevaluated_tools()` returns empty.
+
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
   directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped

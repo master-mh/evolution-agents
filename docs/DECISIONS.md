@@ -5533,3 +5533,36 @@ out as a Slice G decision, not this one.
   on exception all fail a named test on the intended assertion (two were first scored MISS by a
   wrong expected-text string in the teeth-check script; the failing assertion was the right one,
   `connections received == 0`).
+
+## ADR-086: Every tool names the independent system that observes its effect
+
+- **Status:** Accepted
+- **Spec ref:** §0.3 (canonical metrics come only from independent systems), §0.4 (autonomy tool
+  by tool), §25.1 (read-only observation is rung 4)
+
+- **Context:** "Reward Hacking as Equilibrium under Finite Evaluation" (arXiv 2603.28063) proves
+  that an optimised agent under-invests in every quality dimension its evaluation does not cover,
+  and that coverage falls toward zero as tools are added: quality dimensions multiply with each
+  tool while evaluation grows at most linearly. §0.3 already says *who* may define a canonical
+  result. Nothing tied a *tool* to one of them, and a tool is exactly where a new, unevaluated
+  dimension enters the colony.
+
+- **Decision:** `ToolSpec.evaluated_by` names a key of `tool_registry.EVIDENCE_SOURCES` — §0.3's
+  eight systems, transcribed as keys — or `OBSERVATION_ONLY`, accepted only with `read_only=True`.
+  The default is `UNDECLARED`. `unevaluated_tools()` returns every entry that has not decided, and
+  `test_every_tool_names_what_observes_its_effect` requires it to be empty. `http_get` declares
+  `observation_only`: what a Cell concludes from a fetch is scored where every forecast is (§8.5).
+
+- **What it displaced, and why:**
+  - *A free-text evaluator description.* A typo would read as a ninth source. Keys refuse it.
+  - *No default, forcing every call site to pass the field.* A frozen dataclass field after
+    `egress_argument`'s default needs one, and an explicit `UNDECLARED` default the guard refuses
+    is the same pattern as `accounts.unclassified_accounts()`: the decision is forced at the test,
+    not at the constructor.
+  - *Waiting until an acting tool exists.* `test_no_registered_tool_acts_on_the_world` refuses one
+    today, so this guard cannot fire on the real registry yet — which is why it is tested against a
+    constructed registry. It is the guard that must be satisfied when that refusal is argued down;
+    the real-spend registration guard earned its keep the same way, on the very next slice.
+
+- **Verification:** 2 tests; three teeth-checks caught — an acting tool allowed to claim
+  observation-only, the `UNDECLARED` default accepted, and `http_get` left undeclared.
