@@ -28,65 +28,61 @@ market family with environment separation and regime shifts; the remaining
 mutation operators wired through a real choice; chaos drills as repeatable
 scenarios; manifest richness, a CI-scale acceptance test, a founding cap bug
 fix, and a retained benchmark artifact), and closing the evolutionary
-decision loop's first six sub-slices (a run record that never named its
+decision loop's six sub-slices (a run record that never named its
 own selection policy and founder concentration as a real time series;
 simulator-native fitness dimensions, the full decision-record schema, and
 Thompson sampling; the single-leaderboard control policy; Pareto selection
 reproducing the whole front, and a gate found structurally unreachable
 through this pipeline; MAP-Elites, one elite per occupied niche; staged
 funding composing everything, and the cross-family validation deadlock it
-surfaced),
+surfaced; the cross-policy acceptance harness),
 2026-07-21 through 2026-09-06):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-06 — Closing the evolutionary decision loop, part 6: the cross-policy acceptance harness (Slice G, part 6 — Slice G complete)
+## 2026-09-14 — Seed-paired batch comparisons (ADR-084)
 
-Continuing the plan from ADR-077 through ADR-082 without a fresh plan-mode round-trip. ADR-083 is
-the full as-built record.
+The first of a set of slices acting on a research pass over recent agent-swarm, evolutionary-agent
+and evaluation work. This one is the Slice H prerequisite that pass pointed at most directly.
 
 ### What shipped
 
-G6 needed no new mechanism — every property the brief asks it to verify was already produced by
-earlier sub-slices (`simulation_selection_decision`/`simulation_mutation` audit events since F1/G0;
-`config_hash`/`environment_name`/`selection_policy_name` since ADR-077). This is purely an
-acceptance-test suite proving those properties hold under real, live-run conditions: the same
-`RunConfig` run once with `RandomEligibleSelection` and once with `StagedFundingSelection` (two
-independent in-memory databases, not one shared connection) produces matching
-`config_hash`/`environment_name` and differing `selection_policy_name`; every `simulation_mutation`
-event's `parent_cell_id` appears in a same-epoch `simulation_selection_decision` event's
-`chosen_parent_cell_ids`; `founder_concentration`/`distinct_genomes` form a real, growing time
-series across a run; `StagedFundingSelection` holding its own validation environment never reaches
-`EnvironmentSuite`'s isolated `validation`/`secret_challenge` roles, re-verifying ADR-073's guarantee
-with a policy that actually exercises the seam it depends on.
+`simulation/batch.py` runs every arm at every seed, each `(arm, seed)` in its own spawned process
+against its own `:memory:` colony, and writes one manifest per run plus a `batch.json` index
+(`mitosis simulate-batch`). `simulation/paired.py` compares two arms seed by seed over a closed set
+of named manifest metrics (`mitosis simulate-compare`): the mean per-seed difference, a seeded
+percentile-bootstrap CI on it, an unpaired CI over the same numbers, the across-seed correlation,
+and `Var(d)/(Var(a)+Var(b))`. `cmd_simulate`'s staged-funding validation default moved into
+`batch.build_selection` so a single run and a batch arm cannot disagree about it.
 
-### A defect found in ADR-082's own live-run test, on an already-pushed commit
+### Measured before choosing
 
-Building a scenario that genuinely reproduces under `StagedFundingSelection` required a 24-way
-seed/scale sweep — every combination showed zero reproduction, ever. Tracing `decide()` directly
-found why: no mutation operator ever sets `product.durable`/`product.quality`, so `RuleBasedMarket`'s
-standard/premium tiers are permanently unreachable, and no founder starts priced in the one tier that
-*is* reachable — with `RuleBasedMarket` as validation, every elite is rejected forever, so no
-mutation (including a price mutation that might reach the reachable tier) ever gets a chance to run.
-A genuine structural deadlock, confirmed by switching validation to the same family or to `None`,
-both of which reproduce reliably. ADR-082's own live-run test used `RuleBasedMarket` and asserted
-only `failures == ()`/conservation — which holds trivially for a colony that never reproduces — so it
-had never once exercised real reproduction since it was written. Two of this slice's own first-draft
-tests made the identical choice and were silently `pytest.skip`-ing every run for the same reason.
-All three fixed here (same-family validation at a verified-reproducing seed), corrected forward per
-this repo's rule against rewriting pushed history rather than amending ADR-082. The deadlock itself
-is real and not a `validation_probe` bug (proven correct in isolation by ADR-082's own unit tests) —
-an honest consequence of `RuleBasedMarket`'s intentionally harsh design meeting mutation operators
-never given a way to satisfy it. A new, permanent test checks this finding itself; both viable fixes
-are named in `FUTURE_BUILD_HOOKS.md`, neither of them Slice G's job.
+- **Processes, not agents.** A run is deterministic CPU work against mock Cells; there is no model
+  call to fan out. 24 runs took 10.6s wall for 65.5s CPU on 8 workers.
+- **In memory, not file-backed.** The same p=30/e=40 run: 17.6s file-backed (5.3s system CPU) vs
+  9.1s in memory (0.03s). That is the p=50/e=200 benchmark's 480s of system CPU explained.
+
+### Found
+
+- **Pairing is metric-dependent, in both directions.** A 3-arm × 8-seed pilot: total revenue
+  correlates +0.96 across seeds and pairing cuts its variance to 7%; peak founder concentration
+  correlates −0.20/−0.42 and pairing *widens* its interval (ratio 1.19/1.29). Slice H's
+  pre-registration has to declare the paired design per metric.
+- **Two candidate metrics are one effect at this scale.** `final_living_cells` and
+  `total_reproductions` report the identical difference over 25 epochs (nobody dies), so
+  pre-registering both would count one effect twice.
+- **The pairing precondition held already and is now pinned.** Every simulator draw was keyed by its
+  own seed label; a new test runs a selection policy that burns its stream, the global `random`
+  module and the seeded id generator, and requires an identical economy.
 
 ### Verification
 
-5 new tests plus 3 corrected (104 total in the simulation area). One teeth-check — recording a
-mutation event's `parent_cell_id` as the child's id instead of the parent's — confirmed to fail the
-traceability test for the stated reason and restored verbatim. Full suite green (1334 total); golden
-run unaffected (hash unchanged at 38); `ruff check .` and `scripts/check_docs_facts.py` both clean.
+19 new tests. Four teeth-checks, all caught for the stated reason (environment keyed by
+`experiment_id`; paired CI from unpaired resamples; a failed run silently counted; unpaired seeds
+silently intersected — the last first written as a bare guard removal that crashed with `KeyError`
+instead of intersecting, i.e. an incomplete mutation, then redone completely and caught). Full suite
+1353 passed; golden run unchanged; `ruff check .` and `scripts/check_docs_facts.py` clean.
 
-- Next: Slice H's pre-registered Phase 3 comparisons (a pre-registration document plus the six
-  required comparison runs — pick a policy/validation combination known to reproduce, per this
-  slice's own finding). The >= 500 Cell/>= 10,000 epoch Phase 2 acceptance benchmark itself remains
-  documented but not yet run to completion (ADR-076).
+- Next: the rest of the research-driven set — a network/process seal on simulated runs, Auditor
+  judge entanglement, verbalized sampling as a twin experiment, a real consumer for the workflow
+  gene, a tool-evaluator registration guard, evaluator-epoch bookkeeping, the §11.3 collusion
+  amendment, a teeth-check runner and a claim-drift checker — then Slice H.

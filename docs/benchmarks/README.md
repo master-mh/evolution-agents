@@ -35,3 +35,28 @@ built from. The brief's own literal >= 500 Cell/>= 10,000 epoch run is intention
 in an interactive session on this basis — it belongs as an explicitly kicked-off, unattended,
 long-running job, documented here so whoever runs it next knows what to expect and where its result
 belongs.
+
+## Running many runs at once: `simulate-batch` (ADR-084)
+
+The acceptance benchmark above is one long run. Phase 3's comparisons are many short ones — every
+arm at every seed — and they are embarrassingly parallel, so they run as separate processes, each
+against its own in-memory colony:
+
+```bash
+mitosis simulate-batch --arms random_eligible,staged_funding --seeds 1-16 --epochs 200 --population 50 --out-dir docs/benchmarks/<date>-<name>
+```
+
+```bash
+mitosis simulate-compare --dir docs/benchmarks/<date>-<name> --baseline random_eligible --treatment staged_funding --metric total_revenue_minor_units
+```
+
+**Why in memory.** Measured on this machine: a p=30/e=40 run took 17.6s against a file-backed WAL
+colony (5.3s of it system CPU) and 9.1s in memory (0.03s). The 480s of system CPU in the p=50/e=200
+run above is the same effect at larger scale. A batch run keeps its manifests and `batch.json`, never
+a database.
+
+**Read the variance ratio, not just the interval.** `simulate-compare` reports the across-seed
+correlation of the two arms and `Var(d)/(Var(a)+Var(b))`. Below 1, seed pairing narrowed the
+interval; above 1, it widened it. A 3-arm × 8-seed pilot found 0.07 for total revenue and 1.29 for
+peak founder concentration — the same batch, opposite answers — so a pre-registration should declare
+the paired design per metric, not globally.

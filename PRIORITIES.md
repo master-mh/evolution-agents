@@ -962,6 +962,17 @@
   twelve ways, two of which initially MISSED and exposed a real gap: the translator was never
   tested against a *different* foreign key failing on the same row.
 - [ ] Reconciling resource_usage against actual sandbox/model-gateway logs (Amendment A6's other half). **Half-unblocked 2026-08-22:** the entry said "no such logs exist until Phase 4/5", but the model-gateway half now does — `model_calls` records provider, resolved model, API version and reported usage per call. The *sandbox* half is still genuinely blocked until Phase 5. *Disproved by:* the `model_calls` table.
+- [x] **Seed-paired batch comparisons — DONE** (2026-09-14), ADR-084. `simulation/batch.py` +
+  `simulation/paired.py`; `mitosis simulate-batch` runs every arm at every seed, each in its own
+  spawned process and `:memory:` colony (measured first: file-backed 17.6s vs in-memory 9.1s for
+  the same run, the gap almost all fsync); `mitosis simulate-compare` reports the paired effect, a
+  seeded bootstrap CI, an unpaired CI over the same data, and the variance ratio pairing actually
+  achieved. **Pilot finding:** pairing cut total-revenue variance to 7% (seed correlation +0.96)
+  and *widened* peak-founder-concentration's interval (ratio 1.29) — so Slice H's pre-registration
+  must declare the paired design per metric. The pairing precondition (no selection policy can
+  shift another component's randomness) is now a named test. *Disproved by:* a `simulate-compare`
+  run whose reported variance ratio disagrees with `Var(d)/(Var(a)+Var(b))` recomputed by hand from
+  `batch.json`'s manifests.
 
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per

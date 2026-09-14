@@ -5412,3 +5412,73 @@ out as a Slice G decision, not this one.
   required comparison runs). The >= 500 Cell/>= 10,000 epoch Phase 2 acceptance benchmark itself
   remains documented but not yet run to completion (ADR-076); whoever schedules it should pick a
   policy/validation combination known to reproduce (this ADR's own finding matters directly here).
+
+## ADR-084: Seed-paired batch comparisons — processes not agents, in-memory colonies, and a pairing that reports whether it helped
+
+- **Status:** Accepted
+- **Spec ref:** §28 Phase 3 ("pre-registered … effect-size confidence interval excluding zero"),
+  §7.1 ("large batch experiments"), §26 (replay discipline, applied to the analysis)
+
+- **Context:** Slice H needs six pre-registered comparisons, each an arm pair over many seeds, and
+  the only runner was `mitosis simulate`: one run, one file-backed colony, one process. A research
+  pass over recent multi-agent evaluation work raised two things worth acting on before the
+  pre-registration is written. (1) arXiv 2512.24145 shows, for multi-agent economic simulators,
+  that evaluating competing systems at identical seeds strictly reduces variance *when outcomes are
+  positively correlated at the seed level* — and not otherwise. (2) The p=50/e=200 benchmark
+  (`docs/benchmarks/`) had spent 480s of system CPU against 604s user, which looked like commit
+  durability rather than simulation.
+
+- **Decision:** `simulation/batch.py` runs every arm at every seed, each `(arm, seed)` in its own
+  spawned process with its own `:memory:` colony, writing one manifest per run plus a `batch.json`
+  index (`mitosis simulate-batch`). `simulation/paired.py` compares two arms seed by seed over a
+  named manifest metric (`mitosis simulate-compare`): mean per-seed difference, a seeded percentile
+  bootstrap CI on the paired differences, an unpaired CI over the same data, the across-seed
+  correlation, and `Var(d)/(Var(a)+Var(b))`.
+
+- **What it displaced, and why:**
+  - *An agent swarm / Dynamic Workflows to parallelise runs.* A simulator run is deterministic CPU
+    work against mock Cells (§7.3); there is no model call to fan out. More interpreters is the
+    only honest speed-up. Measured: 24 runs (3 arms × 8 seeds, p=10, e=25) in 10.6s wall for 65.5s
+    of CPU on 8 workers.
+  - *Keeping file-backed colonies for batch runs.* Measured before choosing: the same p=30/e=40 run
+    took 17.6s file-backed (5.3s system CPU) and 9.1s in memory (0.03s). A batch run's retained
+    artifact is its manifest, never its database, so nothing is lost. No kernel pragma changed —
+    a real colony still opens exactly as before.
+  - *Asserting that pairing helps.* It does not always: `Var(d) = Var(a) + Var(b) − 2·Cov`. The
+    comparison therefore reports the correlation and variance ratio it actually got.
+  - *Dropping a seed that is missing from one arm, or whose run recorded a failure.* Both would
+    silently compare a design nobody pre-registered; both are refused.
+  - *An arbitrary metric expression.* `paired.METRICS` is a closed, named set of canonical
+    simulator outcomes (§0.3), so a pre-registration names one and the analysis cannot compute
+    something else under that name.
+
+- **The pairing precondition, tested rather than assumed:** a seed pairing means something only if
+  no selection policy can shift another component's randomness. Every draw in `simulation/` was
+  already keyed by its own `(master_seed, purpose, …)` label, and
+  `test_a_selection_policy_cannot_shift_any_other_components_randomness` now pins that by running a
+  policy that burns the stream it is handed, the global `random` module, and the seeded id
+  generator, and requiring an identical economy. Teeth-checked with a realistic regression — keying
+  the environment's draw by `experiment_id` instead of `cell_id` — which the test catches.
+
+- **Pilot finding (3 arms × 8 seeds, p=10, e=25, `utility_maximizing_market`), the number a
+  pre-registration should cite:** pairing is worth a great deal on some metrics and actively harmful
+  on others. `total_revenue_minor_units`: seed correlation +0.96, variance ratio **0.069** — the
+  paired CI is roughly a quarter the width of the unpaired one. `final_living_cells`: +0.34, ratio
+  0.67. `peak_founder_concentration`: **−0.20 and −0.42**, ratio 1.19 and 1.29 — pairing *widened*
+  the interval. Also found: at this scale `final_living_cells` and `total_reproductions` report the
+  identical difference (no deaths occur in 25 epochs), so pre-registering both would count one
+  effect twice.
+
+- **Known limitation, stated in `paired.py`:** the environment keys draws by `cell_id`, so after the
+  first reproduction two arms share randomness only for their founders. Revenue's +0.96 says that
+  is enough at this scale; it may not be at ≥500 Cells, which is why the variance ratio is reported
+  on every comparison rather than measured once here.
+
+- **Verification:** 19 new tests (`tests/test_simulation_batch.py`); four teeth-checks, all caught
+  for the stated reason — the experiment-id keying above; a paired CI built from unpaired resamples;
+  a failed run silently counted; and unpaired seeds silently intersected (first attempted as a bare
+  guard removal, which crashed with `KeyError` rather than intersecting — the mutation's fault, not
+  the test's; redone as a complete intersection and caught).
+
+- Next: Slice H's pre-registration should declare the paired design per metric, citing this pilot's
+  variance ratios, and choose the policy/validation combination ADR-083 found to reproduce.

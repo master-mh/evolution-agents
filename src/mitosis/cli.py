@@ -64,7 +64,9 @@ from . import (
     scheduler,
     sweeper,
 )
+from .simulation import batch as simulation_batch
 from .simulation import environment as simulation_environment
+from .simulation import paired as simulation_paired
 from .simulation import runner as simulation_runner
 from .simulation import selection_policy as simulation_selection_policy
 from .accounts import cell_cash
@@ -938,16 +940,6 @@ def cmd_simulate(args: argparse.Namespace) -> None:
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
 
-    selection_kwargs: dict = {}
-    if args.selection_policy == simulation_selection_policy.StagedFundingSelection.name:
-        other_family = (
-            simulation_environment.RuleBasedMarket.name
-            if args.environment == simulation_environment.UtilityMaximizingMarket.name
-            else simulation_environment.UtilityMaximizingMarket.name
-        )
-        validation_name = args.validation_environment or other_family
-        selection_kwargs["validation"] = simulation_environment.build_environment(validation_name)
-
     manifest = simulation_runner.run(
         conn,
         simulation_runner.RunConfig(
@@ -957,8 +949,9 @@ def cmd_simulate(args: argparse.Namespace) -> None:
         suite=simulation_environment.EnvironmentSuite.training_only(
             simulation_environment.build_environment(args.environment)
         ),
-        selection=simulation_selection_policy.build_selection_policy(
-            args.selection_policy, **selection_kwargs,
+        selection=simulation_batch.build_selection(
+            args.selection_policy, environment_name=args.environment,
+            validation_environment=args.validation_environment,
         ),
     )
     print(manifest.summary())
@@ -967,6 +960,60 @@ def cmd_simulate(args: argparse.Namespace) -> None:
     for failure in manifest.failures:
         print(f"  FAILURE: {failure}")
     conn.close()
+
+
+def _parse_seed_list(text: str) -> list[int]:
+    """`1-8`, `1,2,5` or a mix (`1-4,9`) — in the order written."""
+    seeds: list[int] = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            low_text, high_text = part.split("-", 1)
+            low, high = int(low_text), int(high_text)
+            if high < low:
+                raise CliError(f"seed range {part!r} runs backwards")
+            seeds.extend(range(low, high + 1))
+        else:
+            seeds.append(int(part))
+    if not seeds:
+        raise CliError("--seeds named no seeds")
+    return seeds
+
+
+def cmd_simulate_batch(args: argparse.Namespace) -> None:
+    """Every `--arm` at every seed, each in its own process and its own
+    in-memory colony (SPEC.md §7.1 batch experiments, §28 Phase 3; ADR-084).
+
+    Takes no `--db`: a batch run records nothing in any colony. Its retained
+    artifact is the directory of manifests plus `batch.json`, which is what
+    `simulate-compare` reads.
+    """
+    out_dir = Path(args.out_dir)
+    jobs = simulation_batch.plan(
+        arms=[arm.strip() for arm in args.arms.split(",") if arm.strip()],
+        seeds=_parse_seed_list(args.seeds),
+        epochs=args.epochs, population=args.population, scenario=args.scenario,
+        environment=args.environment, validation_environment=args.validation_environment,
+        out_dir=out_dir,
+    )
+    workers = args.workers or min(len(jobs), os.cpu_count() or 1)
+    print(f"{len(jobs)} run(s) across {workers} worker process(es) -> {out_dir}", flush=True)
+    results = simulation_batch.run_batch(jobs, out_dir=out_dir, workers=workers)
+    for result in results:
+        failure_note = f"  {result.failures} FAILURE(S)" if result.failures else ""
+        print(f"  {result.arm:20s} seed {result.seed:<6d} {result.wall_seconds:8.2f}s{failure_note}")
+    print(f"  index written to {out_dir / simulation_batch.INDEX_FILENAME}")
+
+
+def cmd_simulate_compare(args: argparse.Namespace) -> None:
+    """A seed-paired comparison of two arms from one batch (ADR-084)."""
+    comparison = simulation_paired.compare_batch(
+        Path(args.dir), baseline=args.baseline, treatment=args.treatment, metric=args.metric,
+        resamples=args.resamples, confidence=args.confidence,
+    )
+    print(comparison.summary())
 
 
 def _schedule_line(db_path: str) -> str:
@@ -3365,6 +3412,65 @@ def build_parser() -> argparse.ArgumentParser:
     )
     simulate_parser.set_defaults(func=cmd_simulate)
 
+    simulate_batch_parser = subparsers.add_parser(
+        "simulate-batch",
+        help=(
+            "run every --arms selection policy at every --seeds seed, each in its own process "
+            "and in-memory colony; writes manifests + batch.json (SPEC.md §28 Phase 3; ADR-084)"
+        ),
+    )
+    simulate_batch_parser.add_argument(
+        "--arms", required=True,
+        help="comma-separated selection policy names, e.g. random_eligible,staged_funding",
+    )
+    simulate_batch_parser.add_argument(
+        "--seeds", required=True, help="seeds to run every arm at, e.g. 1-8 or 1,2,5",
+    )
+    simulate_batch_parser.add_argument("--epochs", type=int, required=True)
+    simulate_batch_parser.add_argument("--population", type=int, required=True)
+    simulate_batch_parser.add_argument("--scenario", default="batch")
+    simulate_batch_parser.add_argument(
+        "--environment",
+        choices=[
+            simulation_environment.UtilityMaximizingMarket.name,
+            simulation_environment.RuleBasedMarket.name,
+        ],
+        default=simulation_environment.UtilityMaximizingMarket.name,
+    )
+    simulate_batch_parser.add_argument(
+        "--validation-environment",
+        choices=[
+            simulation_environment.UtilityMaximizingMarket.name,
+            simulation_environment.RuleBasedMarket.name,
+        ],
+        default=None,
+        help="as for `simulate`; only read by the staged_funding arm",
+    )
+    simulate_batch_parser.add_argument(
+        "--workers", type=int, default=None,
+        help="worker processes (default: one per run, capped at the CPU count)",
+    )
+    simulate_batch_parser.add_argument("--out-dir", required=True)
+    simulate_batch_parser.set_defaults(func=cmd_simulate_batch)
+
+    simulate_compare_parser = subparsers.add_parser(
+        "simulate-compare",
+        help="seed-paired effect and bootstrap CI of one arm against another (ADR-084)",
+    )
+    simulate_compare_parser.add_argument("--dir", required=True, help="a simulate-batch --out-dir")
+    simulate_compare_parser.add_argument("--baseline", required=True)
+    simulate_compare_parser.add_argument("--treatment", required=True)
+    simulate_compare_parser.add_argument(
+        "--metric", required=True, choices=sorted(simulation_paired.METRICS),
+    )
+    simulate_compare_parser.add_argument(
+        "--resamples", type=int, default=simulation_paired.DEFAULT_RESAMPLES,
+    )
+    simulate_compare_parser.add_argument(
+        "--confidence", type=float, default=simulation_paired.DEFAULT_CONFIDENCE,
+    )
+    simulate_compare_parser.set_defaults(func=cmd_simulate_compare)
+
     health_parser = subparsers.add_parser(
         "health",
         help="is anything still running the scheduler? exits 0/1/2 for a monitor (§23.3)",
@@ -4008,6 +4114,9 @@ def main(argv: list[str] | None = None) -> int:
         approval.ApprovalError,
         promotion.PromotionError,
         golden.GoldenRunError,
+        simulation_batch.BatchError,
+        simulation_paired.PairedComparisonError,
+        simulation_selection_policy.UnknownSelectionPolicyError,
         ValueError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
