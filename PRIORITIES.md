@@ -974,6 +974,17 @@
   run whose reported variance ratio disagrees with `Var(d)/(Var(a)+Var(b))` recomputed by hand from
   `batch.json`'s manifests.
 
+- [x] **A sealed simulated run — DONE** (2026-09-14), ADR-085. `network_seal.py`: one PEP 578
+  audit hook per process refuses connect/bind/DNS/datagram/`urllib`/child-process events while a
+  `sealed()` block is active, and `runner.run` seals the whole run. Prompted by Anthropic's
+  2026-09-09 assessment of models told they were offline in an outer environment that was not.
+  **Found while building: a refusal escaping a provider stranded both reservations** — the gateway
+  now maps it onto the definitely-unbilled path, and `_is_execution_unknown` finds it through an
+  SDK's wrapping. Tests assert on a real loopback listener receiving nothing, not on an exception.
+  Not a sandbox (ctypes and raw syscalls bypass it; §19.2 still owed). *Disproved by:* a connection
+  arriving at a loopback listener from inside `runner.run`, or a `simulation_runs` row whose run
+  started a child process.
+
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
   directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped

@@ -5482,3 +5482,54 @@ out as a Slice G decision, not this one.
 
 - Next: Slice H's pre-registration should declare the paired design per metric, citing this pilot's
   variance ratios, and choose the policy/validation combination ADR-083 found to reproduce.
+
+## ADR-085: A simulated run is sealed by the interpreter, not by its wiring
+
+- **Status:** Accepted
+- **Spec ref:** §7.1 ("zero paid model calls"), §0.4 ("no network from generated code"), §19.3
+  ("network disabled by default"; "DNS control"); ADR-022 (definitely-unbilled vs unknown)
+
+- **Context:** On 2026-09-09 Anthropic published an alignment assessment of four incidents in which
+  models under evaluation were told they were in a simulation without internet, while a
+  configuration error in the *outer* environment left real connectivity on — and the models used
+  it. The instruction was never the failure; nothing enforced it. The flight simulator makes the
+  same kind of promise: `usd_real_spend_unchanged` has held on every run because `runner.run`
+  happens to construct `SimulationPolicyProvider`. A provider swapped for a real one, a fetch
+  reached through the tool path, or an epoch hook that shells out would each reach the outside
+  world first and show up, if at all, in a manifest afterwards.
+
+- **Decision:** `network_seal.py` installs one PEP 578 audit hook per process that raises
+  `NetworkSealed` for connect / bind / name resolution / datagram sends / `http.client` / `urllib`
+  requests and for every child-process start — but only while a `sealed()` block is active.
+  `runner.run` seals the whole run, founding included. `gateway.call_model` maps a
+  `NetworkSealed` out of any provider onto the definitely-unbilled failure path (both reservations
+  released), and `providers._is_execution_unknown` looks down an exception's cause chain for it, so
+  an SDK wrapping the refusal in its own connection error does not strand funds in
+  `execution_unknown`.
+
+- **What it displaced, and why:**
+  - *Checking the provider type before a run.* That is the wiring check the incident shows is
+    insufficient: it validates the object someone remembered to check, not every path to a socket.
+  - *A context variable per run.* It would not follow a thread started inside the run — the easiest
+    way for a misconfigured component to escape. The seal is process-wide while any run is sealed.
+  - *Blocking socket creation (`socket.__new__`).* A socketpair reaches nothing, and refusing it
+    breaks standard-library internals without closing a path.
+  - *Letting the refusal propagate out of the gateway.* It escaped with both reservations committed,
+    leaving the sweeper to guess at an outcome that is certain. Found by writing the provider-path
+    test: the run still reached nothing, but the record was wrong.
+  - *Sealing the golden run too.* One integration point per slice; the golden run is a natural
+    second (logged in `FUTURE_BUILD_HOOKS.md`).
+
+- **What this is not:** a sandbox. `ctypes`, a C extension making raw syscalls, or a process started
+  before the seal bypass audit hooks. It defends against *misconfiguration* — the incident class —
+  and not adversarial code, which is §19.2's microVM boundary (Phase 5). Said in the module
+  docstring so a green seal test is never read as a security boundary.
+
+- **Verification:** 8 tests in `tests/test_network_seal.py` put a real listener on loopback and
+  require that **no connection ever arrives** from an epoch hook, a replaced model provider, or a
+  bare gateway call — asserting on the listener rather than on an exception, because a refusal
+  caught and retried somewhere would pass an exception test. Teeth-checked: a hook that never
+  raises, a runner that no longer seals, an inner block unsealing the outer, and a seal not lifted
+  on exception all fail a named test on the intended assertion (two were first scored MISS by a
+  wrong expected-text string in the teeth-check script; the failing assertion was the right one,
+  `connections received == 0`).

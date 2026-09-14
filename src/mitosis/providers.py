@@ -34,6 +34,8 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import network_seal
+
 MOCK_PROVIDER = "mock"
 ANTHROPIC_PROVIDER = "anthropic"
 OLLAMA_PROVIDER = "ollama"
@@ -379,6 +381,18 @@ def _is_execution_unknown(exc: Exception) -> bool:
     for a call that *was* billed loses real money silently, while wrongly
     holding one is visible and reconcilable (§4.4, Charter C7).
     """
+    # A refusal from `network_seal` is the one certainty available here: the
+    # interpreter stopped the connection before it opened (ADR-085). An SDK
+    # may wrap it in its own connection error, so look down the whole chain
+    # rather than at the outermost type — and only for this one cause, so the
+    # conservative default below is untouched for every real failure.
+    seen: set[int] = set()
+    link: BaseException | None = exc
+    while link is not None and id(link) not in seen:
+        if isinstance(link, network_seal.NetworkSealed):
+            return False
+        seen.add(id(link))
+        link = link.__cause__ or link.__context__
     name = type(exc).__name__
     definitely_not_billed = {
         "BadRequestError",  # 400 — provider rejected the request outright

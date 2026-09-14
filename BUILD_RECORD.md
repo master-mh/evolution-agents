@@ -35,54 +35,43 @@ Thompson sampling; the single-leaderboard control policy; Pareto selection
 reproducing the whole front, and a gate found structurally unreachable
 through this pipeline; MAP-Elites, one elite per occupied niche; staged
 funding composing everything, and the cross-family validation deadlock it
-surfaced; the cross-policy acceptance harness),
-2026-07-21 through 2026-09-06):
+surfaced; the cross-policy acceptance harness), and seed-paired batch
+comparisons,
+2026-07-21 through 2026-09-14):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-14 — Seed-paired batch comparisons (ADR-084)
+## 2026-09-14 — A sealed simulated run (ADR-085)
 
-The first of a set of slices acting on a research pass over recent agent-swarm, evolutionary-agent
-and evaluation work. This one is the Slice H prerequisite that pass pointed at most directly.
+Second of the research-driven slices. Prompted by Anthropic's 2026-09-09 alignment assessment:
+four incidents in which models were told they were in a simulation without internet while an
+outer configuration error left real connectivity on.
 
 ### What shipped
 
-`simulation/batch.py` runs every arm at every seed, each `(arm, seed)` in its own spawned process
-against its own `:memory:` colony, and writes one manifest per run plus a `batch.json` index
-(`mitosis simulate-batch`). `simulation/paired.py` compares two arms seed by seed over a closed set
-of named manifest metrics (`mitosis simulate-compare`): the mean per-seed difference, a seeded
-percentile-bootstrap CI on it, an unpaired CI over the same numbers, the across-seed correlation,
-and `Var(d)/(Var(a)+Var(b))`. `cmd_simulate`'s staged-funding validation default moved into
-`batch.build_selection` so a single run and a batch arm cannot disagree about it.
+`network_seal.py` installs one PEP 578 audit hook per process that refuses connect, bind, name
+resolution, datagram sends, `http.client`/`urllib` requests and every child-process start while a
+`sealed()` block is active; outside a block the hook returns on one integer test. `runner.run`
+seals the whole run, founding included, and reads `git rev-parse` once before sealing (it is a child
+process, and the run record and manifest previously read it twice).
 
-### Measured before choosing
+### Found while building
 
-- **Processes, not agents.** A run is deterministic CPU work against mock Cells; there is no model
-  call to fan out. 24 runs took 10.6s wall for 65.5s CPU on 8 workers.
-- **In memory, not file-backed.** The same p=30/e=40 run: 17.6s file-backed (5.3s system CPU) vs
-  9.1s in memory (0.03s). That is the p=50/e=200 benchmark's 480s of system CPU explained.
-
-### Found
-
-- **Pairing is metric-dependent, in both directions.** A 3-arm × 8-seed pilot: total revenue
-  correlates +0.96 across seeds and pairing cuts its variance to 7%; peak founder concentration
-  correlates −0.20/−0.42 and pairing *widens* its interval (ratio 1.19/1.29). Slice H's
-  pre-registration has to declare the paired design per metric.
-- **Two candidate metrics are one effect at this scale.** `final_living_cells` and
-  `total_reproductions` report the identical difference over 25 epochs (nobody dies), so
-  pre-registering both would count one effect twice.
-- **The pairing precondition held already and is now pinned.** Every simulator draw was keyed by its
-  own seed label; a new test runs a selection policy that burns its stream, the global `random`
-  module and the seeded id generator, and requires an identical economy.
+- **A refusal escaping a provider stranded both reservations.** The provider-path test passed on
+  its real assertion — nothing reached the listener — but `gateway.call_model` only caught
+  `ProviderError`, so a `NetworkSealed` left the call's USD_REAL and RESOURCE reservations committed
+  for the sweeper to guess about. The gateway now maps it onto the definitely-unbilled path, and
+  `providers._is_execution_unknown` finds it down an exception's cause chain so an SDK wrapping it in
+  a connection error cannot strand funds in `execution_unknown` either. Every other failure keeps
+  the conservative default.
 
 ### Verification
 
-19 new tests. Four teeth-checks, all caught for the stated reason (environment keyed by
-`experiment_id`; paired CI from unpaired resamples; a failed run silently counted; unpaired seeds
-silently intersected — the last first written as a bare guard removal that crashed with `KeyError`
-instead of intersecting, i.e. an incomplete mutation, then redone completely and caught). Full suite
-1353 passed; golden run unchanged; `ruff check .` and `scripts/check_docs_facts.py` clean.
+8 tests put a real listener on loopback and require that no connection arrives from an epoch hook,
+a replaced provider, or a bare gateway call; one requires a child process be refused; three pin
+nesting, lifting on exception, and inertness outside a seal. Six teeth-checks, all failing on the
+intended assertion (two first scored MISS by a wrong expected-text string in the checker, not by the
+tests). Full suite 1361 passed; golden unchanged; lint and docs-facts clean. Not a sandbox — logged in
+`FUTURE_BUILD_HOOKS.md` along with sealing the golden run.
 
-- Next: the rest of the research-driven set — a network/process seal on simulated runs, Auditor
-  judge entanglement, verbalized sampling as a twin experiment, a real consumer for the workflow
-  gene, a tool-evaluator registration guard, evaluator-epoch bookkeeping, the §11.3 collusion
-  amendment, a teeth-check runner and a claim-drift checker — then Slice H.
+- Next: judge entanglement, verbalized sampling, the workflow gene, the tool-evaluator guard,
+  evaluator epochs, the §11.3 amendment, the teeth-check runner, the claim-drift checker; then Slice H.

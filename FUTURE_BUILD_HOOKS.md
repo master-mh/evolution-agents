@@ -1735,3 +1735,16 @@ actually queued for building — this file is memory, not a backlog to work thro
   genome generation. Neither is Slice G's job — both touch Slice F's already-shipped, tested mutation
   operators and founder generation for a benefit orthogonal to closing the selection loop, the same
   reasoning as the `buyer_type`/`revenue_recurrence` deferral above.
+- **Seal the golden run too (ADR-085).** `network_seal.sealed()` wraps only `simulation.runner.run`
+  — one integration point per slice. `golden.run_scenario` makes the same "reaches nothing
+  outside" promise (a replay that started billing someone is the worst regression it could miss)
+  and is the natural second. Check first that nothing in the scenario legitimately starts a child
+  process (`runner._code_version` did, and had to move outside the seal).
+- **The network seal is not a sandbox (ADR-085).** Audit hooks miss `ctypes`, C extensions making
+  raw syscalls, and processes started before the seal. Phase 5's §19.2 boundary is still owed; do not
+  let a green `test_network_seal.py` stand in for it in any safety claim.
+- **Environment draws keyed by `cell_id` limit seed pairing past the first reproduction (ADR-084).**
+  Two arms share randomness only for founders once they diverge. A per-(epoch, niche-slot) customer
+  draw would share structural randomness across arms for descendants too, but changes every
+  existing manifest and the benchmark artifact. Only worth doing if a ≥500-Cell pilot reports a
+  variance ratio near 1 on the metric Slice H pre-registers.

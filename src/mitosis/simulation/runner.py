@@ -33,6 +33,7 @@ from .. import (
     ledger,
     lifecycle,
     lineage,
+    network_seal,
     population,
     promotion,
     revenue,
@@ -192,7 +193,7 @@ def _found_population(conn, config: RunConfig) -> list[lifecycle.Cell]:
 
 def _record_run_start(conn, *, run_id: str, config: RunConfig,
                        environment: MarketEnvironment, selection: SelectionPolicy,
-                       started: datetime) -> None:
+                       started: datetime, code_version: str) -> None:
     conn.execute(
         """
         INSERT INTO simulation_runs (
@@ -203,7 +204,7 @@ def _record_run_start(conn, *, run_id: str, config: RunConfig,
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, NULL, NULL)
         """,
         (
-            run_id, config.scenario_name, config.master_seed, _code_version(),
+            run_id, config.scenario_name, config.master_seed, code_version,
             environment.name, environment.version, SIMULATION_PROVIDER, POLICY_VERSION,
             selection.name, selection.version,
             config.population, config.epochs, started.isoformat(),
@@ -408,8 +409,15 @@ def run(
     selection = selection or RandomEligibleSelection()
     run_id = ids.new_id()
     started = datetime.now(timezone.utc)
+    # Read before sealing: it starts a `git` child process, which a sealed run
+    # refuses like any other (ADR-085). Once, so the run record and the
+    # manifest cannot disagree about which code produced them.
+    code_version = _code_version()
 
-    with ids.seeded(config.master_seed):
+    # Sealed for the whole run, founding included (ADR-085): the claim that a
+    # simulated run reaches nothing outside the interpreter is enforced by the
+    # interpreter, not by which provider happens to be constructed below.
+    with ids.seeded(config.master_seed), network_seal.sealed(reason="flight simulator run"):
         # `validation`/`secret_challenge` are reset so a later slice can use
         # them without an "unreset" footgun -- but §8.1 means only `training`
         # is ever passed into the epoch loop below.
@@ -418,7 +426,7 @@ def run(
                 candidate.reset(seed=config.master_seed)
         _record_run_start(
             conn, run_id=run_id, config=config, environment=suite.training,
-            selection=selection, started=started,
+            selection=selection, started=started, code_version=code_version,
         )
 
         clock.initialize_if_absent(conn, mode=ClockMode.PAUSED)
@@ -471,7 +479,7 @@ def run(
             run_id=run_id,
             scenario_name=config.scenario_name,
             master_seed=config.master_seed,
-            code_version=_code_version(),
+            code_version=code_version,
             config_hash=_config_hash(config),
             environment_name=suite.training.name,
             environment_version=suite.training.version,

@@ -84,6 +84,7 @@ from . import (
     audit,
     ids,
     ledger,
+    network_seal,
     pricing,
     providers,
     reservations,
@@ -221,7 +222,15 @@ def call_model(
 
     try:
         response = provider.complete(request)
-    except providers.ProviderError as exc:
+    except (providers.ProviderError, network_seal.NetworkSealed) as exc:
+        if isinstance(exc, network_seal.NetworkSealed):
+            # Refused by the interpreter before a byte left the process
+            # (ADR-085), so this is the one failure known with certainty to be
+            # unbilled — whatever provider was wired in, and whether or not it
+            # caught the refusal itself. Uncaught, it would escape this
+            # function with both reservations committed and strand them until
+            # the sweeper guessed at an outcome that is not in doubt.
+            exc = providers.ProviderCallError(str(exc), execution_unknown=False)
         _handle_failure(
             conn,
             model_call_id=model_call_id,
