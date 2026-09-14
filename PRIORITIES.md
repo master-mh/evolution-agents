@@ -993,6 +993,19 @@
   `test_no_registered_tool_acts_on_the_world` is argued down. *Disproved by:* a `REGISTRY` entry
   whose `evaluated_by` is not in `EVIDENCE_SOURCES` while `unevaluated_tools()` returns empty.
 
+- [x] **Judge entanglement instrument — DONE, finding inconclusive** (2026-09-14), ADR-087.
+  `scripts/judge_entanglement.py`: joint errors vs independence, error phi, `P(B wrong | A wrong)`,
+  false concurrence, with warnings for constant judges and one-directional errors. **First run's phi
+  of +0.66 was forced**: `llama3.2` scored all 24 fixture proposals empty. Established instead:
+  `llama3.2` cannot be a second concreteness judge (recall 0/9); zero false concurrence. *Disproved
+  by:* a `judge_entanglement.py --from-json` run on the saved verdicts that prints no constant-judge
+  warning for `llama3.2`.
+- [x] **Evaluator epochs on the instruments — DONE** (2026-09-14), ADR-088. `concreteness.py`/
+  `diversity.py` JSON carries model name, weights digest and instrument-text hashes;
+  `scripts/evaluator_epoch.py` refuses to compare results across epochs. Kernel-side precision still
+  crosses model changes (logged). *Disproved by:* two `--json` results with different
+  `judge_digest` that `evaluator_epoch.py` exits 0 on.
+
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
   directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped

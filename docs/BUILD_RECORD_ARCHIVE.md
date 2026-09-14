@@ -6,6 +6,34 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-14 — Tools name what observes their effect (ADR-086)
+
+Third of the research-driven slices. "Reward Hacking as Equilibrium under Finite Evaluation" (arXiv
+2603.28063) proves an optimised agent under-invests in every quality dimension its evaluation does not
+cover, and that coverage falls toward zero as tools are added. A tool is where such a dimension enters
+the colony, and nothing tied one to §0.3's list of independent systems.
+
+### What shipped
+
+`ToolSpec.evaluated_by` names a key of `tool_registry.EVIDENCE_SOURCES` (§0.3's eight systems as
+keys) or `OBSERVATION_ONLY`, which only a read-only tool may declare. The default is `UNDECLARED`,
+and `unevaluated_tools()` — mirroring `accounts.unclassified_accounts()` — must be empty. `http_get`
+declares `observation_only`.
+
+### Worth knowing
+
+It cannot fire on today's registry: `test_no_registered_tool_acts_on_the_world` still refuses any
+acting tool. So its test runs against a constructed registry, and it is the guard an acting tool
+must satisfy when that refusal is argued down.
+
+### Verification
+
+2 tests; three teeth-checks caught (acting tool claiming observation-only; `UNDECLARED` accepted;
+`http_get` left undeclared). Full suite 1363 passed; golden unchanged; lint and docs-facts clean.
+
+- Next: judge entanglement and evaluator epochs (measurement instruments), verbalized sampling, the
+  workflow gene, the §11.3 amendment, the teeth-check runner, the claim-drift checker; then Slice H.
+
 ## 2026-09-14 — A sealed simulated run (ADR-085)
 
 Second of the research-driven slices. Prompted by Anthropic's 2026-09-09 alignment assessment:

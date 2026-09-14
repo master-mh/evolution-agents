@@ -5566,3 +5566,74 @@ out as a Slice G decision, not this one.
 
 - **Verification:** 2 tests; three teeth-checks caught — an acting tool allowed to claim
   observation-only, the `UNDECLARED` default accepted, and `http_get` left undeclared.
+
+## ADR-087: Measuring whether two judges fail independently — and the first run's number was forced
+
+- **Status:** Accepted (measurement instrument; no kernel change)
+- **Spec ref:** §24.3 ("criticism → different provider/family"), §10.5 ("an independent Auditor or
+  evaluator concurs"), ADR-058 (the concreteness judge refuses its generator's family)
+
+- **Context:** §24.3 and §10.5 both treat a judge from a *different family* as *independent*.
+  "How Independent are Large Language Models?" (arXiv 2604.07650) finds widespread behavioural
+  entanglement across 18 models from six families, and "Artificial Hivemind" (NeurIPS 2025) finds
+  different models' open-ended outputs strikingly homogeneous. Neither measured this instrument.
+
+- **Decision:** `scripts/judge_entanglement.py` scores `concreteness.py`'s hand-labelled fixture with
+  every judge through the instrument's own `judge()` (same prompt, temperature 0, same deterministic
+  quote check), and reports per pair: joint errors against the count independence predicts, the phi
+  of error indicators, `P(B wrong | A wrong)`, verdict kappa, and **false concurrence** (both judges
+  calling an empty proposal concrete — §10.5's concurrence failure itself). It warns when a judge is
+  **constant** or both judges err **in one direction only**, because either makes excess joint errors
+  unavoidable whatever the models share. `--from-json` re-analyses saved verdicts without a model.
+
+- **First run (`llama3.2`, `qwen2.5`; 24 cases, 9 labelled concrete):** 5 joint errors against 1.9
+  expected, phi **+0.662**, `P(qwen wrong | llama wrong)` 0.556 against 0.208 — which read as strong
+  entanglement until the degeneracy checks were added. **`llama3.2` returned `empty` for all 24
+  cases**: its nine errors are exactly the nine concrete labels, and `qwen2.5`'s five errors are all
+  misses, so they could only land inside those nine. The phi is forced by the fixture, not measured.
+  What the run *does* establish: `llama3.2` is useless as a second judge on this instrument (recall
+  0/9), `qwen2.5`'s recall is 4/9, and the pair produced **zero false concurrence**. Whether
+  different-family judges are entangled here is still unanswered — it needs two non-degenerate
+  judges and a fixture with invented-deliverable cases (logged).
+
+- **What it displaced:** printing phi alone (the headline this ADR nearly carried); adding judges to
+  `concreteness.py` itself (it is an instrument, not an experiment about instruments); a kernel test
+  (it needs a model, like every script beside it).
+
+- **Verification:** `--selftest` checks phi, kappa, the pair report, and both degeneracy flags against
+  hand-computed cases.
+
+## ADR-088: A result carries the evaluator that produced it, and comparisons refuse to cross evaluator epochs
+
+- **Status:** Accepted (measurement instruments; no kernel change)
+- **Spec ref:** §24.2 ("provider changes are regime changes"), §14.2 (counterfactual twins), §0.2
+  (the evaluator sits in the immutable-kernel column)
+
+- **Context:** The Red Queen Gödel Machine (arXiv 2606.26294) co-evolves agents with their
+  evaluators, and the part that transfers here is its bookkeeping: evaluation criteria stay fixed
+  within an epoch, and utility records from a displaced evaluator are erased rather than compared
+  across the boundary. The co-evolution itself does not transfer — §0.2 puts the evaluator in the
+  kernel column, so Cells never evolve one. But an operator can change an evaluator without deciding
+  to: `ollama pull qwen2.5` replaces the weights behind an unchanged name, and a reworded judge
+  prompt rescores every arm. `concreteness.py --json` and `diversity.py --json` recorded what was
+  scored and nothing about what scored it.
+
+- **Decision:** both instruments' JSON output becomes `{"evaluator": stamp, "results": …}`. The stamp
+  holds the model name, **the content digest the name currently resolves to** (Ollama `/api/tags`),
+  and SHA-256 of the instrument text that decides a verdict — judge prompt plus verifier source and
+  stopwords; embedding scoring source plus `tau` and `--at`. `scripts/evaluator_epoch.py a.json
+  b.json` exits 2 and lists every differing field when two results come from different epochs. An
+  unknown digest never matches; a pre-ADR-088 file with no stamp never matches.
+
+- **What it displaced:** stamping the model name only (the re-pull case is the one that matters);
+  treating an unknown digest as a match (guessing is what the stamp exists to stop); refusing inside
+  each instrument (comparison happens across invocations, so the check belongs where two files meet).
+
+- **Found in passing, not fixed here:** `auditor.precision` and `content_audit.precision` aggregate an
+  Auditor's whole record regardless of which model produced each audit, so a track record earned under
+  one model is read as evidence about verdicts under another — the kernel-side form of the same epoch
+  problem (logged).
+
+- **Verification:** `--selftest` covers identical stamps, re-pulled weights, a reworded prompt, an
+  unknown digest, a missing stamp and a one-sided field. Hand-verified live: both instruments produce
+  stamps with real digests, and a `qwen2.5` stamp against a `llama3.2` stamp reports both differences.

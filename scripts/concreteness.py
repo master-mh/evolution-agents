@@ -86,11 +86,16 @@ from __future__ import annotations
 
 import argparse
 import glob
+import inspect
 import json
 import os
 import re
 import sqlite3
+import sys
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import evaluator_epoch  # noqa: E402
 
 DEFAULT_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_JUDGE_MODEL = "qwen2.5"
@@ -200,6 +205,24 @@ def generator_models(paths: list[str]) -> set[str]:
         finally:
             conn.close()
     return found
+
+
+# ---------------------------------------------------------------- evaluator epoch
+
+def evaluator_stamp(host: str, model: str, self_graded: bool) -> dict:
+    """What scored a result file (ADR-088): the judge, the weights its name
+    currently points at, and the exact instrument text that turns a reply into
+    a verdict. Two result files whose stamps differ are not one comparison."""
+    verifier = inspect.getsource(content_tokens) + inspect.getsource(quote_is_in) + " ".join(sorted(STOPWORDS))
+    return evaluator_epoch.stamp(
+        "concreteness",
+        judge_model=model,
+        judge_digest=evaluator_epoch.ollama_digest(host, model),
+        prompt_sha256=evaluator_epoch.sha256(JUDGE_PROMPT),
+        verifier_sha256=evaluator_epoch.sha256(verifier),
+        temperature=0,
+        self_graded=self_graded,
+    )
 
 
 # ------------------------------------------------------------------------ scoring
@@ -365,8 +388,11 @@ def main() -> int:
             print(f"{name}:", flush=True)
         results[name] = score_database(path, args.host, args.judge_model, args.verbose)
 
+    stamp = evaluator_stamp(args.host, args.judge_model, self_graded)
     print(f"\njudge: {args.judge_model} (t=0){'  ** SELF-GRADED, §24.3 **' if self_graded else ''}"
           f"   generator: {', '.join(sorted(generators)) or 'unknown'}")
+    print(f"evaluator epoch: digest {stamp['judge_digest'] or 'UNKNOWN'}, "
+          f"prompt {stamp['prompt_sha256'][:12]}, verifier {stamp['verifier_sha256'][:12]}")
     print(f"{'database':34s} {'props':>6s} {'concrete':>9s} {'empty':>6s} "
           f"{'unver':>6s} {'abstain':>8s} {'rate':>7s}")
     for name, r in results.items():
@@ -382,8 +408,10 @@ def main() -> int:
         print("This is a lower bound: the judge misses real deliverables and invents none "
               "(`--selftest`), so a gap between two arms is understated, never manufactured.")
     if args.json:
+        # The stamp travels with the numbers (ADR-088): compare two of these
+        # with `evaluator_epoch.py a.json b.json`, which refuses across epochs.
         with open(args.json, "w") as fh:
-            json.dump(results, fh, indent=2)
+            json.dump({"evaluator": stamp, "results": results}, fh, indent=2)
     return 0
 
 

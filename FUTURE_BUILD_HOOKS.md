@@ -1748,3 +1748,12 @@ actually queued for building — this file is memory, not a backlog to work thro
   draw would share structural randomness across arms for descendants too, but changes every
   existing manifest and the benchmark artifact. Only worth doing if a ≥500-Cell pilot reports a
   variance ratio near 1 on the metric Slice H pre-registers.
+- **Judge entanglement is still unmeasured (ADR-087).** The first run's phi was forced: `llama3.2`
+  returned `empty` for every fixture case. A real answer needs two non-degenerate judges from
+  different families (a larger local model, or a paid family under `call-model`'s spend gate) and
+  fixture cases where a judge could *invent* a deliverable, so errors can fall in both directions.
+- **Auditor precision crosses model changes (ADR-088).** `auditor.precision` and
+  `content_audit.precision` aggregate every audit an Auditor ever made, whichever model produced
+  it. §24.2 treats a model change as a regime change; a precision-by-`model_calls.requested_model`
+  breakdown (or a resolved-model digest) would stop a record earned under one model vouching for
+  verdicts under another. Check first which consumer reads precision as evidence rather than report.

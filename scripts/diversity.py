@@ -37,8 +37,13 @@ import itertools
 import math
 import os
 import random
+import inspect
 import sqlite3
+import sys
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import evaluator_epoch  # noqa: E402
 
 DEFAULT_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
@@ -197,6 +202,23 @@ def selftest() -> int:
     return 1 if failures else 0
 
 
+# ---------------------------------------------------------------- evaluator epoch
+
+def evaluator_stamp(host: str, model: str, tau: float, at: int | None) -> dict:
+    """What scored a result file (ADR-088): the embedding model, the weights
+    its name currently points at, the scoring code, and the two settings that
+    change the headline number."""
+    scoring = "".join(inspect.getsource(fn) for fn in (cosine_matrix, vendi_score, vendi_at))
+    return evaluator_epoch.stamp(
+        "diversity",
+        embed_model=model,
+        embed_digest=evaluator_epoch.ollama_digest(host, model),
+        scoring_sha256=evaluator_epoch.sha256(scoring),
+        tau=tau,
+        at=at,
+    )
+
+
 # --------------------------------------------------------------------------- main
 
 def score_directory(directory: str, pattern: str, host: str, model: str, tau: float,
@@ -274,8 +296,11 @@ def main() -> int:
                   f"over {len(at_runs)} databases with at least {args.at} proposals "
                   f"-- this is the number to compare arms with")
     if args.json:
+        # The stamp travels with the numbers (ADR-088): compare two of these
+        # with `evaluator_epoch.py a.json b.json`, which refuses across epochs.
+        stamp = evaluator_stamp(args.host, args.embed_model, args.tau, args.at)
         with open(args.json, "w") as fh:
-            json.dump(results, fh, indent=2)
+            json.dump({"evaluator": stamp, "results": results}, fh, indent=2)
     return 0
 
 

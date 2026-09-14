@@ -36,34 +36,44 @@ reproducing the whole front, and a gate found structurally unreachable
 through this pipeline; MAP-Elites, one elite per occupied niche; staged
 funding composing everything, and the cross-family validation deadlock it
 surfaced; the cross-policy acceptance harness), seed-paired batch
-comparisons, and a sealed simulated run,
+comparisons, a sealed simulated run, and tools naming what observes their
+effect,
 2026-07-21 through 2026-09-14):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-14 — Tools name what observes their effect (ADR-086)
+## 2026-09-14 — Two measurement instruments: judge entanglement and evaluator epochs (ADR-087, ADR-088)
 
-Third of the research-driven slices. "Reward Hacking as Equilibrium under Finite Evaluation" (arXiv
-2603.28063) proves an optimised agent under-invests in every quality dimension its evaluation does not
-cover, and that coverage falls toward zero as tools are added. A tool is where such a dimension enters
-the colony, and nothing tied one to §0.3's list of independent systems.
+Fourth of the research-driven slices; scripts only, no kernel change.
 
 ### What shipped
 
-`ToolSpec.evaluated_by` names a key of `tool_registry.EVIDENCE_SOURCES` (§0.3's eight systems as
-keys) or `OBSERVATION_ONLY`, which only a read-only tool may declare. The default is `UNDECLARED`,
-and `unevaluated_tools()` — mirroring `accounts.unclassified_accounts()` — must be empty. `http_get`
-declares `observation_only`.
+- `scripts/judge_entanglement.py` asks whether two judges from different families fail
+  independently, which §24.3 and §10.5 both assume. It scores the concreteness fixture through the
+  instrument's own judge and reports joint errors against independence, error phi, the conditional
+  error rate, and false concurrence — with warnings for the two shapes that make phi meaningless.
+- `concreteness.py --json` and `diversity.py --json` now carry an evaluator stamp (model, weights
+  digest, instrument-text hashes), and `scripts/evaluator_epoch.py` refuses to compare two results
+  from different evaluator epochs — the Red Queen Gödel Machine's fixed-criteria-per-epoch rule, and
+  §24.2's regime-change rule applied to the instruments.
 
-### Worth knowing
+### Found
 
-It cannot fire on today's registry: `test_no_registered_tool_acts_on_the_world` still refuses any
-acting tool. So its test runs against a constructed registry, and it is the guard an acting tool
-must satisfy when that refusal is argued down.
+- **The first entanglement number was forced, and nearly became the headline.** phi +0.66 and 5 joint
+  errors against 1.9 expected — until the script checked for degeneracy: `llama3.2` returned `empty`
+  for all 24 proposals, so its errors are the nine concrete labels and `qwen2.5`'s five misses could
+  only land among them. Established instead: `llama3.2` cannot serve as a second concreteness judge;
+  the pair produced no false concurrence.
+- **The live measurement harness has been broken since ADR-067.** `measure_parse_compliance.py`'s
+  built-in genome and `scripts/genomes/loose.json` give `model_policy` as a string, which the closed
+  `model_policy` schema refuses — so setup cannot create a Cell. Fixed in the verbalized-sampling
+  slice, which needs the harness.
+- **Kernel precision crosses model changes** (`auditor.precision`, `content_audit.precision`) — logged.
 
 ### Verification
 
-2 tests; three teeth-checks caught (acting tool claiming observation-only; `UNDECLARED` accepted;
-`http_get` left undeclared). Full suite 1363 passed; golden unchanged; lint and docs-facts clean.
+Both scripts' `--selftest`s pass (maths and stamp comparison, no model); `concreteness.py
+--check-verifier` and `diversity.py --selftest` still pass; stamps hand-verified live with real
+digests; `ruff check .` clean.
 
-- Next: judge entanglement and evaluator epochs (measurement instruments), verbalized sampling, the
-  workflow gene, the §11.3 amendment, the teeth-check runner, the claim-drift checker; then Slice H.
+- Next: verbalized sampling (with the harness fix), the workflow gene, the §11.3 amendment, the
+  teeth-check runner, the claim-drift checker; then Slice H.

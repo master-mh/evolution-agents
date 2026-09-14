@@ -113,3 +113,37 @@ learns to perform novelty. Nothing in `deliberation` may import `diversity.py`.
 **Only one model resident when comparing arms** (`ollama stop <other>` between them). `latency_ms`
 times the HTTP call, but memory pressure lives inside that window — a latency taken with a second
 model loaded measures the box, not the model. ADR-050 published "14× slower" this way; it was 3×.
+
+## Which evaluator produced a number (ADR-088)
+
+`concreteness.py --json` and `diversity.py --json` now write `{"evaluator": {...}, "results": {...}}`.
+The stamp records the model name, **the content digest of the weights that name currently points
+at**, and SHA-256 of the instrument text that turns a reply into a verdict (judge prompt and
+verifier; embedding scoring code, `tau` and `--at`). An `ollama pull` that replaces a model's weights
+changes the digest while the name stays the same — §24.2's "provider changes are regime changes",
+applied to the instruments.
+
+```bash
+.venv/bin/python scripts/evaluator_epoch.py /tmp/arm_a_concreteness.json /tmp/arm_b_concreteness.json
+```
+
+Exits 2 and lists every differing field when the two results were not scored by the same evaluator
+epoch. An unknown digest never matches. Result files written before ADR-088 carry no stamp and
+cannot be matched to anything, which is the honest answer.
+
+## Are two judges' errors independent? (ADR-087)
+
+```bash
+.venv/bin/python scripts/judge_entanglement.py --judges llama3.2,qwen2.5 --json /tmp/entanglement.json
+```
+
+Scores the labelled fixture with every judge and reports, per pair, joint errors against the count
+independence predicts, the phi correlation of error indicators, `P(B wrong | A wrong)`, and **false
+concurrence** — both judges calling an empty proposal concrete, which is §10.5's concurrence failure
+itself. `--from-json` re-analyses saved verdicts without a model.
+
+**Read the warnings before the phi.** A judge that returns one verdict for every case, or two judges
+that only ever err in the same direction, make excess joint errors unavoidable whatever the models
+share. The first run hit both: `llama3.2` scored all 24 proposals empty (its phi of +0.66 against
+`qwen2.5` is forced, not measured). What that run does establish: `llama3.2` cannot serve as a second
+judge on this instrument at all, and the pair produced no false concurrence.
