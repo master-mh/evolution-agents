@@ -1,0 +1,1659 @@
+{
+  "arm_settings": {
+    "map_elites": {
+      "lineage_cap": null,
+      "selection": "map_elites",
+      "static_market": false
+    },
+    "random_eligible": {
+      "lineage_cap": null,
+      "selection": "random_eligible",
+      "static_market": false
+    },
+    "random_static": {
+      "lineage_cap": null,
+      "selection": "random_eligible",
+      "static_market": true
+    },
+    "single_leaderboard": {
+      "lineage_cap": null,
+      "selection": "single_leaderboard",
+      "static_market": false
+    },
+    "staged_funding": {
+      "lineage_cap": null,
+      "selection": "staged_funding",
+      "static_market": false
+    },
+    "static": {
+      "lineage_cap": null,
+      "selection": "staged_funding",
+      "static_market": true
+    },
+    "uncapped": {
+      "lineage_cap": 1.0,
+      "selection": "staged_funding",
+      "static_market": false
+    }
+  },
+  "arms": [
+    "map_elites",
+    "random_eligible",
+    "random_static",
+    "single_leaderboard",
+    "staged_funding",
+    "static",
+    "uncapped"
+  ],
+  "environment": "utility_maximizing_market",
+  "epochs": 60,
+  "population": 20,
+  "runs": [
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1001.json",
+      "seed": 1001,
+      "wall_seconds": 61.484
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1002.json",
+      "seed": 1002,
+      "wall_seconds": 51.305
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1003.json",
+      "seed": 1003,
+      "wall_seconds": 48.818
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1004.json",
+      "seed": 1004,
+      "wall_seconds": 50.751
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1005.json",
+      "seed": 1005,
+      "wall_seconds": 52.81
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1006.json",
+      "seed": 1006,
+      "wall_seconds": 53.714
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1007.json",
+      "seed": 1007,
+      "wall_seconds": 53.296
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1008.json",
+      "seed": 1008,
+      "wall_seconds": 58.401
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1009.json",
+      "seed": 1009,
+      "wall_seconds": 60.301
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1010.json",
+      "seed": 1010,
+      "wall_seconds": 59.916
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1011.json",
+      "seed": 1011,
+      "wall_seconds": 57.023
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1012.json",
+      "seed": 1012,
+      "wall_seconds": 59.566
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1013.json",
+      "seed": 1013,
+      "wall_seconds": 54.517
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1014.json",
+      "seed": 1014,
+      "wall_seconds": 55.367
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1015.json",
+      "seed": 1015,
+      "wall_seconds": 62.117
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1016.json",
+      "seed": 1016,
+      "wall_seconds": 55.82
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1017.json",
+      "seed": 1017,
+      "wall_seconds": 66.869
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1018.json",
+      "seed": 1018,
+      "wall_seconds": 67.334
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1019.json",
+      "seed": 1019,
+      "wall_seconds": 74.614
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1020.json",
+      "seed": 1020,
+      "wall_seconds": 64.938
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1021.json",
+      "seed": 1021,
+      "wall_seconds": 68.561
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1022.json",
+      "seed": 1022,
+      "wall_seconds": 82.793
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1023.json",
+      "seed": 1023,
+      "wall_seconds": 65.44
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1024.json",
+      "seed": 1024,
+      "wall_seconds": 67.907
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1025.json",
+      "seed": 1025,
+      "wall_seconds": 66.216
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1026.json",
+      "seed": 1026,
+      "wall_seconds": 65.706
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1027.json",
+      "seed": 1027,
+      "wall_seconds": 62.883
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1028.json",
+      "seed": 1028,
+      "wall_seconds": 63.466
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1029.json",
+      "seed": 1029,
+      "wall_seconds": 68.291
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1030.json",
+      "seed": 1030,
+      "wall_seconds": 68.127
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1031.json",
+      "seed": 1031,
+      "wall_seconds": 67.534
+    },
+    {
+      "arm": "random_eligible",
+      "failures": 0,
+      "manifest_path": "random_eligible__seed1032.json",
+      "seed": 1032,
+      "wall_seconds": 65.521
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1001.json",
+      "seed": 1001,
+      "wall_seconds": 67.51
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1002.json",
+      "seed": 1002,
+      "wall_seconds": 58.86
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1003.json",
+      "seed": 1003,
+      "wall_seconds": 56.399
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1004.json",
+      "seed": 1004,
+      "wall_seconds": 60.089
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1005.json",
+      "seed": 1005,
+      "wall_seconds": 58.37
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1006.json",
+      "seed": 1006,
+      "wall_seconds": 62.498
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1007.json",
+      "seed": 1007,
+      "wall_seconds": 56.624
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1008.json",
+      "seed": 1008,
+      "wall_seconds": 66.614
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1009.json",
+      "seed": 1009,
+      "wall_seconds": 66.857
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1010.json",
+      "seed": 1010,
+      "wall_seconds": 68.959
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1011.json",
+      "seed": 1011,
+      "wall_seconds": 65.651
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1012.json",
+      "seed": 1012,
+      "wall_seconds": 66.994
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1013.json",
+      "seed": 1013,
+      "wall_seconds": 59.687
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1014.json",
+      "seed": 1014,
+      "wall_seconds": 56.995
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1015.json",
+      "seed": 1015,
+      "wall_seconds": 65.684
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1016.json",
+      "seed": 1016,
+      "wall_seconds": 59.814
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1017.json",
+      "seed": 1017,
+      "wall_seconds": 66.865
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1018.json",
+      "seed": 1018,
+      "wall_seconds": 69.29
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1019.json",
+      "seed": 1019,
+      "wall_seconds": 80.591
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1020.json",
+      "seed": 1020,
+      "wall_seconds": 70.721
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1021.json",
+      "seed": 1021,
+      "wall_seconds": 73.026
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1022.json",
+      "seed": 1022,
+      "wall_seconds": 98.372
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1023.json",
+      "seed": 1023,
+      "wall_seconds": 74.617
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1024.json",
+      "seed": 1024,
+      "wall_seconds": 79.129
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1025.json",
+      "seed": 1025,
+      "wall_seconds": 93.185
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1026.json",
+      "seed": 1026,
+      "wall_seconds": 92.822
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1027.json",
+      "seed": 1027,
+      "wall_seconds": 95.131
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1028.json",
+      "seed": 1028,
+      "wall_seconds": 100.864
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1029.json",
+      "seed": 1029,
+      "wall_seconds": 102.903
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1030.json",
+      "seed": 1030,
+      "wall_seconds": 102.102
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1031.json",
+      "seed": 1031,
+      "wall_seconds": 107.691
+    },
+    {
+      "arm": "random_static",
+      "failures": 0,
+      "manifest_path": "random_static__seed1032.json",
+      "seed": 1032,
+      "wall_seconds": 99.479
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1001.json",
+      "seed": 1001,
+      "wall_seconds": 67.833
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1002.json",
+      "seed": 1002,
+      "wall_seconds": 64.104
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1003.json",
+      "seed": 1003,
+      "wall_seconds": 76.938
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1004.json",
+      "seed": 1004,
+      "wall_seconds": 77.174
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1005.json",
+      "seed": 1005,
+      "wall_seconds": 71.649
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1006.json",
+      "seed": 1006,
+      "wall_seconds": 63.597
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1007.json",
+      "seed": 1007,
+      "wall_seconds": 63.08
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1008.json",
+      "seed": 1008,
+      "wall_seconds": 52.508
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1009.json",
+      "seed": 1009,
+      "wall_seconds": 56.807
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1010.json",
+      "seed": 1010,
+      "wall_seconds": 80.616
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1011.json",
+      "seed": 1011,
+      "wall_seconds": 57.156
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1012.json",
+      "seed": 1012,
+      "wall_seconds": 53.547
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1013.json",
+      "seed": 1013,
+      "wall_seconds": 65.788
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1014.json",
+      "seed": 1014,
+      "wall_seconds": 89.278
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1015.json",
+      "seed": 1015,
+      "wall_seconds": 62.817
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1016.json",
+      "seed": 1016,
+      "wall_seconds": 71.261
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1017.json",
+      "seed": 1017,
+      "wall_seconds": 53.862
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1018.json",
+      "seed": 1018,
+      "wall_seconds": 78.374
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1019.json",
+      "seed": 1019,
+      "wall_seconds": 63.196
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1020.json",
+      "seed": 1020,
+      "wall_seconds": 68.101
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1021.json",
+      "seed": 1021,
+      "wall_seconds": 90.556
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1022.json",
+      "seed": 1022,
+      "wall_seconds": 73.489
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1023.json",
+      "seed": 1023,
+      "wall_seconds": 111.763
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1024.json",
+      "seed": 1024,
+      "wall_seconds": 78.438
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1025.json",
+      "seed": 1025,
+      "wall_seconds": 77.263
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1026.json",
+      "seed": 1026,
+      "wall_seconds": 92.085
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1027.json",
+      "seed": 1027,
+      "wall_seconds": 70.47
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1028.json",
+      "seed": 1028,
+      "wall_seconds": 100.718
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1029.json",
+      "seed": 1029,
+      "wall_seconds": 109.833
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1030.json",
+      "seed": 1030,
+      "wall_seconds": 79.63
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1031.json",
+      "seed": 1031,
+      "wall_seconds": 96.062
+    },
+    {
+      "arm": "single_leaderboard",
+      "failures": 0,
+      "manifest_path": "single_leaderboard__seed1032.json",
+      "seed": 1032,
+      "wall_seconds": 85.6
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1001.json",
+      "seed": 1001,
+      "wall_seconds": 98.89
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1002.json",
+      "seed": 1002,
+      "wall_seconds": 117.284
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1003.json",
+      "seed": 1003,
+      "wall_seconds": 109.839
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1004.json",
+      "seed": 1004,
+      "wall_seconds": 95.309
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1005.json",
+      "seed": 1005,
+      "wall_seconds": 137.266
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1006.json",
+      "seed": 1006,
+      "wall_seconds": 120.132
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1007.json",
+      "seed": 1007,
+      "wall_seconds": 100.227
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1008.json",
+      "seed": 1008,
+      "wall_seconds": 128.108
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1009.json",
+      "seed": 1009,
+      "wall_seconds": 79.828
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1010.json",
+      "seed": 1010,
+      "wall_seconds": 141.348
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1011.json",
+      "seed": 1011,
+      "wall_seconds": 116.358
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1012.json",
+      "seed": 1012,
+      "wall_seconds": 152.449
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1013.json",
+      "seed": 1013,
+      "wall_seconds": 92.568
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1014.json",
+      "seed": 1014,
+      "wall_seconds": 182.453
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1015.json",
+      "seed": 1015,
+      "wall_seconds": 138.852
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1016.json",
+      "seed": 1016,
+      "wall_seconds": 121.016
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1017.json",
+      "seed": 1017,
+      "wall_seconds": 96.427
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1018.json",
+      "seed": 1018,
+      "wall_seconds": 139.831
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1019.json",
+      "seed": 1019,
+      "wall_seconds": 105.928
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1020.json",
+      "seed": 1020,
+      "wall_seconds": 96.961
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1021.json",
+      "seed": 1021,
+      "wall_seconds": 118.06
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1022.json",
+      "seed": 1022,
+      "wall_seconds": 130.321
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1023.json",
+      "seed": 1023,
+      "wall_seconds": 112.917
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1024.json",
+      "seed": 1024,
+      "wall_seconds": 77.41
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1025.json",
+      "seed": 1025,
+      "wall_seconds": 77.582
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1026.json",
+      "seed": 1026,
+      "wall_seconds": 88.487
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1027.json",
+      "seed": 1027,
+      "wall_seconds": 78.313
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1028.json",
+      "seed": 1028,
+      "wall_seconds": 90.842
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1029.json",
+      "seed": 1029,
+      "wall_seconds": 93.46
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1030.json",
+      "seed": 1030,
+      "wall_seconds": 62.159
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1031.json",
+      "seed": 1031,
+      "wall_seconds": 126.569
+    },
+    {
+      "arm": "map_elites",
+      "failures": 0,
+      "manifest_path": "map_elites__seed1032.json",
+      "seed": 1032,
+      "wall_seconds": 106.396
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1001.json",
+      "seed": 1001,
+      "wall_seconds": 116.399
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1002.json",
+      "seed": 1002,
+      "wall_seconds": 182.583
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1003.json",
+      "seed": 1003,
+      "wall_seconds": 135.572
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1004.json",
+      "seed": 1004,
+      "wall_seconds": 144.743
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1005.json",
+      "seed": 1005,
+      "wall_seconds": 149.992
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1006.json",
+      "seed": 1006,
+      "wall_seconds": 142.033
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1007.json",
+      "seed": 1007,
+      "wall_seconds": 134.821
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1008.json",
+      "seed": 1008,
+      "wall_seconds": 145.457
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1009.json",
+      "seed": 1009,
+      "wall_seconds": 110.481
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1010.json",
+      "seed": 1010,
+      "wall_seconds": 151.762
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1011.json",
+      "seed": 1011,
+      "wall_seconds": 147.832
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1012.json",
+      "seed": 1012,
+      "wall_seconds": 115.686
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1013.json",
+      "seed": 1013,
+      "wall_seconds": 100.557
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1014.json",
+      "seed": 1014,
+      "wall_seconds": 132.587
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1015.json",
+      "seed": 1015,
+      "wall_seconds": 127.571
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1016.json",
+      "seed": 1016,
+      "wall_seconds": 146.616
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1017.json",
+      "seed": 1017,
+      "wall_seconds": 139.705
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1018.json",
+      "seed": 1018,
+      "wall_seconds": 135.313
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1019.json",
+      "seed": 1019,
+      "wall_seconds": 123.421
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1020.json",
+      "seed": 1020,
+      "wall_seconds": 112.635
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1021.json",
+      "seed": 1021,
+      "wall_seconds": 114.743
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1022.json",
+      "seed": 1022,
+      "wall_seconds": 117.262
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1023.json",
+      "seed": 1023,
+      "wall_seconds": 135.231
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1024.json",
+      "seed": 1024,
+      "wall_seconds": 125.751
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1025.json",
+      "seed": 1025,
+      "wall_seconds": 105.179
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1026.json",
+      "seed": 1026,
+      "wall_seconds": 124.301
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1027.json",
+      "seed": 1027,
+      "wall_seconds": 114.808
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1028.json",
+      "seed": 1028,
+      "wall_seconds": 101.575
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1029.json",
+      "seed": 1029,
+      "wall_seconds": 118.907
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1030.json",
+      "seed": 1030,
+      "wall_seconds": 123.061
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1031.json",
+      "seed": 1031,
+      "wall_seconds": 162.085
+    },
+    {
+      "arm": "staged_funding",
+      "failures": 0,
+      "manifest_path": "staged_funding__seed1032.json",
+      "seed": 1032,
+      "wall_seconds": 134.743
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1001.json",
+      "seed": 1001,
+      "wall_seconds": 190.822
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1002.json",
+      "seed": 1002,
+      "wall_seconds": 306.661
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1003.json",
+      "seed": 1003,
+      "wall_seconds": 200.245
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1004.json",
+      "seed": 1004,
+      "wall_seconds": 187.435
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1005.json",
+      "seed": 1005,
+      "wall_seconds": 254.194
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1006.json",
+      "seed": 1006,
+      "wall_seconds": 231.82
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1007.json",
+      "seed": 1007,
+      "wall_seconds": 207.04
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1008.json",
+      "seed": 1008,
+      "wall_seconds": 210.57
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1009.json",
+      "seed": 1009,
+      "wall_seconds": 195.528
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1010.json",
+      "seed": 1010,
+      "wall_seconds": 229.503
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1011.json",
+      "seed": 1011,
+      "wall_seconds": 228.677
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1012.json",
+      "seed": 1012,
+      "wall_seconds": 187.009
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1013.json",
+      "seed": 1013,
+      "wall_seconds": 154.267
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1014.json",
+      "seed": 1014,
+      "wall_seconds": 200.095
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1015.json",
+      "seed": 1015,
+      "wall_seconds": 254.762
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1016.json",
+      "seed": 1016,
+      "wall_seconds": 226.743
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1017.json",
+      "seed": 1017,
+      "wall_seconds": 216.926
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1018.json",
+      "seed": 1018,
+      "wall_seconds": 189.161
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1019.json",
+      "seed": 1019,
+      "wall_seconds": 177.973
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1020.json",
+      "seed": 1020,
+      "wall_seconds": 138.443
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1021.json",
+      "seed": 1021,
+      "wall_seconds": 215.595
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1022.json",
+      "seed": 1022,
+      "wall_seconds": 172.439
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1023.json",
+      "seed": 1023,
+      "wall_seconds": 214.291
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1024.json",
+      "seed": 1024,
+      "wall_seconds": 201.818
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1025.json",
+      "seed": 1025,
+      "wall_seconds": 170.08
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1026.json",
+      "seed": 1026,
+      "wall_seconds": 171.71
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1027.json",
+      "seed": 1027,
+      "wall_seconds": 197.412
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1028.json",
+      "seed": 1028,
+      "wall_seconds": 192.763
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1029.json",
+      "seed": 1029,
+      "wall_seconds": 152.571
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1030.json",
+      "seed": 1030,
+      "wall_seconds": 207.48
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1031.json",
+      "seed": 1031,
+      "wall_seconds": 245.107
+    },
+    {
+      "arm": "static",
+      "failures": 0,
+      "manifest_path": "static__seed1032.json",
+      "seed": 1032,
+      "wall_seconds": 240.225
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1001.json",
+      "seed": 1001,
+      "wall_seconds": 141.664
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1002.json",
+      "seed": 1002,
+      "wall_seconds": 173.291
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1003.json",
+      "seed": 1003,
+      "wall_seconds": 129.234
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1004.json",
+      "seed": 1004,
+      "wall_seconds": 173.497
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1005.json",
+      "seed": 1005,
+      "wall_seconds": 201.406
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1006.json",
+      "seed": 1006,
+      "wall_seconds": 149.792
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1007.json",
+      "seed": 1007,
+      "wall_seconds": 174.782
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1008.json",
+      "seed": 1008,
+      "wall_seconds": 156.029
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1009.json",
+      "seed": 1009,
+      "wall_seconds": 122.998
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1010.json",
+      "seed": 1010,
+      "wall_seconds": 151.059
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1011.json",
+      "seed": 1011,
+      "wall_seconds": 152.255
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1012.json",
+      "seed": 1012,
+      "wall_seconds": 122.159
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1013.json",
+      "seed": 1013,
+      "wall_seconds": 123.752
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1014.json",
+      "seed": 1014,
+      "wall_seconds": 150.922
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1015.json",
+      "seed": 1015,
+      "wall_seconds": 137.547
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1016.json",
+      "seed": 1016,
+      "wall_seconds": 140.16
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1017.json",
+      "seed": 1017,
+      "wall_seconds": 128.901
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1018.json",
+      "seed": 1018,
+      "wall_seconds": 145.522
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1019.json",
+      "seed": 1019,
+      "wall_seconds": 92.506
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1020.json",
+      "seed": 1020,
+      "wall_seconds": 79.455
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1021.json",
+      "seed": 1021,
+      "wall_seconds": 73.531
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1022.json",
+      "seed": 1022,
+      "wall_seconds": 55.265
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1023.json",
+      "seed": 1023,
+      "wall_seconds": 57.041
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1024.json",
+      "seed": 1024,
+      "wall_seconds": 51.886
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1025.json",
+      "seed": 1025,
+      "wall_seconds": 43.636
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1026.json",
+      "seed": 1026,
+      "wall_seconds": 50.57
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1027.json",
+      "seed": 1027,
+      "wall_seconds": 50.705
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1028.json",
+      "seed": 1028,
+      "wall_seconds": 42.363
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1029.json",
+      "seed": 1029,
+      "wall_seconds": 45.361
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1030.json",
+      "seed": 1030,
+      "wall_seconds": 40.593
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1031.json",
+      "seed": 1031,
+      "wall_seconds": 42.925
+    },
+    {
+      "arm": "uncapped",
+      "failures": 0,
+      "manifest_path": "uncapped__seed1032.json",
+      "seed": 1032,
+      "wall_seconds": 41.135
+    }
+  ],
+  "scenario": "batch",
+  "seeds": [
+    1001,
+    1002,
+    1003,
+    1004,
+    1005,
+    1006,
+    1007,
+    1008,
+    1009,
+    1010,
+    1011,
+    1012,
+    1013,
+    1014,
+    1015,
+    1016,
+    1017,
+    1018,
+    1019,
+    1020,
+    1021,
+    1022,
+    1023,
+    1024,
+    1025,
+    1026,
+    1027,
+    1028,
+    1029,
+    1030,
+    1031,
+    1032
+  ],
+  "validation_environment": "utility_maximizing_market",
+  "wall_seconds": 3090.007,
+  "workers": 8
+}

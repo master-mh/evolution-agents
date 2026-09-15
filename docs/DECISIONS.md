@@ -6019,3 +6019,51 @@ out as a Slice G decision, not this one.
   policy v1's propose-on-every-wake; the review never running; the review approving any request
   carrying a flooding signal; ignoring the proposal kind; ignoring the book; slots served oldest grant
   first; slot order ignoring how long a Cell has waited.
+
+## ADR-096: Phase 3's pre-registered run found no selection effect — reported as the result, not tuned into one
+
+- **Status:** Accepted
+- **Spec ref:** §28 Phase 3 and its soft gate, Amendment A1 (pre-registration), §7.4 (scope caveat),
+  §9.4 (founder-effect control), §29.6 (evolved populations outperform random controls)
+
+- **Context:** `docs/PHASE3_PREREGISTRATION.md` (9bb866c) declared five hypotheses, their metrics,
+  directions and intervals, seven arms and seeds 1001–1032 before any confirmatory run. The batch ran once
+  from that commit: 224 runs, no failures, no saturation, conservation intact, USD_REAL unmoved.
+
+- **Decision — the result, recorded as the result** (`docs/PHASE3_RESULTS.md`):
+  - **H1, the gate's selection effect: not supported.** `staged_funding − random_eligible` on second-half
+    revenue per concluded experiment: −2.86, unpaired 95% CI [−6.59, +0.83]. The soft gate's selection
+    item is **not met**.
+  - H3 (staged vs flat funding): not supported, −2.26 [−6.15, +1.55].
+  - H4 (lineage cap vs none): supported, +0.117 founder share [+0.083, +0.151]. The one mechanism this run
+    shows working as §9.4 intends.
+  - H2 (MAP-Elites vs leaderboard on distinct genomes) and H5 (shifting vs static market on final price):
+    supported as registered — and both qualified by **post hoc** checks that change no verdict: H2's gain
+    is headcount (distinct genomes per living Cell is *lower* under MAP-Elites, −0.032 [−0.052, −0.013]),
+    and H5's price response is as large under `random_eligible` (difference-in-differences −1.96
+    [−6.24, +2.38]).
+  - Cohorts and reciprocal credit: untested, as declared.
+  - Phase 4 is not blocked: §28 makes the gate soft and the deeper validation a parallel track.
+
+- **What it displaced, and why:**
+  - *Rerunning with more seeds, a longer horizon, another metric or the paired interval H1's new variance
+    ratio would favour.* Every one is a second look chosen after seeing the first. H1's paired interval also
+    includes zero ([−6.00, +0.28]), so no interval choice would have changed the verdict — but that is
+    checked, not the reason.
+  - *Reading H2 and H5 as evidence of selection.* Each metric was registered as the test, and each passes;
+    the post hoc checks show what they measured. Reporting the pass without the check would let a
+    headcount effect and a policy-independent price response stand in for the selection effect H1 did not
+    find.
+  - *Calling `random_eligible` a null control.* A child may reproduce only once it has sold (100 USD_SIM at
+    birth, 150 to be eligible), so the baseline is weak selection on sales. The pre-registration already
+    said so for H5; it bears on H1 as well.
+
+- **Candidate reasons, for the parallel track and explicitly untested:** the default lineage cap refuses
+  most births under concentrating policies (`staged_funding` bred 14.7 Cells per run against
+  `random_eligible`'s 59.2), and a birth changes price only when the pricing operator is drawn (1 in 7);
+  cumulative-revenue fitness keeps favouring pre-shift earners; nothing dies; the planted signal is weak
+  before the shift (expected revenue per attempt 280/270/250 at the founders' prices). Each is a design
+  for a *new* pre-registration, logged in FUTURE_BUILD_HOOKS.md — none is a reason to reread this one.
+
+- **Scope (§7.4):** this validates, or here fails to validate, the selection machinery given a signal we
+  planted. It says nothing about LLM-driven Cells.

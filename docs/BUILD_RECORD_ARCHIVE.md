@@ -6,6 +6,48 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-15 — Slice H, part 1: Phase 3's arm settings, and the stall that hid every comparison (ADR-094, ADR-095)
+
+Phase 3's pre-registered comparisons need two settings that are not selection policies and metrics that
+headcount cannot move. Building them, the first pilot showed every arm had stopped experimenting at
+epoch 27. The stall is fixed before any comparison is run or pre-registered.
+
+### What shipped
+
+- **Arm grammar** (`batch.parse_arm`): `LABEL=POLICY[+static_market][+lineage_cap=F]`; `batch.json`
+  records every label's settings. A static market (`environment.STATIC`) is the shifting market minus the
+  shift, drawing identical numbers. `RunConfig.lineage_cap` is applied before founding, refused against
+  a colony configured otherwise, and read back into the manifest.
+- **Metrics:** `revenue_per_concluded_experiment`, `second_half_revenue_per_concluded_experiment`,
+  `final_mean_price_minor_units` (from a new `EpochRecord.mean_price_minor_units`).
+- **Policy version 2** proposes on its research cycle only. The runner individually approves synthetic
+  experiment requests flagged for flooding alone, and serves slots to the Cells that have waited longest.
+- **Declared untested, per the operator:** shared knowledge vs isolated cohorts, and reciprocal-credit
+  attacks — the simulator represents neither.
+
+### Found
+
+- **The stall (ADR-095):** a proposal on every wake × a wake on every approval → a flood → §23.4's
+  `queue_flooding` → a request that never ages out of a simulated run (the queue runs on wall time) →
+  every later request from that lineage flagged. Approvals stopped at 500 by epoch 7; the backlog ran
+  out at epoch 26. The retained benchmark and ADR-084's pilot ran this policy; the earlier "saturation
+  trap" reading of the benchmark was partly this.
+- **A teeth-check miss on the first pass:** a static-market test compared against another instance of
+  the same class, which shares the bug under test. Now checked against each family's pre-shift rule.
+- `environment.py`'s comment said willingness to pay scales with the Cell's price; the code uses a fixed
+  500.
+
+### Verification
+
+46 new tests (37 + 9); 24 teeth-checks in isolated copies, all CAUGHT on the intended assertion after the
+one test fix; golden run unchanged (the simulator is not in it); ruff and the docs-facts check clean.
+
+### Landed after this entry (same day)
+
+- **9bb866c** — `docs/PHASE3_PREREGISTRATION.md`, committed before the confirmatory batch: seven arms,
+  seeds 1001–1032, 60 epochs, five hypotheses with declared directions, and a paired or unpaired
+  interval per metric fixed from a design pilot on seeds 1–8.
+
 ## 2026-09-15 — Workflow structure is a gene the kernel runs (ADR-093)
 
 Ninth of the research-driven slices: the agent-swarm item. How a Cell thinks — one pass, a draft

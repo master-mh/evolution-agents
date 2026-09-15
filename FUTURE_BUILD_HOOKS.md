@@ -1820,3 +1820,22 @@ actually queued for building — this file is memory, not a backlog to work thro
   selection arms had most births refused, so "selection vs random" at that cap partly compares policies
   the cap lets reproduce against one it rarely stops. Worth a crossed design (policy × cap) once the
   single comparisons are in.
+- **A run's `code_version` names HEAD, not the tree it ran (found in Slice H).** `runner._code_version`
+  reads `git rev-parse --short HEAD`, so a run from an uncommitted working tree records the last commit
+  and nothing about the changes. Slice H's design pilot manifests say `ee79495` though they ran the
+  ADR-094/095 code committed later as 3256737. The pre-registered confirmatory batch ran from a clean
+  tree and is unaffected. Appending `-dirty` (or a digest of `git diff HEAD`) when the tree is modified
+  would make the field stop vouching for code it never saw.
+- **Phase 3's parallel track: why no selection effect? (ADR-096).** Each candidate is a *new*
+  pre-registration with fresh seeds, never a reread of `docs/PHASE3_RESULTS.md`:
+  - *Births, not policy.* `staged_funding` bred 14.7 Cells per run against `random_eligible`'s 59.2, most
+    refused by the 0.2 lineage cap, and only 1 birth in 7 draws the pricing operator. A crossed design
+    (policy × cap), or a pricing-only mutation schedule, separates "selects badly" from "selects rarely".
+  - *A null control that is null.* `random_eligible` reproduces only Cells that have sold (a child needs
+    150 USD_SIM and is born with 100). A control drawing uniformly from all living Cells would measure
+    selection against no selection at all.
+  - *Regime-aware fitness.* Cumulative revenue favours pre-shift earners; a windowed or decayed revenue
+    axis in `candidate.py` is the §8.4 question.
+  - *Deaths.* Immortal founders hold population means and slots for the whole run.
+  - *Per-Cell diversity.* `final_distinct_genomes` counts heads; H2 passed on headcount. A registered
+    diversity metric should be a rate.

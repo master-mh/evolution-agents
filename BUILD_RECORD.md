@@ -41,44 +41,41 @@ effect, two measurement instruments (judge entanglement and evaluator
 epochs), verbalized sampling as a genome sampling policy, Amendment A20
 naming collusion and counterparty deception, a teeth-check runner that
 cannot touch the real tree, every *Disproved by:* pointer run and
-dated, and workflow structure as a gene the kernel runs, 2026-07-21
-through 2026-09-15):
+dated, workflow structure as a gene the kernel runs, and Slice H's arm
+settings and the simulator stall they uncovered, 2026-07-21 through
+2026-09-15):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-15 — Slice H, part 1: Phase 3's arm settings, and the stall that hid every comparison (ADR-094, ADR-095)
+## 2026-09-15 — Slice H, part 2: Phase 3's pre-registered run — no selection effect (ADR-096)
 
-Phase 3's pre-registered comparisons need two settings that are not selection policies and metrics that
-headcount cannot move. Building them, the first pilot showed every arm had stopped experimenting at
-epoch 27. The stall is fixed before any comparison is run or pre-registered.
+The pre-registration (9bb866c) was committed before the run; the confirmatory batch ran once from it; the
+result is recorded as it came out.
 
 ### What shipped
 
-- **Arm grammar** (`batch.parse_arm`): `LABEL=POLICY[+static_market][+lineage_cap=F]`; `batch.json`
-  records every label's settings. A static market (`environment.STATIC`) is the shifting market minus the
-  shift, drawing identical numbers. `RunConfig.lineage_cap` is applied before founding, refused against
-  a colony configured otherwise, and read back into the manifest.
-- **Metrics:** `revenue_per_concluded_experiment`, `second_half_revenue_per_concluded_experiment`,
-  `final_mean_price_minor_units` (from a new `EpochRecord.mean_price_minor_units`).
-- **Policy version 2** proposes on its research cycle only. The runner individually approves synthetic
-  experiment requests flagged for flooding alone, and serves slots to the Cells that have waited longest.
-- **Declared untested, per the operator:** shared knowledge vs isolated cohorts, and reciprocal-credit
-  attacks — the simulator represents neither.
+- `docs/PHASE3_RESULTS.md`: integrity, verdicts through each declared interval, the gate table, two post hoc
+  checks marked as such, per-arm descriptives, every `simulate-compare` invocation verbatim, and the design
+  pilot's effects beside the confirmatory ones.
+- `docs/benchmarks/phase3-confirmatory/`: `batch.json` and 224 manifests (6.2 MB), all at code version
+  9bb866c and policy version 2, so every comparison reruns from the artifact alone.
 
 ### Found
 
-- **The stall (ADR-095):** a proposal on every wake × a wake on every approval → a flood → §23.4's
-  `queue_flooding` → a request that never ages out of a simulated run (the queue runs on wall time) →
-  every later request from that lineage flagged. Approvals stopped at 500 by epoch 7; the backlog ran
-  out at epoch 26. The retained benchmark and ADR-084's pilot ran this policy; the earlier "saturation
-  trap" reading of the benchmark was partly this.
-- **A teeth-check miss on the first pass:** a static-market test compared against another instance of
-  the same class, which shares the bug under test. Now checked against each family's pre-shift rule.
-- `environment.py`'s comment said willingness to pay scales with the Cell's price; the code uses a fixed
-  500.
+- **H1, the gate's selection effect: not supported** (−2.86, CI [−6.59, +0.83]). H3 not supported. H4
+  supported: the lineage cap bounds founder share. H2 and H5 supported as registered, and post hoc checks
+  show H2's diversity gain is headcount and H5's price response is as large without revenue-ranked
+  selection.
+- **`random_eligible` is weak selection on sales, not random reproduction**: a child is eligible only once
+  it has sold.
+- **A run's `code_version` names HEAD, not the tree** — the design pilot's manifests name a commit older
+  than the code they ran. Logged.
+- The runtime estimate from the pilot was low: 3,090 s, not ~1,800.
 
 ### Verification
 
-46 new tests (37 + 9); 24 teeth-checks in isolated copies, all CAUGHT on the intended assertion after the
-one test fix; golden run unchanged (the simulator is not in it); ruff and the docs-facts check clean.
+Code unchanged since 3256737; full suite, golden run, ruff and docs-facts re-run before this commit. Every
+verdict in the results document is the analysis script's output; every interval reruns from the artifact.
 
-- Next: the Phase 3 pre-registration (committed before any confirmatory batch), then the runs.
+- Next: Phase 3's parallel track needs a new pre-registration, not a reread of this one (candidates in
+  FUTURE_BUILD_HOOKS.md); Phase 4 is not blocked. Still open: ADR-089's verbalized-sampling twin, and the
+  claim-drift routine once GitHub access is granted.

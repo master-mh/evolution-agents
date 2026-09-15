@@ -1066,9 +1066,14 @@
   structure *improves* a proposal is unmeasured — a twin is logged. *Disproved by:* a structure in
   `genome.WORKFLOW_STRUCTURES` whose wake makes one call (`test_every_declared_structure_has_a_runner`).
 
-- [ ] **Slice H — Phase 3's pre-registered comparisons — arm settings and a simulator stall fixed
-  2026-09-15 (ADR-094, ADR-095); pre-registration committed (`docs/PHASE3_PREREGISTRATION.md`);
-  the confirmatory batch and its analysis are next.**
+- [x] **Slice H — Phase 3's pre-registered comparisons — DONE 2026-09-15 (ADR-094, ADR-095, ADR-096);
+  the soft gate's selection item is NOT met.** Pre-registered in 9bb866c, run once (224 runs, seeds
+  1001–1032). H1, `staged_funding − random_eligible` on second-half revenue per concluded experiment:
+  −2.86, CI [−6.59, +0.83], not supported. H3 not supported. H4 supported (the lineage cap bounds founder
+  share). H2 and H5 supported as registered, but post hoc checks show H2 is headcount and H5's price
+  response appears as strongly under `random_eligible`. Full account: `docs/PHASE3_RESULTS.md`. Phase 4 is
+  not blocked (§28); the parallel track's candidates are in FUTURE_BUILD_HOOKS.md and each needs a new
+  pre-registration. The bullets below are the entry as it stood before the run.
   §28 Phase 3 asks for six comparisons and a soft gate, reported with §7.4's scope caveat.
   - **Representable:** selection vs random (`staged_funding` or `pareto` vs `random_eligible`),
     MAP-Elites vs single leaderboard, staged vs flat funding (`staged_funding` vs `map_elites`, which
@@ -1099,8 +1104,9 @@
     founders never die and dominate it.
   - The implementation brief's Slice H text is not in the repository; SPEC §28 Phase 3, Amendment A1
     and §7.4 are the normative source.
-  *Disproved by:* `docs/benchmarks/phase3-confirmatory/batch.json` existing in a commit, or a Phase 3
-  comparison manifest whose `policy_version` is `"1"`.
+  *Disproved by:* a `simulate-compare` rerun against `docs/benchmarks/phase3-confirmatory` whose output
+  differs from the verbatim block in `docs/PHASE3_RESULTS.md`, or a manifest there whose `code_version` is
+  not `9bb866c`.
 
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
@@ -1126,5 +1132,6 @@
   `product.durable`/`product.quality` (`RuleBasedMarket`'s standard/premium tiers), and no founder
   starts priced in the one tier that is reachable; same-family validation or no validation
   reproduces fine. Two fixes are named in `FUTURE_BUILD_HOOKS.md`, neither built (out of Slice G's
-  scope). **Next actionable work is Slice H**: the pre-registration document plus the six required
-  Phase 3 comparison runs — pick a policy/validation combination known to reproduce.
+  scope). **Slice H is done (ADR-094 to ADR-096):** Phase 3's pre-registered run found no selection effect, so
+  the soft gate's selection item is not met (`docs/PHASE3_RESULTS.md`). Phase 4 is not blocked; Phase 3's
+  parallel track needs a new pre-registration.
