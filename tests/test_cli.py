@@ -1,3 +1,4 @@
+import socket
 from pathlib import Path
 
 import pytest
@@ -848,13 +849,17 @@ def test_record_revenue_to_unknown_cell_exits_nonzero(tmp_path, capsys):
     assert "no such cell" in capsys.readouterr().err
 
 
-def test_ollama_provider_needs_no_spend_confirmation(tmp_path, capsys):
+def test_ollama_provider_needs_no_spend_confirmation(tmp_path, capsys, monkeypatch):
     """Local inference costs nothing, so gating it behind
     --yes-spend-real-money would train the operator to pass that flag by
     habit — which is the flag protecting real money."""
     db_path, cell_id = _init_and_cell(tmp_path, capsys)
     _fund_for_calls(db_path, cell_id)
     capsys.readouterr()
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed_port = probe.getsockname()[1]
+    monkeypatch.setenv("OLLAMA_HOST", f"http://127.0.0.1:{closed_port}")
 
     # Reaches the provider rather than being refused for want of a confirmation
     # flag, and exits 0 either way — a provider that is down is an outcome the
@@ -867,22 +872,15 @@ def test_ollama_provider_needs_no_spend_confirmation(tmp_path, capsys):
     combined = captured.out + captured.err
     assert "yes-spend-real-money" not in combined
 
-    # Deliberately tolerant of BOTH outcomes. This originally asserted
-    # `status: failed` and "ollama serve", which was only ever true because no
-    # Ollama server happened to be running on the dev machine — installing one
-    # turned it red. Whether a local daemon is up is not what this test is
-    # about; what it is about is that local inference needs no spend
-    # confirmation and moves no real money. Asserting the environment instead
-    # of the property is how a test starts reporting on the machine it runs on.
-    if "status:    failed" in captured.out:
-        # A refused connection (no daemon) names the fix. A daemon that is up
-        # but too busy to answer in time is a third environment outcome — met
-        # while live model runs saturated it — and "ollama serve" would be the
-        # wrong advice for it.
-        if "TimeoutError" not in captured.out:
-            assert "ollama serve" in captured.out, "a down provider names the fix"
-    else:
-        assert "status:    succeeded" in captured.out
+    # Hermetic: OLLAMA_HOST points at a loopback port nothing listens on, so
+    # the outcome is always a refused connection. This test used to read
+    # whatever daemon the machine had, and so reported on the machine rather
+    # than the property — red once a daemon was installed, then red again when
+    # one was up but too busy to answer (a timeout), and again when its GPU
+    # backend failed (a Metal library error). Tolerating each outcome as it
+    # appeared was patching symptoms of reading the environment at all.
+    assert "status:    failed" in captured.out
+    assert "ollama serve" in captured.out, "a down provider names the fix"
     assert "settled 0.00 USD_REAL" in captured.out, "local inference is free in money"
 
 
