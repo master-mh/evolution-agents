@@ -1778,7 +1778,8 @@ actually queued for building — this file is memory, not a backlog to work thro
   - *Re-measure on capability growth*: ADR-050's ~1 idea per run, ADR-087's constant judge, and
     ADR-089's `llama3.2` format failure are all properties of today's local models. Re-run the harness
     when the resident models change, before building on any of them.
-- **The claim-drift routine adjudicates; it must not edit (ADR-092).** Its prompt tells it to report
+- **The claim-drift routine adjudicates; it must not edit (ADR-092).** Not yet created (HTTP 403: no
+  GitHub access from claude.ai to this private repository). Its prompt tells it to report
   RE-READ entries with a verdict and open no pull request. If it is ever given write access, route its
   edits through a reviewed PR — a model rewriting the file of claims it is judging is the §0.3 shape.
 - **A critic step from a different family (ADR-093).** `iterative_refinement` is self-critique: one

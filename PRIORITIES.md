@@ -1047,7 +1047,8 @@
   repository (CLI verbs, files, `module.name` by AST, migration tables) and dates each resolving
   token with git against the `git blame` date of the pointer's line, flagging `RE-READ` only when a
   token is newer than the entry. Resolution alone flagged every open entry, which is why dating
-  exists. It reports and never decides; a weekly routine runs it and adjudicates only what it flags.
+  exists. It reports and never decides; a weekly routine to run it is specified in `scripts/README.md`
+  but not created (HTTP 403: no GitHub access to this private repository from claude.ai).
   **Found by reading while building it:** this file's §23.2 liability entry said the wrong claim was
   "still copied into `approval.py`" — that comment had already been corrected. *Disproved by:* an
   open entry naming a token introduced after the entry was written that

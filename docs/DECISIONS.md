@@ -5808,10 +5808,13 @@ out as a Slice G decision, not this one.
   only a reader can confirm); an LLM reading PRIORITIES.md end to end (§24.3: deterministic tools
   first, model second — the model belongs after the grep, adjudicating only what it flags).
 
-- **Its weekly run is a routine, created disabled.** The prompt runs the script and adjudicates
-  only the entries it flags — STALE, STILL TRUE or NARROWED, each with file:line evidence — and
-  forbids edits, commits and pull requests: a model rewriting the file of claims it is judging
-  is the §0.3 shape. The operator enables it.
+- **Its weekly run is meant to be a routine — not yet created.** The prompt runs the script and
+  adjudicates only the entries it flags — STALE, STILL TRUE or NARROWED, each with file:line evidence
+  — and forbids edits, commits and pull requests: a model rewriting the file of claims it is judging
+  is the §0.3 shape. *Corrected the same day:* this bullet first said the routine had been "created
+  disabled", written before the create call ran. The call then failed with HTTP 403 — the repository
+  is private and the claude.ai account has no GitHub access to it. Settings and prompt wait in
+  `scripts/README.md`.
 
 ## ADR-093: Workflow structure is a gene the kernel runs — a closed set of multi-call wakes, every call its own reservation
 

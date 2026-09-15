@@ -18,7 +18,10 @@ Eighth of the research-driven slices; tooling, no kernel change.
   introducing it against the `git blame` date of the pointer's line — and marks an entry `RE-READ`
   only when a token is newer than the pointer. `--selftest`; `--fail-on-resolved` for a stricter
   caller; it never edits the file.
-- A weekly Claude Code routine (created disabled) runs it and adjudicates only the entries it flags.
+- A weekly Claude Code routine to run it and adjudicate only what it flags — specified in
+  `scripts/README.md`, **not created**: the create call returned HTTP 403, since claude.ai has no
+  GitHub access to this private repository. (Corrected the same day; the entry first said "created
+  disabled", written before the call ran.)
 
 ### Found
 
@@ -35,8 +38,7 @@ Eighth of the research-driven slices; tooling, no kernel change.
 
 ### Verification
 
-`--selftest` passes; the live run's result is above. The routine's first run is left to the operator,
-who enables it.
+`--selftest` passes; the live run's result is above. The routine waits on GitHub access.
 
 ## 2026-09-15 — A teeth-check runner that cannot touch the real tree (ADR-091)
 
