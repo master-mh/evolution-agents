@@ -875,7 +875,12 @@ def test_ollama_provider_needs_no_spend_confirmation(tmp_path, capsys):
     # confirmation and moves no real money. Asserting the environment instead
     # of the property is how a test starts reporting on the machine it runs on.
     if "status:    failed" in captured.out:
-        assert "ollama serve" in captured.out, "a down provider names the fix"
+        # A refused connection (no daemon) names the fix. A daemon that is up
+        # but too busy to answer in time is a third environment outcome — met
+        # while live model runs saturated it — and "ollama serve" would be the
+        # wrong advice for it.
+        if "TimeoutError" not in captured.out:
+            assert "ollama serve" in captured.out, "a down provider names the fix"
     else:
         assert "status:    succeeded" in captured.out
     assert "settled 0.00 USD_REAL" in captured.out, "local inference is free in money"
