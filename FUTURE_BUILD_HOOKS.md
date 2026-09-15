@@ -1763,3 +1763,21 @@ actually queued for building — this file is memory, not a backlog to work thro
   records, judged by a different family from the Cell's (§24.3). Build it before any external channel
   lets a Cell send a message no person completes — a violation first detectable after it pays is the
   failure A20 was written to prevent.
+- **Watch list from the 2026-09-14 research briefing — do not build yet.** Each becomes relevant only
+  when its precondition lands; recorded so the reasoning is not rediscovered from scratch.
+  - *Agent payment rails* (x402's HTTP 402 payments, Google's AP2, the Agentic Commerce Protocol):
+    the first path by which a Cell could move money without a person completing the action. Every one
+    must enter through §27.1's autonomy flag and `_REAL_SPEND_TRANSACTION_TYPES`, never beside them.
+    Precondition: a rung-9 autonomy decision.
+  - *Agent-to-agent protocols* (A2A, MCP servers as counterparties): a Cell talking to another
+    organisation's agent is an external communication, so Amendment A20's detection (ADR-090) is owed
+    first, and a counterparty agent's reply is `UNTRUSTED_EXTERNAL` context.
+  - *Model changes and cache pricing*: a provider's new model or new prompt-caching price is a §24.2
+    regime change for both the Cells and the instruments (ADR-088's evaluator epochs). Re-baseline
+    before comparing across it.
+  - *Re-measure on capability growth*: ADR-050's ~1 idea per run, ADR-087's constant judge, and
+    ADR-089's `llama3.2` format failure are all properties of today's local models. Re-run the harness
+    when the resident models change, before building on any of them.
+- **The claim-drift routine adjudicates; it must not edit (ADR-092).** Its prompt tells it to report
+  RE-READ entries with a verdict and open no pull request. If it is ever given write access, route its
+  edits through a reviewed PR — a model rewriting the file of claims it is judging is the §0.3 shape.

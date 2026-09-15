@@ -5772,3 +5772,36 @@ out as a Slice G decision, not this one.
   (`AttributeError`) matched the test crashing on a missing `cache_clear` rather than failing on the
   property. `expect` narrows a false CAUGHT; only reading the assertion line removes one, which is
   why the agent's instructions require it.
+
+## ADR-092: Running every *Disproved by:* grep — and dating the answer
+
+- **Status:** Accepted (tooling; no kernel change)
+- **Spec ref:** PRIORITIES.md's 2026-08-22 convention ("an entry that asserts a blocker must name what
+  would disprove it")
+
+- **Context:** The convention exists because three blocker claims in one audit were wrong in the
+  same direction — the socket already existed. It made settling an entry "one grep", but nothing ran
+  the grep, and this repo's claim drift has been found by hand every time.
+
+- **Decision:** `scripts/check_disproved_by.py` extracts each open entry's backticked pointer tokens
+  and resolves them against the repository (CLI verbs by AST, files, `module.name` definitions by
+  AST, migration tables, kernel names). It then **dates** each resolving token with git — the commit
+  introducing it against the `git blame` date of the pointer's line — and marks an entry `RE-READ`
+  only when a token is newer than the pointer. It reports and never decides.
+
+- **The first version's result is why dating exists:** resolution alone flagged **9 of 9** open
+  entries, because most pointers name a symbol that existed when the entry was written — entries
+  *narrowed* or *split* around it on purpose. A report that flags everything is a report nobody reads.
+  With dating, today's answer is **0 of 9**: no open entry names a symbol that appeared after it was
+  written. A second defect found the same way: `git log -S death._budget_exhausted` matches nothing
+  because that dotted string never appears in source, so dotted tokens are dated by their last
+  component and files by the commit that added them.
+
+- **What it displaced:** failing CI on a resolving pointer (several pointers name a *behaviour*, which
+  only a reader can confirm); an LLM reading PRIORITIES.md end to end (§24.3: deterministic tools
+  first, model second — the model belongs after the grep, adjudicating only what it flags).
+
+- **Its weekly run is a routine, created disabled.** The prompt runs the script and adjudicates
+  only the entries it flags — STALE, STILL TRUE or NARROWED, each with file:line evidence — and
+  forbids edits, commits and pull requests: a model rewriting the file of claims it is judging
+  is the §0.3 shape. The operator enables it.

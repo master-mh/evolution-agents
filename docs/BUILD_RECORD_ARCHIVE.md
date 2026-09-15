@@ -6,6 +6,39 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-15 — A teeth-check runner that cannot touch the real tree (ADR-091)
+
+Seventh of the research-driven slices; tooling, no kernel change.
+
+### What shipped
+
+- `scripts/teeth_check.py` takes a JSON list of mutations (`file`, `old` occurring exactly once,
+  `new`, `test`, `expect`) and runs each in its own copy of the working tree — uncommitted work
+  included; `.git`, `.venv`, caches and colony databases excluded — with `PYTHONDONTWRITEBYTECODE=1`
+  and `PYTHONPATH` at the copy, in parallel. Verdicts: `CAUGHT`, `WRONG-FAILURE`, `MISS`, `INVALID`.
+  It fails loudly if the real tree's digest changed.
+- `.claude/agents/teeth-checker.md`: an agent that writes the mutation spec, runs the script and
+  reports each verdict with its assertion line, carrying this repo's rules about complete mutations
+  and secondary rules rescuing a mutation.
+- CLAUDE.md's teeth-check section points at both.
+
+### Found
+
+- **`PYTHONPATH` beats the editable install** — probed with a stub package before relying on it, so
+  a copy's `src/` really is what its test imports.
+- **`expect` narrows a false CAUGHT; it does not remove one.** Of 17 guards checked through it this
+  session, one `expect` (`AttributeError`) matched the test crashing on a missing `cache_clear` rather
+  than failing on the property. Reading the assertion line caught it; the test was rewritten not to
+  depend on the cache's API and re-checked.
+
+### Verification
+
+`tests/test_teeth_check.py` (3 tests) pins all four verdicts against a throwaway project — including
+an incomplete mutation that must report `WRONG-FAILURE` — and that the real tree is never touched.
+Used in anger for 17 mutations across the verbalized-sampling fix and the workflow gene.
+
+- Next: the claim-drift checker and its weekly routine; the workflow gene; then Slice H.
+
 ## 2026-09-15 — Collusion and counterparty deception are policy violations (ADR-090, Amendment A20)
 
 Sixth of the research-driven slices: a normative spec amendment, no code. **Flagged for the

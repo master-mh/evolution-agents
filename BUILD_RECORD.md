@@ -38,40 +38,39 @@ funding composing everything, and the cross-family validation deadlock it
 surfaced; the cross-policy acceptance harness), seed-paired batch
 comparisons, a sealed simulated run, tools naming what observes their
 effect, two measurement instruments (judge entanglement and evaluator
-epochs), verbalized sampling as a genome sampling policy, and
-Amendment A20 naming collusion and counterparty deception,
-2026-07-21 through 2026-09-15):
+epochs), verbalized sampling as a genome sampling policy, Amendment A20
+naming collusion and counterparty deception, and a teeth-check runner
+that cannot touch the real tree, 2026-07-21 through 2026-09-15):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-15 — A teeth-check runner that cannot touch the real tree (ADR-091)
+## 2026-09-15 — Every *Disproved by:* pointer, run and dated (ADR-092)
 
-Seventh of the research-driven slices; tooling, no kernel change.
+Eighth of the research-driven slices; tooling, no kernel change.
 
 ### What shipped
 
-- `scripts/teeth_check.py` takes a JSON list of mutations (`file`, `old` occurring exactly once,
-  `new`, `test`, `expect`) and runs each in its own copy of the working tree — uncommitted work
-  included; `.git`, `.venv`, caches and colony databases excluded — with `PYTHONDONTWRITEBYTECODE=1`
-  and `PYTHONPATH` at the copy, in parallel. Verdicts: `CAUGHT`, `WRONG-FAILURE`, `MISS`, `INVALID`.
-  It fails loudly if the real tree's digest changed.
-- `.claude/agents/teeth-checker.md`: an agent that writes the mutation spec, runs the script and
-  reports each verdict with its assertion line, carrying this repo's rules about complete mutations
-  and secondary rules rescuing a mutation.
-- CLAUDE.md's teeth-check section points at both.
+- `scripts/check_disproved_by.py` extracts each open PRIORITIES.md entry's backticked pointer tokens
+  and resolves them: CLI verbs through `check_docs_facts.cli_verbs`, files, `module.name` definitions
+  by AST, tables from migrations, kernel names. It dates each resolving token with git — the commit
+  introducing it against the `git blame` date of the pointer's line — and marks an entry `RE-READ`
+  only when a token is newer than the pointer. `--selftest`; `--fail-on-resolved` for a stricter
+  caller; it never edits the file.
+- A weekly Claude Code routine (created disabled) runs it and adjudicates only the entries it flags.
 
 ### Found
 
-- **`PYTHONPATH` beats the editable install** — probed with a stub package before relying on it, so
-  a copy's `src/` really is what its test imports.
-- **`expect` narrows a false CAUGHT; it does not remove one.** Of 17 guards checked through it this
-  session, one `expect` (`AttributeError`) matched the test crashing on a missing `cache_clear` rather
-  than failing on the property. Reading the assertion line caught it; the test was rewritten not to
-  depend on the cache's API and re-checked.
+- **Resolution alone flagged every open entry.** Most pointers name a symbol that existed when the
+  entry was written — entries narrowed or split around it on purpose. A report that flags everything
+  is a report nobody reads; with dating, the answer at commit time is **0 of 9** open entries (all 9 pointers resolve).
+- **Dotted tokens never date.** `git log -S death._budget_exhausted` matches nothing, because that
+  dotted string never appears in source. Dotted tokens are dated by their last component and files by
+  the commit that added them.
+- **One stale claim, found by reading rather than by the script.** The §23.2 liability entry said its
+  wrong claim was "still copied into `approval.py`'s `liability_minor_units` comment"; that comment
+  had already been corrected. The sentence is gone. (The script could not have caught it: the pointer
+  was right, and the stale sentence was prose around it.)
 
 ### Verification
 
-`tests/test_teeth_check.py` (3 tests) pins all four verdicts against a throwaway project — including
-an incomplete mutation that must report `WRONG-FAILURE` — and that the real tree is never touched.
-Used in anger for 17 mutations across the verbalized-sampling fix and the workflow gene.
-
-- Next: the claim-drift checker and its weekly routine; the workflow gene; then Slice H.
+`--selftest` passes; the live run's result is above. The routine's first run is left to the operator,
+who enables it.

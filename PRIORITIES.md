@@ -785,8 +785,7 @@
   classified as a `SPEND_DESTINATION` ("a provision the Cell's activity incurred — cost, not
   transfer"). **What is missing is a policy that posts to it**, not the account. Until one exists
   the payload prints "not modelled" rather than a fabricated zero, which stays correct.
-  *Disproved by:* `accounts.FIXED_ACCOUNTS`. The same wrong claim is still copied into
-  `approval.py`'s `liability_minor_units` comment.
+  *Disproved by:* `accounts.FIXED_ACCOUNTS`.
 - [x] **The grant consumer — DONE** (2026-08-22), ADR-029. `promotion.py` + migration 0016. §31's
   core loop ("... -> allocate capital -> ...") finally closes: an approved `spend_request` grant
   allocates from `promotion_pool` and wakes the Cell under §17.2's "capital allocation" reason —
@@ -1041,6 +1040,17 @@
   line — `expect` narrows the failure, it does not replace reading it. *Disproved by:* a
   `teeth_check.run` whose real tree's digest differs afterwards
   (`test_the_real_tree_is_never_touched`).
+
+- [x] **Every *Disproved by:* grep, run and dated — DONE** (2026-09-15), ADR-092.
+  `scripts/check_disproved_by.py` resolves each open entry's backticked pointers against the
+  repository (CLI verbs, files, `module.name` by AST, migration tables) and dates each resolving
+  token with git against the `git blame` date of the pointer's line, flagging `RE-READ` only when a
+  token is newer than the entry. Resolution alone flagged every open entry, which is why dating
+  exists. It reports and never decides; a weekly routine runs it and adjudicates only what it flags.
+  **Found by reading while building it:** this file's §23.2 liability entry said the wrong claim was
+  "still copied into `approval.py`" — that comment had already been corrected. *Disproved by:* an
+  open entry naming a token introduced after the entry was written that
+  `check_disproved_by.py` does not mark `RE-READ`.
 
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
