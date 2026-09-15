@@ -5889,3 +5889,133 @@ out as a Slice G decision, not this one.
   structure nothing runs; the review paying the draft budget; every wake recording a workflow. Full
   suite 1419 passed, with one environment-dependent CLI test failing and made hermetic in the preceding
   commit; golden run unchanged, since a prose `workflow` selects nothing.
+
+## ADR-094: Phase 3's non-policy settings are arm options, and its metrics are rates and traits headcount cannot move
+
+- **Status:** Accepted
+- **Spec ref:** §28 Phase 3 (six pre-registered comparisons), §8.4 (regime shifts are part of fitness
+  evaluation), §9.2/§9.4 (lineage caps, founder effects), §22.1 (isolated cohorts), §11 (evidence
+  credit), §7.4 (the circularity caveat), ADR-084 (seed-paired batches)
+
+- **Context:** Slice H's inventory (PRIORITIES.md, 2026-09-15) found two of §28's six comparisons had
+  no knob — `environment._REGIME_SHIFT_EPOCH` was hardcoded in both market families and
+  `max_lineage_population_fraction` could be set only once per colony through
+  `population.set_limits_if_absent` — and that no metric in `paired.METRICS` could show selection
+  without counting heads. `total_revenue_minor_units` rises with population under any policy, and
+  policies reproduce at very different rates (`random_eligible` once per epoch, `map_elites` once per
+  occupied niche). Price is the only genome trait `utility_maximizing_market` reads.
+
+- **Decision:**
+  - **An arm is `LABEL=POLICY[+static_market][+lineage_cap=F]`** (`batch.parse_arm`); a bare policy
+    name keeps meaning that policy with every default. An arm that changes a setting must carry its
+    own label, two labels with identical settings are refused, and `batch.json` records every label's
+    settings under `arm_settings`.
+  - **A static market is the shifting market minus the shift.** Both families take
+    `regime_shift_epoch` (`environment.STATIC` = never). `version` is unchanged, because every draw is
+    keyed by `name:version`: a static arm and a shifting arm at one seed draw identical numbers, are
+    identical economies until epoch 10, and pair by seed. A static arm's `staged_funding` validation
+    market is static too. The default stays the shifting market — §8.4 makes shifts part of fitness,
+    so this is a control arm, not a production option.
+  - **`RunConfig.lineage_cap`** is applied before founding through `set_limits_if_absent` and refused
+    when the colony already holds a different cap, before the run is recorded. The manifest records
+    `max_lineage_population_fraction` read back from `colony_config`, never copied from the request.
+    An unset cap adds no key to `config_hash`, so earlier configurations keep their hashes.
+  - **Three metrics:** `revenue_per_concluded_experiment`, its positional
+    `second_half_revenue_per_concluded_experiment` (`epochs[n // 2:]` — not "after the shift", so a
+    static and a shifting arm are read over the same epochs), and `final_mean_price_minor_units`, from
+    a new `EpochRecord.mean_price_minor_units`. A window where nothing concluded is refused, never
+    reported as zero; a manifest that predates a metric is refused by name.
+  - **Two comparisons are declared untested rather than approximated** (the operator's call,
+    2026-09-15): shared knowledge vs isolated cohorts, because a mock Cell decides from its genome
+    alone and nothing in `simulation/policy.py` reads anything shared; and the gate's
+    "reciprocal-credit attacks fail", because the simulator has no evidence-credit system (§11). Building
+    a sharing channel to have something to compare would be a mechanism invented to fill a table.
+
+- **What it displaced, and why:**
+  - *A batch-wide `--static-market`/`--lineage-cap` flag.* A comparison reads one batch directory, so
+    the two settings being compared must be able to sit in one batch as two arms.
+  - *A new environment `version` (or name) for the static market.* It would re-key every draw, and
+    the static arm would stop sharing randomness with the shifting arm it exists to be compared with.
+  - *A manifest field naming the shift epoch.* The manifest already carries the shift as an
+    `environment_events` entry on the epoch it happened, including for wrapped environments (the chaos
+    drill) that know nothing of the new parameter.
+  - *Returning 0 for an empty window.* A zero reads as "sold nothing" about an arm that never tried.
+
+- **Found while building:** `environment.py`'s comment said willingness to pay was
+  `uniform(0.5, 1.5) * price`; the code multiplies by the fixed reference 500. That is the whole reason
+  a lower price clears more buyers. Comment corrected.
+
+- **Verification:** 37 tests in `tests/test_simulation_phase3_arms.py`. 17 teeth-checks, 16 CAUGHT on
+  the first pass. The miss was the static-market test itself: after the shift epoch it compared a
+  static market with another instance of the same class, which shares any bug in the code deciding
+  which regime applies. It now checks each family against its pre-shift *rule* (price 250 always
+  clears `uniform(0.5, 1.5) * 500`; price 280 always clears a ≤300 budget band), and the mutation is
+  CAUGHT.
+
+## ADR-095: A simulated colony stopped experimenting at epoch 27 — three causes, fixed in the simulator, not the kernel
+
+- **Status:** Accepted
+- **Spec ref:** §17.2 (`human decision` wakes), §23.1 (batchable), §23.3 (expiry regenerates), §23.4
+  (queue flooding annotates and never auto-rejects), §9.2 (`max_parallel_experiments`), §6.3 (clocks
+  never mixed without explicit conversion), ADR-055, ADR-068
+
+- **Context:** Slice H's first pilot (7 arms × 2 seeds, 20 founders, 40 epochs) concluded **no
+  experiment at all in epochs 27–39 in every arm** — identically, including `random_eligible`. Traced
+  by instrumenting a run rather than by reading:
+  1. **Proposals bred proposals.** `SimulationPolicyProvider` proposed an experiment on every wake, and
+     every approval earns a `human decision` wake (§17.2), so each approval produced another proposal:
+     20 deliberations in epoch 0, 41 in epoch 1, 106 in epoch 4, 116 in epoch 6.
+  2. **The flood tripped §23.4 and could never clear.** At five pending requests from one lineage the
+     next is flagged `queue_flooding`, loses batch eligibility, and waits for a person or for expiry.
+     Neither happens in a simulated run: the approval queue's windows and expiries run on wall time
+     (clock.py's documented deferral; FUTURE_BUILD_HOOKS.md had predicted it "when the flight
+     simulator runs at speed"), and a 40-epoch run takes seconds. A flagged request stayed pending and
+     kept counting, so every later request from that lineage was flagged too. Approvals stopped at
+     exactly 500 by epoch 7; the grant backlog carried experiments until epoch 26.
+  3. **Oldest grants took every slot.** With no grant ever expiring, `startable_grants()`'s
+     oldest-first order let founders' backlog hold all 20 slots; a child born at epoch 25 would have
+     waited ~16 epochs for a first experiment.
+
+- **Decision:**
+  - **Policy version 2 proposes on its research cycle only** and abstains (ADR-068's shape) on every
+    other wake. A follow-up wake reports something that happened; it is not a request to ask for more,
+    and the research cycle one epoch later asks anyway.
+  - **The runner individually reviews what the kernel routed to review for flooding alone**
+    (`_review_flood_flagged_experiments`): USD_SIM, kind `experiment`, no signal but `queue_flooding`,
+    approved by `SIMULATION_DECIDER` with a reason naming this ADR. Anything else a signal marks stays
+    pending.
+  - **The runner serves slots to the Cells that have waited longest** (`_grants_in_slot_order`): each
+    Cell's newest grant, never-experimented Cells first, then by last experiment, then birth order.
+    `start_from_grant` still enforces every rule inside its transaction.
+
+- **What it displaced, and why:**
+  - *Running approvals on the simulated clock in the kernel.* The right end state and the larger change
+    clock.py already deferred: in a real colony the clock may be paused, and an SLA that stopped aging
+    whenever nobody advanced time would break §23.3's solo-operator model.
+  - *Calling `expire_due` with a converted `now` from the runner.* Requests are stamped in wall time, so
+    any single converted instant expires every request created after the first simulated day
+    immediately — mixing clocks without the per-row conversion §6.3 asks for.
+  - *Rejecting flagged requests instead of approving them.* `repeat_after_rejection` matches the
+    normalised summary with no window, and a mock Cell's summary is fixed by its genome, so one
+    rejection would flag that lineage's every later request: the same ratchet, one signal over.
+  - *Raising `QUEUE_FLOOD_PENDING_LIMIT` or disabling the signal in simulated runs.* Both change the
+    kernel guard to suit the simulator; the signal is still computed and recorded on every request.
+
+- **Measured after the fix** (the same pilot): zero epochs without a concluded experiment in any arm,
+  20 conclusions per epoch throughout, no Cell waiting more than one epoch for its first experiment. Batch wall time was unchanged (38.6s against 39.1s for the 14 runs).
+
+- **Consequence for earlier results:** the retained p=50/e=200 benchmark and ADR-084's pilot both ran
+  policy version 1. The benchmark's collapse in revenue per concluded experiment and its final epoch
+  with no conclusion — which Slice H's inventory read as a saturation trap — were at least partly this
+  stall. `simulation_runs.policy_version` and every manifest's `policy_version` distinguish the two.
+  ADR-084's pairing findings (variance ratios) were measured on the stalled economy and should be
+  re-measured before a pre-registration cites them.
+
+- **Scope, stated plainly:** in a simulated run §23.4's flooding signal is recorded but no longer
+  throttles; it still throttles every other request and every real colony. A Phase 6 adversarial
+  economy that wants to measure flooding needs the kernel's clocks, not this review.
+
+- **Verification:** 9 tests in `tests/test_simulation_throughput.py`. 7 teeth-checks, all CAUGHT:
+  policy v1's propose-on-every-wake; the review never running; the review approving any request
+  carrying a flooding signal; ignoring the proposal kind; ignoring the book; slots served oldest grant
+  first; slot order ignoring how long a Cell has waited.

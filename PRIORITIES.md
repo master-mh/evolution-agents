@@ -1004,7 +1004,7 @@
   `scripts/evaluator_epoch.py` refuses to compare results across epochs. Kernel-side precision still
   crosses model changes (logged). *Disproved by:* two `--json` results with different
   `judge_digest` that `evaluator_epoch.py` exits 0 on.
-- [x] **Verbalized sampling as a genome sampling policy — DONE, twin measurement running**
+- [x] **Verbalized sampling as a genome sampling policy — DONE, twin measurement not yet completed**
   (2026-09-15), ADR-089. `model_policy.verbalized_candidates` ∈ [1, 5]; K > 1 swaps only the
   reply-format paragraph (the single-reply prompt is byte-identical, golden run unchanged),
   `proposal.parse_candidates` validates each candidate whole, and the kernel picks one uniformly,
@@ -1014,7 +1014,8 @@
   since ADR-067, and the suite's flakes were `git rev-parse` timing out under load and writing
   `"unknown"` into one of two manifests of the same seed — the version is now read once per process,
   and `batch.plan` carries the parent's to spawned workers. The
-  pre-registered `qwen2.5` twin (8×8 per arm) is running. *Disproved by:* a wake whose
+  pre-registered `qwen2.5` twin (8×8 per arm) has not completed: three attempts were interrupted (a scratchpad wipe, then two
+  session teardowns, one with Ollama's Metal backend failing), and nothing is reported. *Disproved by:* a wake whose
   `sampling.chosen_index` changes when only its candidates' probabilities change
   (`test_the_choice_ignores_every_probability`).
 
@@ -1064,6 +1065,41 @@
   different-family critic is logged). Live `qwen2.5` smoke: review 3/3, refinement 2/3. Whether a
   structure *improves* a proposal is unmeasured — a twin is logged. *Disproved by:* a structure in
   `genome.WORKFLOW_STRUCTURES` whose wake makes one call (`test_every_declared_structure_has_a_runner`).
+
+- [ ] **Slice H — Phase 3's pre-registered comparisons — arm settings and a simulator stall fixed
+  2026-09-15 (ADR-094, ADR-095); the pre-registration and the runs are next.**
+  §28 Phase 3 asks for six comparisons and a soft gate, reported with §7.4's scope caveat.
+  - **Representable:** selection vs random (`staged_funding` or `pareto` vs `random_eligible`),
+    MAP-Elites vs single leaderboard, staged vs flat funding (`staged_funding` vs `map_elites`, which
+    funds every occupied niche), and, as of ADR-094, static vs shifting markets
+    (`LABEL=POLICY+static_market`) and lineage caps vs none (`LABEL=POLICY+lineage_cap=1.0`). Use
+    same-family validation or none (ADR-083).
+  - **Declared untested, not approximated** (operator decision, 2026-09-15): shared knowledge vs
+    isolated cohorts (§22.1) — a mock Cell decides from its genome alone and nothing in
+    `simulation/policy.py` reads anything shared — and the gate's "reciprocal-credit attacks fail",
+    since the simulator has no evidence-credit system (§11). The pre-registration says so.
+  - **Metrics a comparison can read without counting heads** (ADR-094):
+    `revenue_per_concluded_experiment`, `second_half_revenue_per_concluded_experiment`,
+    `final_mean_price_minor_units`. Price is the only trait `utility_maximizing_market` reads:
+    willingness to pay is drawn around a fixed 500, so revenue per attempt peaks near price 375 before
+    the epoch-10 shift and near 225 after it (founders start at 400–500).
+  - **Every arm had stopped experimenting at epoch 27** (ADR-095): policy v1 proposed on every wake,
+    each approval earned another wake, the flood tripped §23.4's `queue_flooding`, and a flagged request
+    never ages out of a simulated run. Fixed in the simulator (policy v2, a narrow recorded review, and
+    slots served to the Cells that waited longest). **Correction to this entry's earlier "saturation
+    trap" reading of the p=50/e=200 benchmark:** its collapse in revenue per concluded experiment and
+    its final epoch with no conclusion were at least partly this stall, not only saturation. Still
+    true: zero deaths, and `max_active_cells` (100) bounds a colony. ADR-084's variance ratios were
+    measured on the stalled economy — re-measure before citing them.
+  - **Exploratory pilot, not evidence** (7 arms × seeds 1–2, 20 founders, 40 epochs, policy v2 — seeds
+    to be excluded from any confirmatory analysis): the default lineage cap (0.2) refused most
+    selection-arm births (8–23 in 40 epochs, against `random_eligible`'s 40); `random_eligible` had the
+    highest second-half revenue per experiment; mean living price barely moved in any arm, since
+    founders never die and dominate it.
+  - The implementation brief's Slice H text is not in the repository; SPEC §28 Phase 3, Amendment A1
+    and §7.4 are the normative source.
+  *Disproved by:* `docs/PHASE3_PREREGISTRATION.md` committed before any batch index it names, or a
+  Phase 3 comparison manifest whose `policy_version` is `"1"`.
 
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per

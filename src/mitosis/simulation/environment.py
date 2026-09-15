@@ -38,6 +38,18 @@ _NOISE_MINOR_UNITS = 50
 #: own manifest can be reasoned about without re-deriving when a shift lands.
 _REGIME_SHIFT_EPOCH = 10
 
+#: What `regime_shift_epoch=STATIC` means: no shift, ever. A Phase 3 control
+#: arm only (§28's "static vs shifting markets") -- §8.4 makes shifts part of
+#: fitness evaluation, so the default stays the shifting market and nothing
+#: outside a comparison batch asks for this.
+STATIC = None
+
+
+def _regime_shift_epoch(value: int | None) -> int | None:
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+        raise ValueError(f"regime_shift_epoch must be a non-negative int or STATIC, not {value!r}")
+    return value
+
 
 @dataclass(frozen=True)
 class Observation:
@@ -92,7 +104,7 @@ class MarketEnvironment(Protocol):
     def advance(self, *, epoch: int) -> tuple[EnvironmentEvent, ...]: ...
 
 
-def _declared_price(genome_content: dict[str, Any]) -> int:
+def declared_price(genome_content: dict[str, Any]) -> int:
     revenue_model = genome_content.get("revenue_model")
     if isinstance(revenue_model, dict):
         price = revenue_model.get("price_minor_units")
@@ -101,11 +113,14 @@ def _declared_price(genome_content: dict[str, Any]) -> int:
     return _DEFAULT_PRICE_MINOR_UNITS
 
 
-#: Pre-shift: willingness to pay is `uniform(0.5, 1.5) * price`. At
-#: `_REGIME_SHIFT_EPOCH` a price-compression regime shift narrows this to
-#: `uniform(0.3, 0.9) * price` -- buyers who used to sometimes pay well above
-#: list price no longer do (SPEC.md §8.4's "demand changes, price
-#: compression").
+#: Pre-shift: willingness to pay is `uniform(0.5, 1.5) * 500` -- a fixed
+#: reference of `_DEFAULT_PRICE_MINOR_UNITS`, not the Cell's own price (an
+#: earlier version of this comment said `* price`; the code never did, and it
+#: matters: it is why a lower price clears more buyers, and why revenue per
+#: attempt peaks near 375). At the regime shift this narrows to
+#: `uniform(0.3, 0.9) * 500`, moving that peak near 225 -- buyers who used to
+#: sometimes pay well above list price no longer do (SPEC.md §8.4's "demand
+#: changes, price compression").
 _PRE_SHIFT_WILLINGNESS_RANGE = (0.5, 1.5)
 _POST_SHIFT_WILLINGNESS_RANGE = (0.3, 0.9)
 
@@ -120,10 +135,18 @@ class UtilityMaximizingMarket:
     addition."""
 
     name = "utility_maximizing_market"
+    #: Unchanged by `regime_shift_epoch`, deliberately: every draw is keyed by
+    #: `name:version`, so a static arm and a shifting arm at the same seed draw
+    #: the same numbers and differ only in the range those numbers scale --
+    #: which is what makes pairing the two arms by seed mean anything (ADR-084).
     version = "1"
 
-    def __init__(self) -> None:
+    def __init__(self, *, regime_shift_epoch: int | None = _REGIME_SHIFT_EPOCH) -> None:
         self._seed: int | None = None
+        self.regime_shift_epoch = _regime_shift_epoch(regime_shift_epoch)
+
+    def _shifted(self, epoch: int) -> bool:
+        return self.regime_shift_epoch is not None and epoch >= self.regime_shift_epoch
 
     def reset(self, *, seed: int) -> None:
         self._seed = seed
@@ -146,9 +169,9 @@ class UtilityMaximizingMarket:
 
     def evaluate(self, *, experiment: ExperimentAction, epoch: int) -> Outcome:
         rng = self._rng(purpose="evaluate", epoch=epoch, cell_id=experiment.cell_id)
-        price = _declared_price(experiment.genome_content)
+        price = declared_price(experiment.genome_content)
         willingness_range = (
-            _POST_SHIFT_WILLINGNESS_RANGE if epoch >= _REGIME_SHIFT_EPOCH
+            _POST_SHIFT_WILLINGNESS_RANGE if self._shifted(epoch)
             else _PRE_SHIFT_WILLINGNESS_RANGE
         )
         willingness_to_pay = rng.uniform(*willingness_range) * _DEFAULT_PRICE_MINOR_UNITS
@@ -167,7 +190,7 @@ class UtilityMaximizingMarket:
         )
 
     def advance(self, *, epoch: int) -> tuple[EnvironmentEvent, ...]:
-        if epoch == _REGIME_SHIFT_EPOCH:
+        if epoch == self.regime_shift_epoch:
             return (
                 EnvironmentEvent(
                     kind="price_compression",
@@ -204,10 +227,14 @@ class RuleBasedMarket:
     (§8.4) narrows the budget band starting at `_REGIME_SHIFT_EPOCH`."""
 
     name = "rule_based_market"
-    version = "1"
+    version = "1"  # unchanged by `regime_shift_epoch`, as in `UtilityMaximizingMarket`
 
-    def __init__(self) -> None:
+    def __init__(self, *, regime_shift_epoch: int | None = _REGIME_SHIFT_EPOCH) -> None:
         self._seed: int | None = None
+        self.regime_shift_epoch = _regime_shift_epoch(regime_shift_epoch)
+
+    def _shifted(self, epoch: int) -> bool:
+        return self.regime_shift_epoch is not None and epoch >= self.regime_shift_epoch
 
     def reset(self, *, seed: int) -> None:
         self._seed = seed
@@ -226,12 +253,12 @@ class RuleBasedMarket:
         )
 
     def evaluate(self, *, experiment: ExperimentAction, epoch: int) -> Outcome:
-        price = _declared_price(experiment.genome_content)
+        price = declared_price(experiment.genome_content)
         product = experiment.genome_content.get("product")
         product = product if isinstance(product, dict) else {}
 
         budget_tier_max = (
-            _POST_SHIFT_BUDGET_TIER_MAX_MINOR_UNITS if epoch >= _REGIME_SHIFT_EPOCH
+            _POST_SHIFT_BUDGET_TIER_MAX_MINOR_UNITS if self._shifted(epoch)
             else _PRE_SHIFT_BUDGET_TIER_MAX_MINOR_UNITS
         )
         if price <= budget_tier_max:
@@ -267,7 +294,7 @@ class RuleBasedMarket:
         )
 
     def advance(self, *, epoch: int) -> tuple[EnvironmentEvent, ...]:
-        if epoch == _REGIME_SHIFT_EPOCH:
+        if epoch == self.regime_shift_epoch:
             return (
                 EnvironmentEvent(
                     kind="stricter_enforcement",
@@ -308,13 +335,15 @@ class UnknownEnvironmentError(Exception):
     pass
 
 
-def build_environment(name: str) -> MarketEnvironment:
+def build_environment(name: str, *, static: bool = False) -> MarketEnvironment:
     """A name -> instance factory so a CLI flag or scenario config can select
-    a family without importing both concrete classes itself (brief F.2)."""
+    a family without importing both concrete classes itself (brief F.2).
+    `static=True` builds the no-shift control arm (see `STATIC`)."""
+    regime_shift_epoch = STATIC if static else _REGIME_SHIFT_EPOCH
     if name == UtilityMaximizingMarket.name:
-        return UtilityMaximizingMarket()
+        return UtilityMaximizingMarket(regime_shift_epoch=regime_shift_epoch)
     if name == RuleBasedMarket.name:
-        return RuleBasedMarket()
+        return RuleBasedMarket(regime_shift_epoch=regime_shift_epoch)
     raise UnknownEnvironmentError(
         f"no environment family named {name!r}; available: "
         f"{UtilityMaximizingMarket.name}, {RuleBasedMarket.name}"

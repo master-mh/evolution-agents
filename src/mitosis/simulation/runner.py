@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from .. import (
+    approval,
     audit,
     autopromotion,
     clock,
@@ -42,8 +43,15 @@ from .. import (
     tools,
 )
 from ..models import Book, CellStatus, CellType, ClockMode, EntrySpec
+from ..proposal import ProposalKind
 from . import mutation
-from .environment import EnvironmentSuite, ExperimentAction, MarketEnvironment, UtilityMaximizingMarket
+from .environment import (
+    EnvironmentSuite,
+    ExperimentAction,
+    MarketEnvironment,
+    UtilityMaximizingMarket,
+    declared_price,
+)
 from .manifest import EpochRecord, RunManifest
 from .policy import POLICY_MODEL_ID, POLICY_VERSION, SIMULATION_PROVIDER, SimulationPolicyProvider
 from .selection_policy import RandomEligibleSelection, SelectionPolicy
@@ -70,20 +78,27 @@ class RunConfig:
     epochs: int
     population: int
     output_path: str | None = None
+    #: §9.4's `max_lineage_population_fraction` for this run's colony (ADR-094).
+    #: `None` keeps whatever the colony already has -- the kernel default for a
+    #: fresh one. Applied before founding, and refused if the colony was already
+    #: configured with a different cap: a run must not name a cap it never had.
+    lineage_cap: float | None = None
 
 
 def _config_hash(config: RunConfig) -> str:
     """SHA-256 over the run's own configuration -- `scenario_name`,
-    `master_seed`, `epochs`, `population` -- not `output_path`, a local
-    write destination rather than configuration. Lets two manifests
-    claiming the same configuration be checked rather than only asserted."""
-    canonical = json.dumps(
-        {
-            "scenario_name": config.scenario_name, "master_seed": config.master_seed,
-            "epochs": config.epochs, "population": config.population,
-        },
-        sort_keys=True, separators=(",", ":"),
-    )
+    `master_seed`, `epochs`, `population`, and `lineage_cap` when one is set
+    -- not `output_path`, a local write destination rather than
+    configuration. Lets two manifests claiming the same configuration be
+    checked rather than only asserted. An unset cap adds no key, so a run
+    configured exactly as before ADR-094 hashes exactly as before."""
+    fields: dict[str, object] = {
+        "scenario_name": config.scenario_name, "master_seed": config.master_seed,
+        "epochs": config.epochs, "population": config.population,
+    }
+    if config.lineage_cap is not None:
+        fields["lineage_cap"] = config.lineage_cap
+    canonical = json.dumps(fields, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -200,6 +215,29 @@ def _found_population(conn, config: RunConfig) -> list[lifecycle.Cell]:
     return founders
 
 
+def _apply_lineage_cap(conn, lineage_cap: float | None) -> None:
+    """Hold this run's colony to `lineage_cap` (§9.4; ADR-094's "lineage caps
+    vs none" arm). Goes through `population.set_limits_if_absent` like every
+    other configuration of limits, so a colony already configured keeps its
+    limits -- and a run that asked for a different cap is refused rather than
+    run under a cap its manifest would misname. `1.0` is "no cap": a lineage
+    can never hold more than the whole population."""
+    if lineage_cap is None:
+        return
+    if isinstance(lineage_cap, bool) or not 0 < lineage_cap <= 1:
+        raise SimulationError(f"lineage_cap must be in (0, 1], not {lineage_cap!r}")
+    active = population.set_limits_if_absent(
+        conn,
+        population.get_limits(conn).model_copy(update={"max_lineage_population_fraction": lineage_cap}),
+    )
+    if active.max_lineage_population_fraction != lineage_cap:
+        raise SimulationError(
+            f"this colony is already configured with max_lineage_population_fraction="
+            f"{active.max_lineage_population_fraction}; a run asking for {lineage_cap} "
+            "would record a cap it was never held to"
+        )
+
+
 def _record_run_start(conn, *, run_id: str, config: RunConfig,
                        environment: MarketEnvironment, selection: SelectionPolicy,
                        started: datetime, code_version: str) -> None:
@@ -232,6 +270,90 @@ def _record_run_finish(conn, *, run_id: str, manifest: RunManifest, output_path:
     conn.commit()
 
 
+_FLOOD_REVIEW_REASON = (
+    "flight simulator individual review (ADR-095): a synthetic rung-1 experiment whose only "
+    "§23.4 signal is queue_flooding. The flooding window and every approval expiry run on wall "
+    "time, which a simulated run never ages, so left pending this request would count against "
+    "its lineage for the rest of the run and bar it from experimenting."
+)
+
+
+def _review_flood_flagged_experiments(conn) -> None:
+    """Individually approve the requests the kernel routed to review *only*
+    because their lineage had five requests pending at once (ADR-095).
+
+    §23.4's signals annotate and never auto-reject; they strip batch
+    eligibility "so a human must look". A person looking — or the item
+    expiring and regenerating (§23.3) — is what clears a flag in a real colony,
+    and neither happens inside a simulated run: its epochs are simulated days
+    and the queue's clocks measure a human on wall time (clock.py's documented
+    deferral; FUTURE_BUILD_HOOKS predicted exactly this "when the flight
+    simulator runs at speed"). A flagged request therefore stayed pending for
+    the whole run and counted toward its lineage's pending total, so every later
+    request from that lineage was flagged too: a ratchet that throttled the
+    largest lineages to zero experiments — a confound on any comparison of
+    lineage caps, or of policies that concentrate reproduction.
+
+    Deliberately narrow: USD_SIM, kind `experiment`, and no signal but
+    `queue_flooding`. Anything else a signal marks stays pending, and every
+    decision here names `SIMULATION_DECIDER` and this reason in the audit trail.
+    """
+    for request in approval.queue(conn):
+        if {signal.signal for signal in request.signals} != {approval.SIGNAL_QUEUE_FLOODING}:
+            continue
+        row = conn.execute(
+            "SELECT kind FROM proposals WHERE proposal_id = ?", (request.proposal_id,)
+        ).fetchone()
+        cell = lifecycle.get_cell(conn, request.cell_id)
+        if row is None or row["kind"] != ProposalKind.EXPERIMENT.value:
+            continue
+        if cell is None or cell.book is not Book.USD_SIM:
+            continue
+        approval.approve(
+            conn, request_id=request.request_id, decided_by=SIMULATION_DECIDER,
+            reason=_FLOOD_REVIEW_REASON,
+        )
+
+
+def _grants_in_slot_order(conn) -> list[dict]:
+    """Which approved experiments get this epoch's §9.2 slots (ADR-095): one
+    grant per Cell -- its newest -- with the Cells that have waited longest for
+    an experiment first (never-experimented Cells before all others, then by
+    their last experiment's start order, then by birth order).
+
+    `startable_grants()` lists grants oldest-first, and in a simulated run no
+    grant ever expires (its clock is wall time), so first-come-first-served let
+    a backlog of founders' old grants hold every slot: with 27 Cells and 20
+    slots, a child born at epoch 25 waited ~16 epochs for its first experiment.
+    Selection acts on children, so evaluating them last hid exactly what a
+    Phase 3 comparison measures. Which grant takes a slot is a decision the
+    kernel does not make -- `start_from_grant` still checks every §9.2/§15.1
+    rule inside its own transaction.
+    """
+    newest_by_cell: dict[str, dict] = {}
+    for grant in experiment_grants.startable_grants(conn):
+        newest_by_cell[grant["cell_id"]] = grant  # listed oldest-first: the last one wins
+    if not newest_by_cell:
+        return []
+    last_experiment = {
+        row["cell_id"]: row["last_rowid"]
+        for row in conn.execute(
+            "SELECT cell_id, MAX(rowid) AS last_rowid FROM experiments GROUP BY cell_id"
+        ).fetchall()
+    }
+    birth_order = {
+        row["cell_id"]: row["rowid"]
+        for row in conn.execute("SELECT rowid, cell_id FROM cells").fetchall()
+    }
+    return sorted(
+        newest_by_cell.values(),
+        key=lambda grant: (
+            last_experiment.get(grant["cell_id"], -1),
+            birth_order.get(grant["cell_id"], 0),
+        ),
+    )
+
+
 def _run_one_epoch(
     conn, *, epoch: int, run_id: str, policy: SimulationPolicyProvider,
     environment: MarketEnvironment, selection: SelectionPolicy, master_seed: int,
@@ -240,9 +362,10 @@ def _run_one_epoch(
         conn, provider=policy, model=POLICY_MODEL_ID,
         promoter=autopromotion.EvidencePromoter(),
     )
+    _review_flood_flagged_experiments(conn)
 
     started = 0
-    for grant in experiment_grants.startable_grants(conn):
+    for grant in _grants_in_slot_order(conn):
         try:
             experiment_grants.start_from_grant(
                 conn, grant_id=grant["grant_id"], started_by=SIMULATION_DECIDER,
@@ -397,6 +520,7 @@ def _run_one_epoch(
 
     living_cells = [c for c in lifecycle.list_cells(conn) if c.status is CellStatus.ALIVE]
     distinct_genomes = len({c.genome_hash for c in living_cells})
+    prices = [declared_price(_genome_content_of(conn, c.genome_hash)) for c in living_cells]
     dominant_founder_cell_id, founder_concentration = lineage.founder_concentration(conn)
     return EpochRecord(
         epoch=epoch, living_cells=len(living_cells), experiments_started=started,
@@ -405,6 +529,7 @@ def _run_one_epoch(
         distinct_genomes=distinct_genomes, environment_events=tuple(environment_events),
         founder_concentration=founder_concentration,
         dominant_founder_cell_id=dominant_founder_cell_id,
+        mean_price_minor_units=round(sum(prices) / len(prices), 3) if prices else 0.0,
     )
 
 
@@ -438,6 +563,8 @@ def run(
         for candidate in (suite.training, suite.validation, suite.secret_challenge):
             if candidate is not None:
                 candidate.reset(seed=config.master_seed)
+        # Before the run is recorded, so a refused cap leaves no 'running' row.
+        _apply_lineage_cap(conn, config.lineage_cap)
         _record_run_start(
             conn, run_id=run_id, config=config, environment=suite.training,
             selection=selection, started=started, code_version=code_version,
@@ -507,6 +634,7 @@ def run(
             final_living_cells=final_living,
             conservation_ok=conservation,
             usd_real_spend_unchanged=(real_spend_after == real_spend_before),
+            max_lineage_population_fraction=population.get_limits(conn).max_lineage_population_fraction,
             epochs=tuple(epoch_records),
             failures=tuple(failures),
         )

@@ -6,6 +6,55 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-15 — Workflow structure is a gene the kernel runs (ADR-093)
+
+Ninth of the research-driven slices: the agent-swarm item. How a Cell thinks — one pass, a draft
+revised by self-critique, or independent drafts and a review — is now inheritable and mutable, and the
+kernel runs it.
+
+### What shipped
+
+- `genome.WORKFLOW_STRUCTURES`, a closed set; `genome.workflow_structure_of`; a dict `workflow`'s
+  `structure` outside the set is refused at birth, while prose `workflow` stays valid and selects nothing.
+- `deliberation._run_workflow` over a draft that already validated: `_workflow_call` makes each further
+  step its own `gateway.call_model` on `deliberation:{wake_key}:workflow:{step}`, and
+  `_WORKFLOW_RUNNERS` holds one runner per multi-call structure. The `cell_deliberated` audit event
+  records each step's call id and note, and which proposal won — for such wakes only.
+- `simulation.mutation`'s workflow operator draws from the kernel's set.
+- `deliberation.py`'s docstring no longer says "no genome field selects a code path": a genome chooses
+  among kernel-owned paths, as with temperature, and supplies none (Charter C15).
+
+### Found
+
+- **The simulator had been breeding four workflow structures that no code read.** §16.3 reserved the
+  socket, `workflow_variation` mutated it, and every Cell woke as a single pass regardless. `sequential`
+  was dropped rather than given an invented meaning; role decomposition is logged.
+- **Live smoke (`qwen2.5`):** `parallel_review` 3/3; `iterative_refinement` 2/3, the third wake
+  unparseable before any step and buying none. Every draft in the refinement run needed a repair — a
+  format-compliance fact about the draft prompt, not the structure.
+- **A CLI test that read the machine's Ollama** failed three different ways this session (a busy daemon
+  timed out, then its GPU backend failed). It now points at a closed loopback port.
+
+### Verification
+
+21 tests; twelve teeth-checks in isolated copies, all on the intended assertion; full suite 1419 passed
+before the hermetic test fix; golden run unchanged.
+
+### Landed after this entry (same day)
+
+- **1daf18c** — ADR-090's Vending-Bench Arena account checked against Andon Labs' own write-up
+  (posted 2026-07-28). The cartels, 11 broken truces, threats and bribes, and fabricated competitor
+  quotes to suppliers all stand; Opus 5 finished *second* in the Arena, essentially tied — "the
+  winning model" was its single-agent Vending-Bench 2 result — and Magentic Marketplace studies
+  manipulation, not collusion. Corrected in DECISIONS, PRIORITIES and the archive.
+- **ee79495** — the weekly claim-drift routine was never created. ADR-092 already said "created
+  disabled" when the create call returned HTTP 403: the repository is private and claude.ai has no
+  GitHub access to it. Corrected everywhere; settings and prompt now in `scripts/README.md`.
+- **Not landed:** ADR-089's pre-registered verbalized-sampling twin was interrupted three times — a
+  scratchpad wipe, a session teardown followed by an Ollama Metal-backend failure, and a second
+  teardown one run into attempt 3. No arm has completed and nothing is reported.
+- **Slice H started as an inventory only** — no code; findings are in PRIORITIES.md's Slice H entry.
+
 ## 2026-09-15 — Every *Disproved by:* pointer, run and dated (ADR-092)
 
 Eighth of the research-driven slices; tooling, no kernel change.

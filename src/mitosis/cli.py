@@ -3421,7 +3421,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     simulate_batch_parser.add_argument(
         "--arms", required=True,
-        help="comma-separated selection policy names, e.g. random_eligible,staged_funding",
+        help=(
+            "comma-separated arms: a selection policy name, or LABEL=POLICY with any of "
+            "+static_market and +lineage_cap=F, e.g. "
+            "map_elites,static=map_elites+static_market,uncapped=map_elites+lineage_cap=1.0 "
+            "(ADR-094)"
+        ),
     )
     simulate_batch_parser.add_argument(
         "--seeds", required=True, help="seeds to run every arm at, e.g. 1-8 or 1,2,5",

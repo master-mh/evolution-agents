@@ -50,6 +50,34 @@ def _epochs(manifest: dict) -> list[dict]:
     return list(manifest.get("epochs") or [])
 
 
+def _revenue_per_concluded_experiment(epochs: list[dict]) -> float:
+    """Revenue divided by experiments concluded — a *rate*, so an arm cannot
+    raise it by reproducing more Cells (ADR-094): `total_revenue_minor_units`
+    grows with headcount under any policy, and §9.2's
+    `max_parallel_experiments` caps how many conclude per epoch anyway.
+    Undefined, and refused rather than reported as zero, when nothing
+    concluded — a zero would read as "sold nothing" about an arm that never
+    tried."""
+    concluded = sum(e["experiments_concluded"] for e in epochs)
+    if concluded == 0:
+        raise PairedComparisonError("no experiment concluded in the window this metric reads")
+    return float(sum(e["revenue_minor_units"] for e in epochs)) / concluded
+
+
+def _second_half(epochs: list[dict]) -> list[dict]:
+    """The later half of a run, by position (`epochs[n // 2:]`), not by a
+    regime-shift epoch — so a static-market arm and a shifting one are read
+    over the same epochs, and the window a pre-registration names cannot move
+    with a setting under comparison."""
+    return epochs[len(epochs) // 2:]
+
+
+def _final_mean_price(epochs: list[dict]) -> float:
+    if not epochs:
+        raise PairedComparisonError("a run with no completed epoch has no final price")
+    return float(epochs[-1]["mean_price_minor_units"])
+
+
 #: What a comparison may be computed over — each a function of one run
 #: manifest, and each a canonical outcome the simulator itself recorded
 #: (§0.3), never anything a Cell wrote. Named here rather than accepted as an
@@ -64,6 +92,12 @@ METRICS: dict[str, Callable[[dict], float]] = {
     "peak_founder_concentration": lambda m: max(
         (float(e["founder_concentration"]) for e in _epochs(m)), default=0.0
     ),
+    # Slice H (ADR-094): trait and rate metrics, which headcount cannot move.
+    "revenue_per_concluded_experiment": lambda m: _revenue_per_concluded_experiment(_epochs(m)),
+    "second_half_revenue_per_concluded_experiment": lambda m: _revenue_per_concluded_experiment(
+        _second_half(_epochs(m))
+    ),
+    "final_mean_price_minor_units": lambda m: _final_mean_price(_epochs(m)),
 }
 
 DEFAULT_RESAMPLES = 5_000
@@ -225,7 +259,16 @@ def load_arm(out_dir: Path, arm: str, metric: str) -> dict[int, float]:
                 f"{arm} at seed {run['seed']} recorded {len(manifest['failures'])} failure(s); "
                 "a comparison over a failed run is not the comparison that was planned"
             )
-        values[int(run["seed"])] = METRICS[metric](manifest)
+        try:
+            values[int(run["seed"])] = METRICS[metric](manifest)
+        except PairedComparisonError as exc:
+            raise PairedComparisonError(f"{metric} for {arm} at seed {run['seed']}: {exc}") from None
+        except KeyError as exc:
+            # A manifest written before the field this metric reads existed.
+            raise PairedComparisonError(
+                f"{metric} for {arm} at seed {run['seed']}: the manifest has no {exc.args[0]!r} "
+                "field — it predates this metric, so rerun the batch"
+            ) from None
     if not values:
         raise PairedComparisonError(f"arm {arm!r} is not in this batch; arms: {index['arms']}")
     return values

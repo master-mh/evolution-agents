@@ -1798,3 +1798,25 @@ actually queued for building — this file is memory, not a backlog to work thro
   better than a draft, so a simulated lineage will only ever learn that structures cost more. The
   question worth asking is a §14.2 twin on a live model: `single_pass` vs `parallel_review` on ideas@2
   and concreteness, pre-registered like ADR-089's.
+- **Approval clocks on the colony clock (ADR-095).** In a simulated run §23.4's `queue_flooding` is now
+  recorded but resolved by the runner's review, because the queue's windows and expiries run on wall
+  time and a simulated run never ages them. The kernel-side fix — stamp and compare approval times on
+  `clock.now`, with a REAL-mode passthrough so a real operator's SLAs still age — is the larger change
+  clock.py already deferred. A Phase 6 adversarial economy that wants to *measure* flooding needs it
+  first; so does any simulated study of §23.3 expiry and regeneration.
+- **Immortal founders dilute every population-trait series (ADR-094).** Nothing dies in the simulator,
+  so a living population's mean price moves only by adding children, and the founders dominate it. A
+  Phase 3 design that wants selection to show in the *population* needs deaths or §9.3 displacement to
+  happen, or a births-only series (mean price of Cells born in a window) in the manifest.
+- **Selection on cumulative revenue is anchored on the old regime.** In the exploratory pilot
+  `single_leaderboard` kept choosing parents priced for the pre-shift market (500) that no longer sold.
+  §8.4 makes regime changes part of fitness evaluation; a windowed or decayed revenue axis in
+  `candidate.py` is the design question, to be asked from a pre-registered result, not the pilot.
+- **Cohorts and evidence credit are Phase 3's two untested rows (ADR-094).** Testing shared knowledge vs
+  isolated cohorts (§22.1) needs something a mock Cell reads that other Cells wrote; testing
+  "reciprocal-credit attacks fail" needs §11's evidence credit in the simulator. Neither was built to
+  fill the table; both are preconditions, not follow-ups.
+- **The lineage cap and concentrating selection interact.** At the default cap (0.2) the pilot's
+  selection arms had most births refused, so "selection vs random" at that cap partly compares policies
+  the cap lets reproduce against one it rarely stops. Worth a crossed design (policy × cap) once the
+  single comparisons are in.

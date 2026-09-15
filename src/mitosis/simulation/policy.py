@@ -26,16 +26,23 @@ import json
 import random
 
 from .. import genome as genome_module
+from ..deliberation import WAKE_SCHEDULED_RESEARCH
 from ..proposal import MAX_HYPOTHESIS_CHARS
 from ..providers import ModelRequest, ModelResponse
 
 SIMULATION_PROVIDER = "simulation"
 POLICY_MODEL_ID = "policy-v1"
-POLICY_VERSION = "1"
+#: "2" (ADR-095): proposes on its research cycle only and abstains on every
+#: other wake. Version 1 proposed on every wake, and every approval earns a
+#: `human decision` wake (§17.2), so each approval bred another proposal: 20
+#: deliberations in epoch 0 became 116 by epoch 6, and the flood tripped
+#: §23.4's queue-flooding signal on every lineage.
+POLICY_VERSION = "2"
 
-#: The exact section header `context._genome_section` renders (verbatim
-#: string, not a regex) -- see that function's `Section(name=..., body=...)`.
+#: The exact section headers `context` renders (verbatim strings, not regexes)
+#: -- see `_genome_section`'s and `_wake_section`'s `Section(name=...)`.
 _GENOME_SECTION_HEADER = "## Your genome (immutable; this is who you are)\n"
+_WAKE_SECTION_HEADER = "## Why you were woken\n"
 _SECTION_BOUNDARY = "\n\n## "
 
 
@@ -47,17 +54,42 @@ def _request_text(request: ModelRequest) -> str:
     return "\n".join(str(m.get("content", "")) for m in request.messages)
 
 
-def _extract_genome(prompt_text: str) -> dict:
-    start = prompt_text.find(_GENOME_SECTION_HEADER)
+def _section_body(prompt_text: str, header: str, *, renderer: str) -> str:
+    start = prompt_text.find(header)
     if start == -1:
         raise PolicyError(
-            "rendered context carries no genome section -- "
-            "context._genome_section's header text must have changed"
+            f"rendered context carries no {header.strip()!r} section -- "
+            f"context.{renderer}'s header text must have changed"
         )
-    body_start = start + len(_GENOME_SECTION_HEADER)
+    body_start = start + len(header)
     end = prompt_text.find(_SECTION_BOUNDARY, body_start)
-    body = prompt_text[body_start:] if end == -1 else prompt_text[body_start:end]
-    return json.loads(body)
+    return prompt_text[body_start:] if end == -1 else prompt_text[body_start:end]
+
+
+def _extract_genome(prompt_text: str) -> dict:
+    return json.loads(_section_body(prompt_text, _GENOME_SECTION_HEADER, renderer="_genome_section"))
+
+
+def _extract_wake_reason(prompt_text: str) -> str:
+    return _section_body(prompt_text, _WAKE_SECTION_HEADER, renderer="_wake_section").strip()
+
+
+def _abstain(wake_reason: str) -> dict:
+    """What a mock Cell says on any wake but its research cycle. A follow-up
+    wake (`human decision`, an expiry, an allocation) tells the Cell something
+    happened; it is not an invitation to ask for more, and the research cycle
+    one epoch later asks again anyway. ADR-055 measured a live model treating an
+    unjustified wake as a reason to act; this policy is simply not built to."""
+    return {
+        "kind": "abstain",
+        "summary": "nothing new to propose on this wake",
+        "rationale": (
+            f"flight-simulator policy: woken for {wake_reason!r}, not a research cycle -- "
+            "proposals come from the research cycle only"
+        )[:200],
+        "estimated_cost_minor_units": 0,
+        "predictions": [],
+    }
 
 
 def _label(value: object, field: str) -> str | None:
@@ -109,6 +141,7 @@ class SimulationPolicyProvider:
     def complete(self, request: ModelRequest) -> ModelResponse:
         prompt_text = _request_text(request)
         canonical_genome = _extract_genome(prompt_text)
+        wake_reason = _extract_wake_reason(prompt_text)
         genome_hash = genome_module.compute_genome_hash(canonical_genome)
         # A tuple is not an accepted `random.Random` seed type -- a stable
         # string is, and (unlike `hash()`) its seeding does not depend on
@@ -116,7 +149,11 @@ class SimulationPolicyProvider:
         rng = random.Random(f"{self._master_seed}:policy:{genome_hash}:{self._call_index}")
         self._call_index += 1
 
-        text = json.dumps(_propose(canonical_genome, rng))
+        reply = (
+            _propose(canonical_genome, rng) if wake_reason == WAKE_SCHEDULED_RESEARCH
+            else _abstain(wake_reason)
+        )
+        text = json.dumps(reply)
         return ModelResponse(
             text=text,
             resolved_model=request.model,

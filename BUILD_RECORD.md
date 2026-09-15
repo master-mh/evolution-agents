@@ -40,43 +40,45 @@ comparisons, a sealed simulated run, tools naming what observes their
 effect, two measurement instruments (judge entanglement and evaluator
 epochs), verbalized sampling as a genome sampling policy, Amendment A20
 naming collusion and counterparty deception, a teeth-check runner that
-cannot touch the real tree, and every *Disproved by:* pointer run and
-dated, 2026-07-21 through 2026-09-15):
+cannot touch the real tree, every *Disproved by:* pointer run and
+dated, and workflow structure as a gene the kernel runs, 2026-07-21
+through 2026-09-15):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-15 — Workflow structure is a gene the kernel runs (ADR-093)
+## 2026-09-15 — Slice H, part 1: Phase 3's arm settings, and the stall that hid every comparison (ADR-094, ADR-095)
 
-Ninth of the research-driven slices: the agent-swarm item. How a Cell thinks — one pass, a draft
-revised by self-critique, or independent drafts and a review — is now inheritable and mutable, and the
-kernel runs it.
+Phase 3's pre-registered comparisons need two settings that are not selection policies and metrics that
+headcount cannot move. Building them, the first pilot showed every arm had stopped experimenting at
+epoch 27. The stall is fixed before any comparison is run or pre-registered.
 
 ### What shipped
 
-- `genome.WORKFLOW_STRUCTURES`, a closed set; `genome.workflow_structure_of`; a dict `workflow`'s
-  `structure` outside the set is refused at birth, while prose `workflow` stays valid and selects nothing.
-- `deliberation._run_workflow` over a draft that already validated: `_workflow_call` makes each further
-  step its own `gateway.call_model` on `deliberation:{wake_key}:workflow:{step}`, and
-  `_WORKFLOW_RUNNERS` holds one runner per multi-call structure. The `cell_deliberated` audit event
-  records each step's call id and note, and which proposal won — for such wakes only.
-- `simulation.mutation`'s workflow operator draws from the kernel's set.
-- `deliberation.py`'s docstring no longer says "no genome field selects a code path": a genome chooses
-  among kernel-owned paths, as with temperature, and supplies none (Charter C15).
+- **Arm grammar** (`batch.parse_arm`): `LABEL=POLICY[+static_market][+lineage_cap=F]`; `batch.json`
+  records every label's settings. A static market (`environment.STATIC`) is the shifting market minus the
+  shift, drawing identical numbers. `RunConfig.lineage_cap` is applied before founding, refused against
+  a colony configured otherwise, and read back into the manifest.
+- **Metrics:** `revenue_per_concluded_experiment`, `second_half_revenue_per_concluded_experiment`,
+  `final_mean_price_minor_units` (from a new `EpochRecord.mean_price_minor_units`).
+- **Policy version 2** proposes on its research cycle only. The runner individually approves synthetic
+  experiment requests flagged for flooding alone, and serves slots to the Cells that have waited longest.
+- **Declared untested, per the operator:** shared knowledge vs isolated cohorts, and reciprocal-credit
+  attacks — the simulator represents neither.
 
 ### Found
 
-- **The simulator had been breeding four workflow structures that no code read.** §16.3 reserved the
-  socket, `workflow_variation` mutated it, and every Cell woke as a single pass regardless. `sequential`
-  was dropped rather than given an invented meaning; role decomposition is logged.
-- **Live smoke (`qwen2.5`):** `parallel_review` 3/3; `iterative_refinement` 2/3, the third wake
-  unparseable before any step and buying none. Every draft in the refinement run needed a repair — a
-  format-compliance fact about the draft prompt, not the structure.
-- **A CLI test that read the machine's Ollama** failed three different ways this session (a busy daemon
-  timed out, then its GPU backend failed). It now points at a closed loopback port.
+- **The stall (ADR-095):** a proposal on every wake × a wake on every approval → a flood → §23.4's
+  `queue_flooding` → a request that never ages out of a simulated run (the queue runs on wall time) →
+  every later request from that lineage flagged. Approvals stopped at 500 by epoch 7; the backlog ran
+  out at epoch 26. The retained benchmark and ADR-084's pilot ran this policy; the earlier "saturation
+  trap" reading of the benchmark was partly this.
+- **A teeth-check miss on the first pass:** a static-market test compared against another instance of
+  the same class, which shares the bug under test. Now checked against each family's pre-shift rule.
+- `environment.py`'s comment said willingness to pay scales with the Cell's price; the code uses a fixed
+  500.
 
 ### Verification
 
-21 tests; twelve teeth-checks in isolated copies, all on the intended assertion; full suite 1419 passed
-before the hermetic test fix; golden run unchanged.
+46 new tests (37 + 9); 24 teeth-checks in isolated copies, all CAUGHT on the intended assertion after the
+one test fix; golden run unchanged (the simulator is not in it); ruff and the docs-facts check clean.
 
-- Next: Slice H (Phase 3's pre-registered selection test); the claim-drift routine; the
-  verbalized-sampling twin rerun on an idle machine.
+- Next: the Phase 3 pre-registration (committed before any confirmatory batch), then the runs.

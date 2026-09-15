@@ -28,6 +28,12 @@ this run's own rate to the brief's >= 10,000-epoch, >= 500-Cell acceptance scale
 larger, whose per-epoch cost is not expected to be lower — points to a **multi-hour, quite possibly
 multi-day** run on this hardware, not a "leave it running over lunch" job.
 
+**Read its experiment series with ADR-095 in mind.** This run used simulation policy version 1, which
+stalled every simulated colony: a proposal on every wake flooded §23.4's queue, and a flagged request
+never ages out of a simulated run, so experiments stopped once the grant backlog ran out. Its falling
+revenue per concluded experiment and its final epoch with no conclusion are at least partly that stall,
+not only the `max_active_cells` ceiling. Its population, conservation and throughput figures stand.
+
 This is the real evidence behind that estimate, not a guess: the fix itself is proven correct
 (founding now clears a target above the birth-rate cap, `test_founding_a_population_above_the_
 birth_rate_cap_does_not_raise`), and this artifact is the throughput data point the estimate is

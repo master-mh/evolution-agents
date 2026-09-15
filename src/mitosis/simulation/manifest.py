@@ -60,6 +60,12 @@ class EpochRecord:
     environment_events: tuple[str, ...]
     founder_concentration: float
     dominant_founder_cell_id: str | None
+    #: Slice H (ADR-094): the mean declared price of the living Cells at the end
+    #: of the epoch. Price is the one genome trait that moves outcomes in
+    #: `utility_maximizing_market`, so it is the trait selection has to move;
+    #: every other series here counts heads or genomes, which a policy that
+    #: simply reproduces more can raise without selecting anything.
+    mean_price_minor_units: float
 
 
 @dataclass(frozen=True)
@@ -81,6 +87,10 @@ class RunManifest:
     final_living_cells: int
     conservation_ok: dict[str, bool]
     usd_real_spend_unchanged: bool
+    #: The lineage cap the run was actually held to (§9.4), read back from the
+    #: colony rather than copied from the request -- a comparison of caps
+    #: against none has to be able to show each arm got the cap it names.
+    max_lineage_population_fraction: float
     epochs: tuple[EpochRecord, ...] = ()
     failures: tuple[str, ...] = ()
 
