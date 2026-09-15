@@ -1067,7 +1067,8 @@
   `genome.WORKFLOW_STRUCTURES` whose wake makes one call (`test_every_declared_structure_has_a_runner`).
 
 - [ ] **Slice H — Phase 3's pre-registered comparisons — arm settings and a simulator stall fixed
-  2026-09-15 (ADR-094, ADR-095); the pre-registration and the runs are next.**
+  2026-09-15 (ADR-094, ADR-095); pre-registration committed (`docs/PHASE3_PREREGISTRATION.md`);
+  the confirmatory batch and its analysis are next.**
   §28 Phase 3 asks for six comparisons and a soft gate, reported with §7.4's scope caveat.
   - **Representable:** selection vs random (`staged_funding` or `pareto` vs `random_eligible`),
     MAP-Elites vs single leaderboard, staged vs flat funding (`staged_funding` vs `map_elites`, which
@@ -1098,8 +1099,8 @@
     founders never die and dominate it.
   - The implementation brief's Slice H text is not in the repository; SPEC §28 Phase 3, Amendment A1
     and §7.4 are the normative source.
-  *Disproved by:* `docs/PHASE3_PREREGISTRATION.md` committed before any batch index it names, or a
-  Phase 3 comparison manifest whose `policy_version` is `"1"`.
+  *Disproved by:* `docs/benchmarks/phase3-confirmatory/batch.json` existing in a commit, or a Phase 3
+  comparison manifest whose `policy_version` is `"1"`.
 
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
