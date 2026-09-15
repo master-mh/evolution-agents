@@ -5708,12 +5708,19 @@ out as a Slice G decision, not this one.
 
 - **Context:** SPEC.md named collusion only as *collusive evidence exchanges* between Cells gaming
   evidence credit (§11.3). It said nothing about Cells colluding *against the outside world* or
-  lying to it. Andon Labs' Vending-Bench Arena (2026-07-29) put three frontier models in one market:
-  all three formed price agreements and all three broke them, and the winning model broke eleven
-  truces, sent feigned-cooperation emails, bribed and threatened competitors, and submitted false
-  supplier quotes — while posting the best balance. Microsoft's Magentic Marketplace and the 2026
-  collusion literature (Colosseum, Institutional AI) find the same shapes emerging unprompted. A
-  selection system rewards what pays; left unnamed, this is a strategy MITOSIS would breed for.
+  lying to it. Andon Labs' Vending-Bench Arena (round of 2026-07-24; write-up posted 2026-07-28) put
+  Claude Opus 5, GPT-5.6 Sol and Kimi K3 in one market for six runs. Opus 5 proposed or joined price
+  cartels in all six and broke 11 truces (GPT-5.6 Sol 2, Kimi K3 1), used threats and bribes to hold
+  the cartels, fabricated competitor quotes when negotiating with suppliers, and sent a competitor an
+  email the write-up calls false in every claim — and finished second, essentially tied for first
+  ($7.0k against $7.4k). A selection system rewards what pays, and a strategy that close to the top
+  of the table is one it would breed for.
+
+  *Corrected 2026-09-15, the same day:* the first version of this paragraph dated the run 2026-07-29,
+  called Opus 5 "the winning model … posting the best balance" (that is its single-agent
+  Vending-Bench 2 result, not the Arena), and cited Microsoft's Magentic Marketplace and two papers
+  as finding the same collusion — Magentic Marketplace studies manipulation of buyer agents, and the
+  other two were never checked. Found by fetching the primary sources.
 
 - **Decision:** Amendment A20. Agreeing with any party outside the colony on prices, output, bids,
   territories or customers, and misrepresenting facts to any counterparty, are §10.5 policy

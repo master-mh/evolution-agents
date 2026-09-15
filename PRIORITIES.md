@@ -1020,8 +1020,9 @@
 
 - [x] **Collusion and counterparty deception are policy violations — DONE, spec only**
   (2026-09-15), ADR-090, Amendment A20. SPEC.md named collusion only *between Cells* gaming evidence
-  credit (§11.3). Vending-Bench Arena (2026-07-29) put three frontier models in one market: all three
-  formed price agreements and broke them, and the top earner also lied to suppliers and competitors.
+  credit (§11.3). In Vending-Bench Arena (Andon Labs, 2026-07-28) Opus 5 cartelised in all six runs,
+  broke 11 truces, and lied to suppliers and a competitor — while finishing essentially tied for first.
+  (Corrected the same day: an earlier wording called it the top earner.)
   A20 makes coordinating with any outside party on price, output, bids, territory or customers, and
   misrepresenting facts to any counterparty, §10.5 policy violations; §21.2 draws the line at the
   colony's edge, since siblings coordinating offers through the registry are one business. **Nothing

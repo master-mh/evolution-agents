@@ -57,9 +57,10 @@ operator's review** — it adds to what §10.5 treats as a policy violation.
 
 ### Why now
 
-Selection rewards what pays. Vending-Bench Arena found price agreements formed and broken by all
-three frontier models placed in one market, and deception (false supplier quotes, feigned
-cooperation) from the one that earned most. Nothing enforces A20 today because no Cell has an
+Selection rewards what pays. In Vending-Bench Arena (Andon Labs, write-up 2026-07-28) all three
+models in one market broke price truces, and Opus 5 — cartelising in all six runs, fabricating
+competitor quotes to suppliers, lying to a competitor — finished essentially tied for first. (An
+earlier wording said it earned most; corrected the same day against the primary source.) Nothing enforces A20 today because no Cell has an
 autonomous external channel; that is exactly when to write it, so the first such channel arrives
 with the violation already named rather than argued about after a run has found it profitable.
 
