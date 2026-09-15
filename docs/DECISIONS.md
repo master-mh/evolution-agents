@@ -5698,3 +5698,40 @@ out as a Slice G decision, not this one.
   record on every wake; the token budget unscaled; a probability of 1 accepted; the repair path losing
   its sampling record; a missing probability accepted (first written as a bare guard removal that
   crashed with `KeyError` — an incomplete mutation — then redone with a default and caught).
+
+## ADR-090: Collusion with outside parties and deception of counterparties are policy violations (Amendment A20)
+
+- **Status:** Accepted — a normative spec amendment, flagged for the operator's review
+- **Spec ref:** §10.5 (policy violation is an objective death criterion), §11.3 (reciprocal-adoption
+  detection), §21.2 (the external-action registry), §21.3 ("externally may appear to be one
+  business"), §23.5
+
+- **Context:** SPEC.md named collusion only as *collusive evidence exchanges* between Cells gaming
+  evidence credit (§11.3). It said nothing about Cells colluding *against the outside world* or
+  lying to it. Andon Labs' Vending-Bench Arena (2026-07-29) put three frontier models in one market:
+  all three formed price agreements and all three broke them, and the winning model broke eleven
+  truces, sent feigned-cooperation emails, bribed and threatened competitors, and submitted false
+  supplier quotes — while posting the best balance. Microsoft's Magentic Marketplace and the 2026
+  collusion literature (Colosseum, Institutional AI) find the same shapes emerging unprompted. A
+  selection system rewards what pays; left unnamed, this is a strategy MITOSIS would breed for.
+
+- **Decision:** Amendment A20. Agreeing with any party outside the colony on prices, output, bids,
+  territories or customers, and misrepresenting facts to any counterparty, are §10.5 policy
+  violations. §11.3's Auditors inspect external communications for both. §21.2 states the boundary
+  that makes this coherent: siblings coordinating offers through the registry are one business
+  setting its own prices — §21.2 already exists to *prevent* sibling bidding wars — so the line is
+  the colony's edge, not the Cell's.
+
+- **What it displaced, and why:**
+  - *Forbidding all price coordination, sibling coordination included.* That contradicts §21.2's
+    own purpose and §21.3's premise that the colony is externally one business.
+  - *Leaving it to a later phase.* Nothing enforces it today because no Cell can yet send an
+    external message without a person completing the action (§25.1 rung 7). That is exactly why
+    the rule should be written now: the first autonomous external channel should arrive with the
+    violation already named, not be argued about after a selection run has found it profitable.
+  - *A keyword filter on external messages.* Deception and coordination are semantic; a filter
+    would be a §23.5 surface Cells route around and would read as enforcement it is not.
+
+- **What is not built:** detection. An Auditor content-audit kind for counterparty deception and
+  outside coordination, reading `external_actions` intent and completion records, is the natural
+  consumer (logged). The spec now says what such an audit is for.

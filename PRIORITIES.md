@@ -1019,6 +1019,17 @@
   `sampling.chosen_index` changes when only its candidates' probabilities change
   (`test_the_choice_ignores_every_probability`).
 
+- [x] **Collusion and counterparty deception are policy violations — DONE, spec only**
+  (2026-09-15), ADR-090, Amendment A20. SPEC.md named collusion only *between Cells* gaming evidence
+  credit (§11.3). Vending-Bench Arena (2026-07-29) put three frontier models in one market: all three
+  formed price agreements and broke them, and the top earner also lied to suppliers and competitors.
+  A20 makes coordinating with any outside party on price, output, bids, territory or customers, and
+  misrepresenting facts to any counterparty, §10.5 policy violations; §21.2 draws the line at the
+  colony's edge, since siblings coordinating offers through the registry are one business. **Nothing
+  detects it yet** — today no Cell can send an external message without a person completing it
+  (§25.1 rung 7); an Auditor content-audit kind reading `external_actions` is logged. *Disproved by:*
+  `content_audit.COUNTERPARTY_DECEPTION`, or any audit kind that reads external communications.
+
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
   directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped

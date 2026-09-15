@@ -37,64 +37,45 @@ through this pipeline; MAP-Elites, one elite per occupied niche; staged
 funding composing everything, and the cross-family validation deadlock it
 surfaced; the cross-policy acceptance harness), seed-paired batch
 comparisons, a sealed simulated run, tools naming what observes their
-effect, and two measurement instruments (judge entanglement and evaluator
-epochs), 2026-07-21 through 2026-09-14):
+effect, two measurement instruments (judge entanglement and evaluator
+epochs), and verbalized sampling as a genome sampling policy,
+2026-07-21 through 2026-09-15):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-15 — Verbalized sampling as a genome sampling policy (ADR-089)
+## 2026-09-15 — Collusion and counterparty deception are policy violations (ADR-090, Amendment A20)
 
-Fifth of the research-driven slices. "Verbalized Sampling" (arXiv 2510.01171) names a cause of mode
-collapse independent of §15.1 anchoring — typicality bias in preference data — and recovers diversity
-by asking for several answers with probabilities. ADR-050's baseline of ~1 idea per run of 8 wakes is
-the target.
+Sixth of the research-driven slices: a normative spec amendment, no code. **Flagged for the
+operator's review** — it adds to what §10.5 treats as a policy violation.
 
 ### What shipped
 
-- `model_policy.verbalized_candidates` (1–5; absent means 1) is `model_policy`'s second occupant
-  after ADR-067's temperature.
-- For K > 1, `deliberation._system_prompt` swaps only the reply-format paragraph for
-  `proposal.candidates_instruction(K)`. The single-reply prompt is byte-identical (SHA-256 checked),
-  so every genome that declares nothing wakes as before and the golden run is unchanged.
-- `proposal.parse_candidates` validates each candidate whole. `_parse_reply` picks one uniformly with
-  `random.Random(f"verbalized:{wake_key}")`, so redelivery replays the same choice and no number a
-  Cell writes can move it (§23.5). The token budget scales by K; the audit event records
-  requested/valid/rejected counts and the chosen index, for such wakes only.
-- `scripts/genomes/verbalized_1.json` and `verbalized_5.json`, twin genomes one digit apart.
+- **Amendment A20** in SPEC.md's amendment list. Agreeing with any party outside the colony on
+  prices, output, bids, territories or customers, and misrepresenting facts to any counterparty, are
+  §10.5 policy violations, never strategies selection may reward.
+- **§11.3**: Auditors also inspect external communications for coordination with outside parties
+  and misrepresentation to counterparties.
+- **§21.2**: the boundary. Coordinating sibling Cells' offers through the registry is the colony
+  acting as one business — the clause exists to *prevent* sibling bidding wars — so the line is the
+  colony's edge, not the Cell's.
 
-### Found
+### Why now
 
-- **The nested candidate format parsed 0/2 on its first live wake** — `llama3.2` flattened every
-  candidate, as ADR-049 found for single replies. MockProvider cannot see this by construction. The
-  flat format replaced it; the nested shape stays refused by a named test.
-- **`llama3.2` cannot follow the flat format either** (no `probability` in 6 wakes, invalid JSON in
-  3); `qwen2.5` parsed 2/3. The twin runs on `qwen2.5`.
-- **The live measurement harness could not create a Cell for 11 days.**
-  `measure_parse_compliance.py`'s genome and `scripts/genomes/loose.json` gave `model_policy` as a
-  string, refused since ADR-067. Both now use `{}`.
-- **The suite's flaky failures were a `git` timeout.**
-  `test_a_worker_process_reproduces_the_in_process_manifest` failed once under load and passed
-  alone; the next full run under the same load failed `test_the_same_seed_reproduces_the_same_manifest`
-  instead, with the diff naming it exactly — `'unknown' != 'a178f18'`. `runner._code_version()` runs
-  `git rev-parse` with a 5-second timeout and records `"unknown"` on timeout (confirmed with a `git`
-  that sleeps 6s), so two runs of one seed could disagree about nothing but the code. It is now read
-  once per process (`functools.cache`), and `batch.plan` reads it once in the parent and carries it
-  to spawned workers, which have their own processes; `runner.run` takes it as an optional argument.
-- **The first twin attempt was lost** to a scratchpad wipe after two control runs (no ideas@2 had
-  been computed, no treatment run started). The pre-registration was re-declared unchanged and both
-  arms restarted from scratch.
+Selection rewards what pays. Vending-Bench Arena found price agreements formed and broken by all
+three frontier models placed in one market, and deception (false supplier quotes, feigned
+cooperation) from the one that earned most. Nothing enforces A20 today because no Cell has an
+autonomous external channel; that is exactly when to write it, so the first such channel arrives
+with the violation already named rather than argued about after a run has found it profitable.
+
+### Not built
+
+Detection. A keyword filter was rejected: coordination and deception are semantic, and a filter
+would be a §23.5 surface that reads as enforcement it is not. The natural consumer — an Auditor
+content-audit kind over `external_actions` intent and completion records — is logged in
+FUTURE_BUILD_HOOKS.md.
 
 ### Verification
 
-31 tests in `tests/test_verbalized_sampling.py`, plus
-`test_every_run_in_a_batch_names_the_code_version_read_once_by_the_plan`. Eleven teeth-checks, each
-failing on its intended assertion: seven for sampling (listed in ADR-089) and three for the
-code-version fix, each in an isolated copy of the tree (a worker reading `git` itself, `plan` never
-reading it, the runner ignoring a passed version), plus a fourth for the per-process cache — first a
-false CAUGHT, failing on a missing `cache_clear` rather than on the disagreement, until the test stopped
-depending on the cache's API. Full suite, in an export of exactly this commit's tree: 1392 passed, 4 failed for the environment
-alone — three source-archive tests need a git checkout, and one CLI test met a local Ollama too
-busy to answer, a third outcome it did not tolerate (fixed in the next commit); golden run unchanged;
-`ruff check .` and the docs-facts check clean.
+No code changed. `check_docs_facts.py` and the golden run are unaffected; the full suite was run on
+this tree as part of the verbalized-sampling commit's verification.
 
-- Next: the twin's result into ADR-089; the §11.3 amendment, the teeth-check runner and the
-  claim-drift checker; the workflow gene; then Slice H.
+- Next: the teeth-check runner, the claim-drift checker, the workflow gene; then Slice H.

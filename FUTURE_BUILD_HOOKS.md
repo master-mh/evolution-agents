@@ -1757,3 +1757,9 @@ actually queued for building — this file is memory, not a backlog to work thro
   it. §24.2 treats a model change as a regime change; a precision-by-`model_calls.requested_model`
   breakdown (or a resolved-model digest) would stop a record earned under one model vouching for
   verdicts under another. Check first which consumer reads precision as evidence rather than report.
+- **Nothing detects Amendment A20 yet (ADR-090).** Collusion with outside parties and
+  misrepresentation to counterparties are now §10.5 policy violations, but no audit reads for them.
+  The natural consumer is a `content_audit` kind over `external_actions` intent and completion
+  records, judged by a different family from the Cell's (§24.3). Build it before any external channel
+  lets a Cell send a message no person completes — a violation first detectable after it pays is the
+  failure A20 was written to prevent.

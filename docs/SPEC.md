@@ -64,6 +64,7 @@ These arose from independent review and are **normative** in this spec.
 - **A17 — Governance overhead ratio:** (audit + immune + approval spend) / total spend, tracked against a target band (§10.4).
 - **A18 — Chaos drills in Phase 2:** extinction/corruption/crash scenarios in the flight-sim test suite (§28 Phase 2).
 - **A19 — Solo-operator model:** approval SLAs, vacation mode auto-pausing external-facing phases, colony metabolic-rate alarm (§23.3).
+- **A20 — Collusion and counterparty deception are policy violations.** Agreeing with any party outside the colony on prices, output, bids, territories or customers, and misrepresenting facts to any counterparty — supplier, customer, competitor or platform — are §10.5 policy violations, never strategies selection may reward. Sibling Cells coordinating through §21.2's registry are one business setting its own offers, not collusion (§11.3, §21.2).
 
 ---
 
@@ -584,7 +585,7 @@ A reusable module/discovery earns downstream credit only when (1) another Cell i
 
 ## 11.3 Reciprocal-adoption detection
 
-Auditors inspect reciprocal module adoption, circular team membership, repeated low-value reuse, duplicated artifacts with new names, and collusive evidence exchanges.
+Auditors inspect reciprocal module adoption, circular team membership, repeated low-value reuse, duplicated artifacts with new names, and collusive evidence exchanges. They also inspect external communications for coordination with parties outside the colony and for misrepresentation to counterparties (Amendment A20).
 
 ## 11.4 Delayed, decaying credit
 
@@ -888,7 +889,7 @@ Real-facing Cells may share merchant identity, marketplace account, brand, domai
 
 ## 21.2 Central external-action registry
 
-Track customer contacted, offer made, channel used, domain used, platform account, listing, message, spend, and reputation impact. Prevent duplicate contact, sibling bidding wars, conflicting offers, cannibalisation, account-rate-limit collisions, and reputation damage. Action-splitting detection uses cumulative-exposure aggregation keys (counterparty/domain/channel over a rolling window; see §23.4).
+Track customer contacted, offer made, channel used, domain used, platform account, listing, message, spend, and reputation impact. Prevent duplicate contact, sibling bidding wars, conflicting offers, cannibalisation, account-rate-limit collisions, and reputation damage. Action-splitting detection uses cumulative-exposure aggregation keys (counterparty/domain/channel over a rolling window; see §23.4). Coordinating sibling Cells' offers here is the colony acting as one business; an agreement on price, output, bids, territory or customers with any party outside the colony, or a misrepresentation to any counterparty, is a policy violation (§10.5, Amendment A20).
 
 ## 21.3 Why required
 
