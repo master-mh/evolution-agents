@@ -6,6 +6,44 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-15 — Collusion and counterparty deception are policy violations (ADR-090, Amendment A20)
+
+Sixth of the research-driven slices: a normative spec amendment, no code. **Flagged for the
+operator's review** — it adds to what §10.5 treats as a policy violation.
+
+### What shipped
+
+- **Amendment A20** in SPEC.md's amendment list. Agreeing with any party outside the colony on
+  prices, output, bids, territories or customers, and misrepresenting facts to any counterparty, are
+  §10.5 policy violations, never strategies selection may reward.
+- **§11.3**: Auditors also inspect external communications for coordination with outside parties
+  and misrepresentation to counterparties.
+- **§21.2**: the boundary. Coordinating sibling Cells' offers through the registry is the colony
+  acting as one business — the clause exists to *prevent* sibling bidding wars — so the line is the
+  colony's edge, not the Cell's.
+
+### Why now
+
+Selection rewards what pays. Vending-Bench Arena found price agreements formed and broken by all
+three frontier models placed in one market, and deception (false supplier quotes, feigned
+cooperation) from the one that earned most. Nothing enforces A20 today because no Cell has an
+autonomous external channel; that is exactly when to write it, so the first such channel arrives
+with the violation already named rather than argued about after a run has found it profitable.
+
+### Not built
+
+Detection. A keyword filter was rejected: coordination and deception are semantic, and a filter
+would be a §23.5 surface that reads as enforcement it is not. The natural consumer — an Auditor
+content-audit kind over `external_actions` intent and completion records — is logged in
+FUTURE_BUILD_HOOKS.md.
+
+### Verification
+
+No code changed. `check_docs_facts.py` and the golden run are unaffected; the full suite was run on
+this tree as part of the verbalized-sampling commit's verification.
+
+- Next: the teeth-check runner, the claim-drift checker, the workflow gene; then Slice H.
+
 ## 2026-09-15 — Verbalized sampling as a genome sampling policy (ADR-089)
 
 Fifth of the research-driven slices. "Verbalized Sampling" (arXiv 2510.01171) names a cause of mode

@@ -38,44 +38,40 @@ funding composing everything, and the cross-family validation deadlock it
 surfaced; the cross-policy acceptance harness), seed-paired batch
 comparisons, a sealed simulated run, tools naming what observes their
 effect, two measurement instruments (judge entanglement and evaluator
-epochs), and verbalized sampling as a genome sampling policy,
+epochs), verbalized sampling as a genome sampling policy, and
+Amendment A20 naming collusion and counterparty deception,
 2026-07-21 through 2026-09-15):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-15 — Collusion and counterparty deception are policy violations (ADR-090, Amendment A20)
+## 2026-09-15 — A teeth-check runner that cannot touch the real tree (ADR-091)
 
-Sixth of the research-driven slices: a normative spec amendment, no code. **Flagged for the
-operator's review** — it adds to what §10.5 treats as a policy violation.
+Seventh of the research-driven slices; tooling, no kernel change.
 
 ### What shipped
 
-- **Amendment A20** in SPEC.md's amendment list. Agreeing with any party outside the colony on
-  prices, output, bids, territories or customers, and misrepresenting facts to any counterparty, are
-  §10.5 policy violations, never strategies selection may reward.
-- **§11.3**: Auditors also inspect external communications for coordination with outside parties
-  and misrepresentation to counterparties.
-- **§21.2**: the boundary. Coordinating sibling Cells' offers through the registry is the colony
-  acting as one business — the clause exists to *prevent* sibling bidding wars — so the line is the
-  colony's edge, not the Cell's.
+- `scripts/teeth_check.py` takes a JSON list of mutations (`file`, `old` occurring exactly once,
+  `new`, `test`, `expect`) and runs each in its own copy of the working tree — uncommitted work
+  included; `.git`, `.venv`, caches and colony databases excluded — with `PYTHONDONTWRITEBYTECODE=1`
+  and `PYTHONPATH` at the copy, in parallel. Verdicts: `CAUGHT`, `WRONG-FAILURE`, `MISS`, `INVALID`.
+  It fails loudly if the real tree's digest changed.
+- `.claude/agents/teeth-checker.md`: an agent that writes the mutation spec, runs the script and
+  reports each verdict with its assertion line, carrying this repo's rules about complete mutations
+  and secondary rules rescuing a mutation.
+- CLAUDE.md's teeth-check section points at both.
 
-### Why now
+### Found
 
-Selection rewards what pays. Vending-Bench Arena found price agreements formed and broken by all
-three frontier models placed in one market, and deception (false supplier quotes, feigned
-cooperation) from the one that earned most. Nothing enforces A20 today because no Cell has an
-autonomous external channel; that is exactly when to write it, so the first such channel arrives
-with the violation already named rather than argued about after a run has found it profitable.
-
-### Not built
-
-Detection. A keyword filter was rejected: coordination and deception are semantic, and a filter
-would be a §23.5 surface that reads as enforcement it is not. The natural consumer — an Auditor
-content-audit kind over `external_actions` intent and completion records — is logged in
-FUTURE_BUILD_HOOKS.md.
+- **`PYTHONPATH` beats the editable install** — probed with a stub package before relying on it, so
+  a copy's `src/` really is what its test imports.
+- **`expect` narrows a false CAUGHT; it does not remove one.** Of 17 guards checked through it this
+  session, one `expect` (`AttributeError`) matched the test crashing on a missing `cache_clear` rather
+  than failing on the property. Reading the assertion line caught it; the test was rewritten not to
+  depend on the cache's API and re-checked.
 
 ### Verification
 
-No code changed. `check_docs_facts.py` and the golden run are unaffected; the full suite was run on
-this tree as part of the verbalized-sampling commit's verification.
+`tests/test_teeth_check.py` (3 tests) pins all four verdicts against a throwaway project — including
+an incomplete mutation that must report `WRONG-FAILURE` — and that the real tree is never touched.
+Used in anger for 17 mutations across the verbalized-sampling fix and the workflow gene.
 
-- Next: the teeth-check runner, the claim-drift checker, the workflow gene; then Slice H.
+- Next: the claim-drift checker and its weekly routine; the workflow gene; then Slice H.

@@ -5735,3 +5735,40 @@ out as a Slice G decision, not this one.
 - **What is not built:** detection. An Auditor content-audit kind for counterparty deception and
   outside coordination, reading `external_actions` intent and completion records, is the natural
   consumer (logged). The spec now says what such an audit is for.
+
+## ADR-091: A teeth-check runner that cannot touch the real tree
+
+- **Status:** Accepted (tooling; no kernel change)
+- **Spec ref:** CLAUDE.md's teeth-check convention; §0.1 (a Charter clause is only as good as the
+  test that defends it)
+
+- **Context:** Every guard in this repo is teeth-checked by reintroducing its bug. The practice had
+  three recorded failure modes — `git checkout` restoring over uncommitted work, stale bytecode
+  after a size-preserving restore, and a false CAUGHT from reading the exit code — and this
+  session's own seven slices hit the third four times (two wrong expected strings, two incomplete
+  mutations that crashed with `KeyError`). Each slice rebuilt an ad-hoc mutation script.
+
+- **Decision:** `scripts/teeth_check.py` takes a JSON list of mutations (`file`, `old` occurring
+  exactly once, `new`, `test`, `expect`), runs each in its own copy of the working tree —
+  uncommitted work included, `.git`/`.venv`/caches excluded — with `PYTHONDONTWRITEBYTECODE=1` and
+  `PYTHONPATH` at the copy, in parallel. Verdicts: `CAUGHT` (failed and `expect` present),
+  `WRONG-FAILURE` (failed without it — incomplete mutation or wrong expectation), `MISS`, `INVALID`.
+  It checks the real tree is byte-identical afterwards. `.claude/agents/teeth-checker.md` drives it,
+  with the repo's hard-won rules about complete mutations and secondary rules rescuing a mutation.
+
+- **What it displaced:** mutating the real tree and restoring (the source of two of the three
+  failure modes); `git worktree` per mutation (it would drop uncommitted work, which is exactly
+  what is being checked); a subagent swarm doing the mutations by hand (the isolation has to be
+  mechanical — an agent restoring files is the `git checkout` failure with extra steps).
+
+- **Verified before relying on it:** `PYTHONPATH` takes precedence over the venv's editable install
+  (probed with a stub package), so a copy's `src/` is what the test imports. Dogfooded on three
+  guards from this session — all CAUGHT in 11.5s with the tree untouched. `tests/test_teeth_check.py`
+  pins all four verdicts against a throwaway project, including an incomplete mutation that must
+  report `WRONG-FAILURE`, and that the real tree is never touched.
+
+- **Used in anger, and what it still cannot do:** 17 mutations across the verbalized-sampling fix and
+  the workflow gene (ADR-093), in parallel copies. One reported a false CAUGHT: its `expect`
+  (`AttributeError`) matched the test crashing on a missing `cache_clear` rather than failing on the
+  property. `expect` narrows a false CAUGHT; only reading the assertion line removes one, which is
+  why the agent's instructions require it.

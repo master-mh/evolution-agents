@@ -237,6 +237,12 @@ against the very constant it is meant to bound (`<= RECENT_PROPOSALS` is satisfi
   second defeat Python's `(mtime, size)` pyc check, and stale bytecode from the *broken* source
   will produce a false result and a restored-but-failing tree.
 
+`scripts/teeth_check.py` removes both caveats rather than working around them (ADR-091): each
+mutation runs in its own copy of the working tree, in parallel, so nothing is ever restored, and its
+verdict is `CAUGHT` only when the test fails *and* a stated `expect` string appears — an incomplete
+mutation that crashes instead reports `WRONG-FAILURE`. The `teeth-checker` agent
+(`.claude/agents/`) drives it.
+
 ### Working with paid providers
 
 `call-model` is the only verb that can spend real money and is gated behind

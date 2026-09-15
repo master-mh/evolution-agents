@@ -1030,6 +1030,18 @@
   (§25.1 rung 7); an Auditor content-audit kind reading `external_actions` is logged. *Disproved by:*
   `content_audit.COUNTERPARTY_DECEPTION`, or any audit kind that reads external communications.
 
+- [x] **A teeth-check runner that cannot touch the real tree — DONE** (2026-09-15), ADR-091.
+  `scripts/teeth_check.py` runs each mutation in its own copy of the working tree (uncommitted work
+  included), in parallel, with bytecode writing off and `PYTHONPATH` at the copy, and reports
+  `CAUGHT` only when the test fails *and* a stated `expect` string appears — so an incomplete
+  mutation that crashes reads `WRONG-FAILURE`, not a pass. The `teeth-checker` agent drives it.
+  Removes two of CLAUDE.md's three recorded failure modes (`git checkout` over uncommitted work,
+  stale bytecode) and makes the third visible. Dogfooded on 17 guards from this session's slices; it
+  still printed one false CAUGHT whose `expect` matched a crash, found only by reading the assertion
+  line — `expect` narrows the failure, it does not replace reading it. *Disproved by:* a
+  `teeth_check.run` whose real tree's digest differs afterwards
+  (`test_the_real_tree_is_never_touched`).
+
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
   directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped
