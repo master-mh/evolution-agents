@@ -15,6 +15,7 @@ reproduces (`selection_policy.py`).
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import random
@@ -86,6 +87,14 @@ def _config_hash(config: RunConfig) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+#: Read once per process. The code a process runs was fixed when it imported,
+#: so a second read can only disagree by accident — and did: under load one
+#: `git rev-parse` timed out, so two runs of the same seed in one test named
+#: different code ("unknown" against a hash) and a reproducibility test
+#: failed for a reason that had nothing to do with reproducibility. A cached
+#: "unknown" is at least the same answer every time; `batch.plan` carries the
+#: parent's answer to spawned workers for the same reason.
+@functools.cache
 def _code_version() -> str:
     try:
         result = subprocess.run(
@@ -404,6 +413,7 @@ def run(
     suite: EnvironmentSuite | None = None,
     selection: SelectionPolicy | None = None,
     epoch_hook: Callable[[Any, int], None] | None = None,
+    code_version: str | None = None,
 ) -> RunManifest:
     suite = suite or EnvironmentSuite.training_only(UtilityMaximizingMarket())
     selection = selection or RandomEligibleSelection()
@@ -411,8 +421,12 @@ def run(
     started = datetime.now(timezone.utc)
     # Read before sealing: it starts a `git` child process, which a sealed run
     # refuses like any other (ADR-085). Once, so the run record and the
-    # manifest cannot disagree about which code produced them.
-    code_version = _code_version()
+    # manifest cannot disagree about which code produced them. A batch passes
+    # it in: read once in the parent, every run in the batch names the same
+    # code, and a `git` timing out under load in one worker cannot quietly
+    # write "unknown" into one manifest of a pair (ADR-084's pairing).
+    if code_version is None:
+        code_version = _code_version()
 
     # Sealed for the whole run, founding included (ADR-085): the claim that a
     # simulated run reaches nothing outside the interpreter is enforced by the

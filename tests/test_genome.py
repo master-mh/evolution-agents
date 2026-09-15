@@ -360,10 +360,13 @@ def test_model_policy_must_be_a_dict():
 def test_model_policy_rejects_an_unknown_key():
     """§14.1's other named operators (model-route, reasoning-budget mutation)
     are not yet built. A misspelled or half-built key must fail loudly rather
-    than being silently ignored by whichever provider does not recognise it."""
+    than being silently ignored by whichever provider does not recognise it.
+
+    The pinned set changes only by a deliberate new occupant — ADR-067's
+    temperature, then ADR-089's verbalized_candidates."""
     with pytest.raises(genome.GenomeError, match="unknown model_policy field"):
         canonical_genome_json(CellType.EXPLORER, {"model_policy": {"model_route": "opus"}})
-    assert set(MODEL_POLICY_FIELDS) == {"temperature"}
+    assert set(MODEL_POLICY_FIELDS) == {"temperature", "verbalized_candidates"}
 
 
 def test_temperature_of_is_none_not_zero_for_a_silent_genome():

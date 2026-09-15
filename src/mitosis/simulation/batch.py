@@ -83,6 +83,9 @@ class BatchJob:
     environment: str
     validation_environment: str | None
     output_path: str
+    #: Read once by `plan`, in the parent. `None` lets `runner.run` read it
+    #: itself, which a worker under load can time out on and record "unknown".
+    code_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,7 @@ def run_job(job: BatchJob) -> BatchResult:
                 job.arm, environment_name=job.environment,
                 validation_environment=job.validation_environment,
             ),
+            code_version=job.code_version,
         )
     finally:
         conn.close()
@@ -144,11 +148,15 @@ def plan(
         # An unknown name fails here, before any process starts, rather than
         # inside a worker after the other arms have already spent their time.
         simulation_selection_policy.build_selection_policy(arm)
+    # Once for the whole batch: every run names the same code, and no worker
+    # starts a `git` of its own — one that timed out under load would record
+    # "unknown" in one manifest of a pair and the pair would stop comparing.
+    code_version = runner._code_version()
     return [
         BatchJob(
             arm=arm, seed=seed, epochs=epochs, population=population, scenario=scenario,
             environment=environment, validation_environment=validation_environment,
-            output_path=str(out_dir / manifest_filename(arm, seed)),
+            output_path=str(out_dir / manifest_filename(arm, seed)), code_version=code_version,
         )
         for arm in arms
         for seed in seeds

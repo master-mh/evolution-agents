@@ -45,6 +45,7 @@ the redelivery finds it and simply marks the event processed.
 from __future__ import annotations
 
 import json
+import random
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -183,19 +184,40 @@ class Deliberation:
     created_at_utc: datetime
 
 
-def _system_prompt() -> str:
+def _system_prompt(candidates: int = 1) -> str:
     """The instruction half of the prompt. Fixed kernel text, never genome
     content — a genome that could rewrite these instructions would be a Cell
-    editing the constitution it is judged against."""
+    editing the constitution it is judged against.
+
+    `candidates` above 1 swaps only the reply-format paragraph for verbalized
+    sampling's (ADR-089). The count is a genome value, but it selects between
+    two fixed kernel texts and is never itself text the model is told to obey,
+    so this is still not a genome rewriting its instructions. A genome that
+    declares nothing gets the exact bytes every wake got before the field
+    existed (pinned by a test, and by the golden run's token counts).
+    """
+    if candidates == 1:
+        reply_format = (
+            "You are being woken to deliberate. You cannot take any action. Your only "
+            "output is a single proposal, which is recorded and read by the operator. "
+            "Nothing you propose is executed automatically.\n\n"
+            "Reply with ONE JSON object and nothing else — no prose before or after. "
+            "It must match this schema exactly. Every REQUIRED field must be present, "
+            "and unknown fields are rejected:\n\n"
+        )
+    else:
+        reply_format = (
+            "You are being woken to deliberate. You cannot take any action. Your "
+            "output is a set of candidate proposals; one of them is recorded and read "
+            "by the operator. Nothing you propose is executed automatically.\n\n"
+            f"{proposal_module.candidates_instruction(candidates)}\n\n"
+            "Each proposal object must match this schema exactly. Every REQUIRED field "
+            "must be present, and unknown fields are rejected:\n\n"
+        )
     return (
         "You are a Cell in the MITOSIS colony: an autonomous economic agent under "
         "an immutable kernel you cannot modify.\n\n"
-        "You are being woken to deliberate. You cannot take any action. Your only "
-        "output is a single proposal, which is recorded and read by the operator. "
-        "Nothing you propose is executed automatically.\n\n"
-        "Reply with ONE JSON object and nothing else — no prose before or after. "
-        "It must match this schema exactly. Every REQUIRED field must be present, "
-        "and unknown fields are rejected:\n\n"
+        f"{reply_format}"
         f"{proposal_module.response_schema_hint()}\n\n"
         "Guidance:\n"
         "- Propose something your genome and your record actually support.\n"
@@ -359,6 +381,34 @@ class _RepairResult:
     model_call_id: str | None
     parsed: proposal_module.Proposal | None
     note: str
+    #: What verbalized sampling did on the repaired reply (ADR-089); `None`
+    #: for an ordinary single-reply wake.
+    sampling: dict[str, int] | None = None
+
+
+def _parse_reply(
+    reply: str, *, candidates: int, wake_key: str
+) -> tuple[proposal_module.Proposal, dict[str, int] | None]:
+    """One reply into one proposal — directly, or by choosing among a
+    verbalized-sampling reply's valid candidates (ADR-089).
+
+    **The choice is uniform and seeded by the wake, never by the reply.** The
+    probabilities a Cell writes beside its candidates are validated and then
+    discarded: a probability that moved the choice would be a number a Cell
+    could learn to write (§23.5), and a seed taken from anything in the reply
+    would let the reply steer it the same way. Seeding by `wake_key` makes a
+    redelivered or replayed wake choose the same candidate (§26).
+    """
+    if candidates == 1:
+        return proposal_module.parse(reply), None
+    valid, rejected = proposal_module.parse_candidates(reply)
+    chosen = random.Random(f"verbalized:{wake_key}").randrange(len(valid))
+    return valid[chosen], {
+        "verbalized_candidates": candidates,
+        "candidates_valid": len(valid),
+        "candidates_rejected": len(rejected),
+        "chosen_index": chosen,
+    }
 
 
 def _attempt_parse_repair(
@@ -374,6 +424,7 @@ def _attempt_parse_repair(
     temperature: float | None,
     experiment_id: str | None,
     wake_key: str,
+    candidates: int = 1,
 ) -> _RepairResult:
     """One bounded re-prompt after an unparseable reply
     (`MAX_PARSE_REPAIR_ATTEMPTS`; ADR-069).
@@ -405,7 +456,7 @@ def _attempt_parse_repair(
             request=providers.ModelRequest(
                 model=model,
                 messages=(
-                    {"role": "user", "content": f"{_system_prompt()}\n\n{assembled.render()}"},
+                    {"role": "user", "content": f"{_system_prompt(candidates)}\n\n{assembled.render()}"},
                     {"role": "assistant", "content": reply},
                     {"role": "user", "content": _repair_instruction(error)},
                 ),
@@ -423,14 +474,18 @@ def _attempt_parse_repair(
         return _RepairResult(model_call_id=None, parsed=None, note=f"repair not attempted: {exc}")
 
     try:
-        parsed = proposal_module.parse(repair_call.response_text or "")
+        parsed, sampling = _parse_reply(
+            repair_call.response_text or "", candidates=candidates, wake_key=wake_key
+        )
     except proposal_module.ProposalError as exc:
         return _RepairResult(
             model_call_id=repair_call.model_call_id,
             parsed=None,
             note=f"repair reply also failed to validate: {exc}",
         )
-    return _RepairResult(model_call_id=repair_call.model_call_id, parsed=parsed, note="repaired")
+    return _RepairResult(
+        model_call_id=repair_call.model_call_id, parsed=parsed, note="repaired", sampling=sampling
+    )
 
 
 def deliberate(
@@ -515,6 +570,12 @@ def deliberate(
     # not a kernel opinion. Resolved once and reused for a repair attempt
     # below: a repair reasons about the same genome, so it samples the same way.
     temperature = genome.temperature_of(canonical_genome)
+    # ADR-089: verbalized sampling, read from the same genome policy. The token
+    # budget scales with it — a Cell asked for five ideas pays for five ideas'
+    # worth of output, which is the honest price of asking, rather than a
+    # truncated reply that fails to parse and buys a repair call instead.
+    candidates = genome.verbalized_candidates_of(canonical_genome)
+    request_max_tokens = max_tokens * candidates
 
     # The gateway call commits its own reservation before the external call
     # (ADR-022), so it happens outside every transaction this module opens.
@@ -525,9 +586,9 @@ def deliberate(
         request=providers.ModelRequest(
             model=model,
             messages=(
-                {"role": "user", "content": f"{_system_prompt()}\n\n{assembled.render()}"},
+                {"role": "user", "content": f"{_system_prompt(candidates)}\n\n{assembled.render()}"},
             ),
-            max_tokens=max_tokens,
+            max_tokens=request_max_tokens,
             temperature=temperature,
         ),
         experiment_id=experiment_id,
@@ -536,7 +597,7 @@ def deliberate(
 
     reply = call.response_text or ""
     try:
-        parsed = proposal_module.parse(reply)
+        parsed, sampling = _parse_reply(reply, candidates=candidates, wake_key=wake_key)
     except proposal_module.ProposalError as exc:
         # §24's "retries controlled failures" (ADR-069): one bounded re-prompt
         # before giving up. The first call already succeeded and was billed,
@@ -550,10 +611,11 @@ def deliberate(
             assembled=assembled,
             reply=reply,
             error=str(exc),
-            max_tokens=max_tokens,
+            max_tokens=request_max_tokens,
             temperature=temperature,
             experiment_id=experiment_id,
             wake_key=wake_key,
+            candidates=candidates,
         )
         if repair.parsed is not None:
             return _record_proposal(
@@ -567,6 +629,7 @@ def deliberate(
                 parsed=repair.parsed,
                 experiment_id=experiment_id,
                 proposal_sink=proposal_sink,
+                sampling=repair.sampling,
             )
         return _record_unparseable(
             conn,
@@ -591,6 +654,7 @@ def deliberate(
         # produced cannot land on two different experiments.
         experiment_id=experiment_id,
         proposal_sink=proposal_sink,
+        sampling=sampling,
     )
 
 
@@ -731,6 +795,7 @@ def _record_proposal(
     parsed: proposal_module.Proposal,
     experiment_id: str | None,
     proposal_sink: ProposalSink | None,
+    sampling: dict[str, int] | None = None,
 ) -> Deliberation:
     """Record the proposal, register its predictions, and queue it for review
     — one transaction.
@@ -841,6 +906,9 @@ def _record_proposal(
                 "repair_model_call_id": repair_model_call_id,
                 "risk_tier": parsed.risk_tier.value if parsed.risk_tier is not None else None,
                 "predictions": len(parsed.predictions),
+                # Only when a genome asked for candidates (ADR-089): the audit
+                # trail of every ordinary wake stays exactly as it was.
+                **({"sampling": sampling} if sampling is not None else {}),
             },
         )
         conn.execute("COMMIT")

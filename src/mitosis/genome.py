@@ -194,7 +194,21 @@ MODEL_POLICY_FIELDS: dict[str, str] = {
         "once stays valid on every provider it might run against (§14.2's "
         "counterfactual-twin obligation)"
     ),
+    "verbalized_candidates": (
+        "§14.1 temperature/sampling mutation, second occupant (ADR-089): how "
+        "many genuinely different candidate proposals one wake asks for, each "
+        "with a stated probability — verbalized sampling (arXiv 2510.01171). "
+        "The kernel picks one uniformly and discards every probability, so the "
+        "number a Cell writes beside an idea decides nothing (§23.5). 1, or "
+        "absent, is the ordinary single reply. Bounded to [1, 5]: past five, "
+        "one reply's token budget is mostly spent on ideas that are thrown away"
+    ),
 }
+
+#: `verbalized_candidates` bounds. Named so the prompt, the validator and the
+#: tests read one pair of numbers.
+MIN_VERBALIZED_CANDIDATES = 1
+MAX_VERBALIZED_CANDIDATES = 5
 
 #: Valid `risk_class` values. Held as plain strings rather than importing
 #: `proposal.RiskTier`, because `proposal` sits far above `genome` in the
@@ -303,6 +317,25 @@ def temperature_of(content: dict[str, Any] | None) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def verbalized_candidates_of(content: dict[str, Any] | None) -> int:
+    """How many candidate proposals this genome's `model_policy` asks one
+    wake for (ADR-089) — 1, the ordinary single reply, when it declares none.
+
+    Unlike `temperature_of`, absence has a natural value here: a genome that
+    never mutated this field is asking for exactly what every wake before this
+    field existed asked for.
+    """
+    if not content:
+        return MIN_VERBALIZED_CANDIDATES
+    policy = content.get("model_policy")
+    if not isinstance(policy, dict):
+        return MIN_VERBALIZED_CANDIDATES
+    value = policy.get("verbalized_candidates")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return MIN_VERBALIZED_CANDIDATES
+    return value
+
+
 def requested_tools(content: dict[str, Any] | None) -> tuple[str, ...]:
     """Tools this genome *requests*. Grants nothing (§0.4).
 
@@ -401,4 +434,14 @@ def _validate_model_policy(policy: Any) -> None:
         if not 0.0 <= float(temperature) <= 1.0:
             raise GenomeError(
                 f"model_policy.temperature must be between 0.0 and 1.0, got {temperature}"
+            )
+
+    candidates = policy.get("verbalized_candidates")
+    if candidates is not None:
+        if isinstance(candidates, bool) or not isinstance(candidates, int):
+            raise GenomeError("model_policy.verbalized_candidates must be a whole number")
+        if not MIN_VERBALIZED_CANDIDATES <= candidates <= MAX_VERBALIZED_CANDIDATES:
+            raise GenomeError(
+                f"model_policy.verbalized_candidates must be between "
+                f"{MIN_VERBALIZED_CANDIDATES} and {MAX_VERBALIZED_CANDIDATES}, got {candidates}"
             )

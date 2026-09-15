@@ -55,7 +55,13 @@ GENOME = {
     "revenue_model": "flat monthly subscription per bookkeeper seat, billed in advance",
     "acquisition_channel": "bookkeeping community forums and accountant referral",
     "workflow": "ingest exports, match on amount+date window, rank residual candidates, publish report",
-    "model_policy": "prefer local models for drafting; escalate only for customer-facing text",
+    # Was the string "prefer local models for drafting; escalate only for
+    # customer-facing text" -- which ADR-067 made invalid when it closed
+    # `model_policy` to a schema, so from 2026-09-03 this harness could not
+    # create a Cell at all and nothing noticed (found in ADR-089). Every arm
+    # measured since is on this genome, not the old one: a different stimulus,
+    # so compare it only with arms that also used it.
+    "model_policy": {},
     "mutation_rate": 0.1,
     "allowed_tools": ["http_fetch"],
     "risk_class": "MEDIUM",

@@ -5637,3 +5637,64 @@ out as a Slice G decision, not this one.
 - **Verification:** `--selftest` covers identical stamps, re-pulled weights, a reworded prompt, an
   unknown digest, a missing stamp and a one-sided field. Hand-verified live: both instruments produce
   stamps with real digests, and a `qwen2.5` stamp against a `llama3.2` stamp reports both differences.
+
+## ADR-089: Verbalized sampling as a genome sampling policy — the kernel chooses uniformly and discards every probability
+
+- **Status:** Accepted; live twin measurement pre-registered and reported below when complete
+- **Spec ref:** §14.1 ("temperature/sampling mutation"), §14.2 (counterfactual twins), §23.5 (a field
+  a Cell can fill is a field it will optimise), §26 (replay), §16.3 (model policies are inheritable)
+
+- **Context:** ADR-050's baseline is ~1 distinct idea per run of 8 wakes at any temperature or model,
+  and ADR-051–054 traced much of it to §15.1 anchoring: a Cell copies whatever it can see. A
+  different, independent cause is named by "Verbalized Sampling" (arXiv 2510.01171, ICML 2026):
+  *typicality bias* in preference data collapses a model onto its modal answer, and asking for a
+  distribution over several answers with probabilities recovers 2–3× diversity without training.
+  TurboEvolve (arXiv 2604.18607) uses the same device as a mutation operator in program evolution.
+
+- **Decision:** `model_policy.verbalized_candidates` ∈ [1, 5] (1 or absent = the ordinary single
+  reply) is `model_policy`'s second occupant after ADR-067's temperature. A wake whose genome asks for
+  K > 1 swaps only the reply-format paragraph of the system prompt for one requesting K candidates;
+  `proposal.parse_candidates` validates each candidate whole and on its own; `deliberation._parse_reply`
+  chooses one **uniformly, seeded by the wake key**; the token budget scales by K; the audit event
+  records requested/valid/rejected counts and the chosen index, and only for such wakes.
+
+- **What it displaced, and why:**
+  - *Choosing by the Cell's stated probabilities (as the paper samples).* The probability is a number
+    a Cell writes; if it moved the choice, it would be a number a Cell learns to write (§23.5). It is
+    validated — a reply without the distribution is a list, not verbalized sampling — and discarded.
+    The prompt says so, in the same spirit as the repair instruction's "this is your only chance".
+  - *Seeding the choice from the reply.* A reply-derived seed is a reply-steerable seed. Seeding by
+    the wake key replays the same choice on redelivery (§26), and the test that reverses every
+    probability requires an identical sequence of choices.
+  - *Storing the unchosen candidates.* `model_calls.response_text` already holds the raw reply; a new
+    table would be a second record of the same bytes, and showing discarded wording back to a Cell is
+    the ADR-054 repeat.
+  - *A nested `{"probability", "proposal"}` candidate.* The first design. **The first live wake on
+    `llama3.2` flattened every candidate and parsed 0/2** — the flattening ADR-049 found in single
+    replies, invisible to MockProvider by construction. The format became a proposal object with one
+    extra top-level `probability`, unambiguous because `Proposal` forbids unknown fields; the nested
+    shape stays refused by a named test.
+  - *Changing the single-reply prompt.* It is byte-identical (SHA-256 checked before and after), so
+    every genome that declares nothing wakes exactly as it did; the golden run is unchanged.
+
+- **Live smoke findings (before the arms):** `llama3.2` wrote no top-level `probability` in any of 6
+  wakes under the flat format either (and emitted invalid JSON in 3) — it cannot follow this format.
+  `qwen2.5` parsed 2/3 with real probabilities. The twin therefore runs on `qwen2.5`.
+
+- **Found in passing — the live measurement harness had been broken since ADR-067.**
+  `measure_parse_compliance.py`'s built-in genome and `scripts/genomes/loose.json` gave
+  `model_policy` as a string, which the closed schema refuses, so setup could not create a Cell and
+  nothing noticed for 11 days. Both now use `{}`; arms measured from here on are a different stimulus
+  from ADR-050–058's and are compared only with each other.
+
+- **Pre-registered twin (declared before either arm ran):** `scripts/genomes/verbalized_1.json` vs
+  `verbalized_5.json`, one digit apart; `qwen2.5` only model resident; 8 runs × 8 wakes each; primary
+  metric ideas@2 (mean ± se); secondary parse rate; concreteness informational only (judged by
+  `qwen2.5`, self-graded, because ADR-087 found `llama3.2` a constant judge). A difference inside 2 se
+  is reported as no detected effect.
+
+- **Verification:** 31 tests in `tests/test_verbalized_sampling.py`. Seven teeth-checks, all failing on
+  the intended assertion: choice by highest probability; choice seeded from the reply; a sampling
+  record on every wake; the token budget unscaled; a probability of 1 accepted; the repair path losing
+  its sampling record; a missing probability accepted (first written as a bare guard removal that
+  crashed with `KeyError` — an incomplete mutation — then redone with a default and caught).

@@ -195,6 +195,50 @@ def test_a_worker_process_reproduces_the_in_process_manifest(tmp_path):
     assert len(index["runs"]) == 2
 
 
+def test_every_run_in_a_batch_names_the_code_version_read_once_by_the_plan(tmp_path, monkeypatch):
+    """A run that reads `git` itself can time out under load and record
+    "unknown" — the cause of this suite's one flaky failure, where a pooled
+    manifest and its inline twin disagreed about nothing but `code_version`.
+    `plan` reads it once, in the parent, and every run carries that answer;
+    nothing a worker does afterwards can change what a manifest names."""
+    monkeypatch.setattr(runner, "_code_version", lambda: "plan-read")
+    jobs = batch.plan(
+        arms=["random_eligible", "single_leaderboard"], seeds=[1, 2], epochs=2, population=2,
+        scenario="cv", environment=UtilityMaximizingMarket.name, validation_environment=None,
+        out_dir=tmp_path,
+    )
+    monkeypatch.setattr(runner, "_code_version", lambda: "unknown")
+    batch.run_batch(jobs, out_dir=tmp_path, workers=1)
+    recorded = {json.loads(Path(job.output_path).read_text())["code_version"] for job in jobs}
+    assert recorded == {"plan-read"}
+
+
+def test_one_process_names_one_code_version_even_when_git_slows_down(monkeypatch):
+    """The in-process half of the same flake: two runs of one seed in one
+    process named different code after the second `git rev-parse` timed out,
+    and `test_the_same_seed_reproduces_the_same_manifest` failed on it."""
+    answers = iter(["abc1234\n"])
+
+    def slow_git(*args, **kwargs):
+        try:
+            stdout = next(answers)
+        except StopIteration:
+            raise runner.subprocess.TimeoutExpired(cmd="git", timeout=5) from None
+        return runner.subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    # Through getattr, so a regression that drops the cache fails on the
+    # disagreement below rather than on a missing `cache_clear`.
+    clear = getattr(runner._code_version, "cache_clear", lambda: None)
+    clear()
+    monkeypatch.setattr(runner.subprocess, "run", slow_git)
+    try:
+        first = runner._code_version()
+        second = runner._code_version()
+        assert (first, second) == ("abc1234", "abc1234")
+    finally:
+        clear()
+
+
 def test_a_comparison_refuses_an_arm_whose_run_recorded_a_failure(tmp_path):
     out = tmp_path / "b"
     jobs = batch.plan(

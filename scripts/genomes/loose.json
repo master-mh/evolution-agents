@@ -6,8 +6,10 @@
   "revenue_model": "a recurring subscription paid by the businesses that use it",
   "acquisition_channel": "online channels, word of mouth and referrals",
   "workflow": "understand the need, build something useful, put it in front of customers",
-  "model_policy": "prefer local models for drafting; escalate only for customer-facing text",
+  "model_policy": {},
   "mutation_rate": 0.1,
-  "allowed_tools": ["http_fetch"],
+  "allowed_tools": [
+    "http_fetch"
+  ],
   "risk_class": "MEDIUM"
 }

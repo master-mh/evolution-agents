@@ -561,6 +561,89 @@ def parse(raw_text: str) -> Proposal:
         raise ProposalError(_summarise_validation_error(exc)) from exc
 
 
+def parse_candidates(raw_text: str) -> tuple[list[Proposal], list[str]]:
+    """Parse a verbalized-sampling reply (ADR-089): one JSON object,
+    `{"candidates": [{<proposal fields>, "probability": p}, ...]}`.
+
+    **Flat, not nested, because that is what a model writes.** The first
+    design nested each candidate as `{"probability": p, "proposal": {...}}`;
+    the first live wake (`llama3.2`) flattened every candidate into a bare
+    proposal and parsed 0/2, the same flattening ADR-049 found in the single
+    reply — and MockProvider, whose reply is an input, could never have shown
+    it. A top-level `probability` is unambiguous: `Proposal` forbids unknown
+    fields, so the key cannot collide with anything a proposal carries.
+
+    Returns every candidate that validates, in reply order, and one reason per
+    candidate that did not. **Each candidate is validated whole and on its
+    own** — this is not the salvage `parse` refuses: a candidate that fails is
+    dropped entirely, never repaired, and a candidate that passes is exactly as
+    strict as a single reply. Raises when the wrapper itself is wrong or when
+    nothing validates.
+
+    The probability must be present and strictly inside (0, 1), although the
+    kernel discards it: a reply without the distribution is a list of proposals,
+    not verbalized sampling, and accepting it would measure the wrong thing.
+    """
+    text = _strip_code_fence(raw_text)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ProposalError(f"reply is not JSON: {exc}") from exc
+    if not isinstance(payload, dict) or set(payload) != {"candidates"}:
+        raise ProposalError("reply must be a JSON object with exactly one key, 'candidates'")
+    items = payload["candidates"]
+    if not isinstance(items, list) or not items:
+        raise ProposalError("'candidates' must be a non-empty list")
+
+    valid: list[Proposal] = []
+    rejected: list[str] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict) or "probability" not in item:
+            rejected.append(f"candidates.{index}: must be a proposal object with a 'probability' key")
+            continue
+        fields = dict(item)
+        probability = fields.pop("probability")
+        if (
+            isinstance(probability, bool)
+            or not isinstance(probability, (int, float))
+            or not 0 < probability < 1
+        ):
+            rejected.append(f"candidates.{index}.probability: must be a number strictly between 0 and 1")
+            continue
+        try:
+            valid.append(Proposal.model_validate(fields))
+        except ValidationError as exc:
+            rejected.append(f"candidates.{index}: {_summarise_validation_error(exc)}")
+    if not valid:
+        raise ProposalError("no candidate validated: " + "; ".join(rejected))
+    return valid, rejected
+
+
+def candidates_instruction(count: int) -> str:
+    """The reply format for a verbalized-sampling wake (ADR-089).
+
+    States the truth about what happens to the candidates — one is chosen at
+    random, the probabilities are not used and not recorded — in the same
+    spirit as `deliberation._repair_instruction`'s "this is your only chance":
+    a model told how its output is used is closer to the truth than one left
+    to guess, and a probability a Cell believed would buy selection is the
+    §23.5 surface this design exists not to open.
+    """
+    return (
+        f"This wake asks for {count} candidate proposals, not one. Reply with ONE JSON object "
+        "and nothing else — no prose before or after — of exactly this shape:\n\n"
+        '{"candidates": [<proposal object>, <proposal object>, ...]}\n\n'
+        f"- Exactly {count} entries, each a genuinely different idea — not rewordings of one idea.\n"
+        "- Each entry is one complete proposal object matching the schema below, with one extra "
+        "top-level key, \"probability\". Each is validated on its own; one that fails is dropped.\n"
+        "- \"probability\" is your estimate that this candidate is the best thing to do now, "
+        "strictly between 0 and 1; together they should sum to about 1. Include the less likely "
+        "ideas as well as the most likely one: the point is the whole distribution.\n"
+        "- One valid candidate is chosen uniformly at random and the rest are discarded. The "
+        "probabilities are not used to choose and are not recorded."
+    )
+
+
 def _strip_code_fence(text: str) -> str:
     """Tolerate ```json fences, which most models emit whatever the prompt says.
 

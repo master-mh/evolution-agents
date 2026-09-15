@@ -1,0 +1,17 @@
+{
+  "cell_type": "commercial",
+  "market": "independent bookkeepers serving 5-20 small retail clients",
+  "problem": "month-end reconciliation between POS exports and bank feeds is manual and error-prone",
+  "product": "a hosted reconciliation report that flags unmatched transactions with a suggested match",
+  "revenue_model": "flat monthly subscription per bookkeeper seat, billed in advance",
+  "acquisition_channel": "bookkeeping community forums and accountant referral",
+  "workflow": "ingest exports, match on amount+date window, rank residual candidates, publish report",
+  "model_policy": {
+    "verbalized_candidates": 1
+  },
+  "mutation_rate": 0.1,
+  "allowed_tools": [
+    "http_fetch"
+  ],
+  "risk_class": "MEDIUM"
+}

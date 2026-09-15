@@ -1005,6 +1005,19 @@
   `scripts/evaluator_epoch.py` refuses to compare results across epochs. Kernel-side precision still
   crosses model changes (logged). *Disproved by:* two `--json` results with different
   `judge_digest` that `evaluator_epoch.py` exits 0 on.
+- [x] **Verbalized sampling as a genome sampling policy — DONE, twin measurement running**
+  (2026-09-15), ADR-089. `model_policy.verbalized_candidates` ∈ [1, 5]; K > 1 swaps only the
+  reply-format paragraph (the single-reply prompt is byte-identical, golden run unchanged),
+  `proposal.parse_candidates` validates each candidate whole, and the kernel picks one uniformly,
+  seeded by the wake key, discarding every probability a Cell wrote (§23.5). **Live findings:**
+  `llama3.2` follows no candidate format (0/6 wakes) and the first, nested format parsed 0/2 —
+  both invisible to MockProvider. **Found in passing:** the live harness could not create a Cell
+  since ADR-067, and the suite's flakes were `git rev-parse` timing out under load and writing
+  `"unknown"` into one of two manifests of the same seed — the version is now read once per process,
+  and `batch.plan` carries the parent's to spawned workers. The
+  pre-registered `qwen2.5` twin (8×8 per arm) is running. *Disproved by:* a wake whose
+  `sampling.chosen_index` changes when only its candidates' probabilities change
+  (`test_the_choice_ignores_every_probability`).
 
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
