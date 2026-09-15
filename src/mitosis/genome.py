@@ -210,6 +210,31 @@ MODEL_POLICY_FIELDS: dict[str, str] = {
 MIN_VERBALIZED_CANDIDATES = 1
 MAX_VERBALIZED_CANDIDATES = 5
 
+#: §16.3's inheritable "workflow structure" and §14.1's "critic
+#: addition/removal" (ADR-093): the shapes of one wake the kernel knows how to
+#: run, and the only values `workflow.structure` may take. **A genome chooses
+#: among these; it never supplies one** — each is a kernel-written sequence of
+#: gateway calls, so genome content stays inert data (Charter C15) exactly as a
+#: temperature does. Closed for the same reason `MODEL_POLICY_FIELDS` is: a
+#: structure the kernel did not recognise would quietly run as a single pass
+#: while the genome claimed otherwise. The flight simulator's workflow
+#: mutation operator draws from this set, so it cannot breed a genome the
+#: kernel would refuse.
+WORKFLOW_SINGLE_PASS = "single_pass"
+WORKFLOW_STRUCTURES: dict[str, str] = {
+    WORKFLOW_SINGLE_PASS: "one call, one proposal — every wake before ADR-093",
+    "iterative_refinement": (
+        "draft, then one further call in which the Cell critiques its own "
+        "draft and replies with the revised proposal; the draft is recorded "
+        "if the revision does not validate"
+    ),
+    "parallel_review": (
+        "two independent drafts from the same context, then one call that "
+        "reviews both and replies with one proposal; the first draft is "
+        "recorded if the second draft or the review does not validate"
+    ),
+}
+
 #: Valid `risk_class` values. Held as plain strings rather than importing
 #: `proposal.RiskTier`, because `proposal` sits far above `genome` in the
 #: dependency order and a back-edge here would invert the layering the kernel
@@ -336,6 +361,24 @@ def verbalized_candidates_of(content: dict[str, Any] | None) -> int:
     return value
 
 
+def workflow_structure_of(content: dict[str, Any] | None) -> str:
+    """The wake structure this genome's `workflow` declares (ADR-093) —
+    `single_pass` when it declares none.
+
+    `workflow` predates this and is often prose ("probe cheaply, measure,
+    iterate"), which says how a Cell means to work and selects nothing. Only a
+    dict's `structure` key is read, and validation has already confined it to
+    `WORKFLOW_STRUCTURES`.
+    """
+    if not content:
+        return WORKFLOW_SINGLE_PASS
+    workflow = content.get("workflow")
+    if not isinstance(workflow, dict):
+        return WORKFLOW_SINGLE_PASS
+    structure = workflow.get("structure")
+    return structure if isinstance(structure, str) else WORKFLOW_SINGLE_PASS
+
+
 def requested_tools(content: dict[str, Any] | None) -> tuple[str, ...]:
     """Tools this genome *requests*. Grants nothing (§0.4).
 
@@ -405,6 +448,15 @@ def _validate_content(content: dict[str, Any]) -> None:
     policy = content.get("model_policy")
     if policy is not None:
         _validate_model_policy(policy)
+
+    workflow = content.get("workflow")
+    if isinstance(workflow, dict) and "structure" in workflow:
+        structure = workflow["structure"]
+        if structure not in WORKFLOW_STRUCTURES:
+            raise GenomeError(
+                f"workflow.structure must be one the kernel runs (ADR-093): "
+                f"{', '.join(sorted(WORKFLOW_STRUCTURES))}; got {structure!r}"
+            )
 
     try:
         # The hash is computed over json.dumps output, so anything that can't

@@ -1781,3 +1781,19 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **The claim-drift routine adjudicates; it must not edit (ADR-092).** Its prompt tells it to report
   RE-READ entries with a verdict and open no pull request. If it is ever given write access, route its
   edits through a reviewed PR — a model rewriting the file of claims it is judging is the §0.3 shape.
+- **A critic step from a different family (ADR-093).** `iterative_refinement` is self-critique: one
+  wake holds one provider, and §24.3 routes criticism to a different family. Letting a structure's
+  review or revise step name a second route (e.g. the Cell's model drafts, a different family
+  critiques) needs `deliberate` to accept a route table rather than one provider, and each route's
+  calls still reserved through the gateway. Check ADR-087 first: a critic that fails the same way as
+  the drafter (entangled errors) buys a second opinion that is not one.
+- **Role decomposition is named in §14.1 and not built (ADR-093).** The simulator's old
+  `"sequential"` structure was dropped rather than given an invented meaning. A real one (plan, then
+  execute the plan in a second call, say) should be designed from a failure it fixes, added to
+  `genome.WORKFLOW_STRUCTURES` and `deliberation._WORKFLOW_RUNNERS` together — the structural test pins
+  the two sets.
+- **Nothing has valued a workflow structure yet (ADR-093).** The flight simulator can *price* a
+  multi-call wake (two or three RESOURCE-metered calls) but its policy provider cannot make a review
+  better than a draft, so a simulated lineage will only ever learn that structures cost more. The
+  question worth asking is a §14.2 twin on a live model: `single_pass` vs `parallel_review` on ideas@2
+  and concreteness, pre-registered like ADR-089's.

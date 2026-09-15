@@ -5812,3 +5812,77 @@ out as a Slice G decision, not this one.
   only the entries it flags — STALE, STILL TRUE or NARROWED, each with file:line evidence — and
   forbids edits, commits and pull requests: a model rewriting the file of claims it is judging
   is the §0.3 shape. The operator enables it.
+
+## ADR-093: Workflow structure is a gene the kernel runs — a closed set of multi-call wakes, every call its own reservation
+
+- **Status:** Accepted
+- **Spec ref:** §14.1 ("role decomposition; critic addition/removal"), §16.3 ("Inheritable: workflow
+  structure"), §24.3 ("criticism → different provider/family"), §15.4 (tokens charged to the
+  responsible Cell), Charter C4 (reserve before execute), C6 (idempotency), C15 (genomes are inert data)
+
+- **Context:** The agent-swarm work in the 2026-09-14 research briefing — searched multi-agent
+  topologies, debate, self-refinement — treats *how a system thinks* (one pass, draft-then-critique,
+  independent drafts and a review) as a variable worth searching rather than a fixed design choice. MITOSIS already had the socket: §16.3 lists workflow structure as
+  inheritable, `genome.workflow` exists, and the flight simulator's `workflow_variation` operator
+  (ADR-074) mutates `workflow.structure` across four names. **No code read any of them.** A Cell's
+  lineage could evolve `parallel_review` and wake exactly as a `single_pass` Cell did — the
+  reserved-socket shape this repo keeps finding, one level worse, because a mutation operator was
+  actively breeding values nothing honoured.
+
+- **Decision:** `genome.WORKFLOW_STRUCTURES` is a closed set the kernel runs: `single_pass` (absent =
+  today's wake), `iterative_refinement` (draft, then one call in which the Cell critiques its own
+  draft and replies with the revision), `parallel_review` (a second independent draft from the
+  identical prompt, then one call that reviews both and replies with one proposal). `workflow` as prose
+  stays valid and selects nothing; a dict's `structure` outside the set is refused at birth.
+  `deliberation._run_workflow` runs a structure **only over a draft that already validated**, and
+  that draft is the floor: a step that is unaffordable, refused or does not validate leaves the wake
+  where a single pass would have, recorded as `first_draft`; a genuine fault propagates (ADR-069's
+  narrowing). The simulator's operator draws from the kernel's set.
+
+- **What it displaced, and why:**
+  - *Letting the genome describe its own topology* (a list of roles and prompts). That is a genome
+    supplying a code path — C15 holds only while genomes are inert data. A closed set of kernel-written
+    structures is the same trade as temperature: the genome chooses, the kernel owns every path.
+  - *Keeping the simulator's four names.* `sequential` has no meaning distinct from a single pass in a
+    one-provider wake; inventing one would be a structure named before it was designed. Dropped, and
+    role decomposition logged instead.
+  - *Reusing the draft's idempotency key, or one reservation for the whole wake.* Each step is a
+    separate `gateway.call_model` on `deliberation:{wake_key}:workflow:{step}`: the Cell pays for each
+    call it makes (§15.4), no call reaches a provider without a reservation (C4), and a wake that
+    crashed after billing its steps replays them rather than buying them twice (C6). Tests assert on
+    the `model_calls` rows, and a mutation that calls the provider directly is caught.
+  - *A new table of steps.* The audit event records each step's call id, note and which proposal won;
+    `model_calls` already holds every reply, keyed by the wake. A second record of the same calls
+    would be the §2.5 trap.
+  - *Calling the refinement step "criticism".* §24.3 routes criticism to a different family; one wake
+    holds one provider, so this is self-critique. The genome can select the shape; it cannot make the
+    critic independent. Routing a critic step to another family is logged, not built.
+  - *Repairing a failed step.* ADR-069 bounds a wake to one repair; a step that does not validate
+    keeps the draft instead.
+
+- **Consequence for the simulator:** simulated Cells whose lineage mutates into a multi-call structure
+  now make two or three `SimulationPolicyProvider` calls per wake and pay RESOURCE for each. The
+  simulator can *price* a structure; its policy provider cannot make a review better than a draft,
+  so it cannot *value* one. That is a live-model question for a twin, not a simulator claim.
+
+- **Live smoke (`qwen2.5`, one run of three wakes per structure, before commit):** `parallel_review`
+  recorded 3/3 proposals, both further steps validating on every wake (9 calls). `iterative_refinement`
+  recorded 2/3 with its revision validating both times; the third wake's draft and its one repair both
+  failed, and it bought no further calls, as designed. Every draft in that run needed a repair — the
+  draft prompt is the single-pass prompt, so that is `qwen2.5`'s format compliance on this genome, not
+  the structure. Whether a revision or a review *improved* a proposal was not measured; that is the
+  twin logged in FUTURE_BUILD_HOOKS.md.
+
+- **Seeded replays change.** The simulator's workflow operator now draws from three names instead of
+  four, and a lineage that mutates into a multi-call structure pays for more calls, so a seeded run
+  from before this commit need not replay byte-for-byte. The retained benchmark artifact records its
+  own code version; no test pins those draws.
+
+- **Verification:** 21 tests in `tests/test_workflow_structure.py`. Twelve teeth-checks through
+  `scripts/teeth_check.py`, each failing on its intended assertion: a structure losing its runner; a
+  second draft that sees the first; a step calling the provider directly (C4); steps sharing the
+  draft's idempotency key; a step key that cannot replay (C6); an invalid step raising; an unaffordable
+  step raising; a genuine fault swallowed; the genome accepting any structure; the simulator breeding a
+  structure nothing runs; the review paying the draft budget; every wake recording a workflow. Full
+  suite 1419 passed, with one environment-dependent CLI test failing and made hermetic in the preceding
+  commit; golden run unchanged, since a prose `workflow` selects nothing.

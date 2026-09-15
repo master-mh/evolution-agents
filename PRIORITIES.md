@@ -1053,6 +1053,17 @@
   open entry naming a token introduced after the entry was written that
   `check_disproved_by.py` does not mark `RE-READ`.
 
+- [x] **Workflow structure is a gene the kernel runs — DONE** (2026-09-15), ADR-093.
+  `workflow.structure` ∈ `genome.WORKFLOW_STRUCTURES` — `single_pass`, `iterative_refinement` (draft,
+  then a self-critique that replies with the revision), `parallel_review` (two independent drafts, then
+  a review) — and `deliberate` runs it: every further call its own gateway reservation on its own
+  idempotency key, the validated draft as the floor, an unaffordable step degrading while a genuine
+  fault propagates. §16.3 had reserved the socket, and the flight simulator had been breeding four
+  structure names nothing read. Self-critique, not §24.3 criticism (one provider per wake; a
+  different-family critic is logged). Live `qwen2.5` smoke: review 3/3, refinement 2/3. Whether a
+  structure *improves* a proposal is unmeasured — a twin is logged. *Disproved by:* a structure in
+  `genome.WORKFLOW_STRUCTURES` whose wake makes one call (`test_every_declared_structure_has_a_runner`).
+
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
   directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped

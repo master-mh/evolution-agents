@@ -2,9 +2,10 @@
 
 Everything built before this is machinery *for* a Cell. This is the Cell.
 
-One wake is: assemble bounded context (§15) → one gateway call → parse a
-strict structured proposal → record it, with any predictions registered before
-their outcomes (§8.5). Then the Cell sleeps.
+One wake is: assemble bounded context (§15) → one gateway call (or the few its
+genome's workflow structure names, each reserved separately; ADR-093) → parse
+a strict structured proposal → record it, with any predictions registered
+before their outcomes (§8.5). Then the Cell sleeps.
 
 **What the loop deliberately cannot do, and why each is a spec requirement
 rather than caution:**
@@ -21,9 +22,11 @@ rather than caution:**
   revenue, never a balance, never a score.
 - **It cannot execute its genome.** Genome content is rendered into the prompt
   as data and interpreted by a model. Nothing is `exec`'d or `eval`'d, and no
-  genome field selects a code path. Charter C15 holds only while genomes are
-  inert data; the sandbox that would make executable genomes survivable (C12)
-  is Phase 5.
+  genome field *supplies* a code path: a genome may choose among the kernel's
+  own closed set of wake structures (`genome.WORKFLOW_STRUCTURES`, ADR-093) the
+  way it chooses a temperature, and every one of them is kernel code. Charter
+  C15 holds only while genomes are inert data; the sandbox that would make
+  executable genomes survivable (C12) is Phase 5.
 - **It cannot be woken when dead.** Charter C8. Quarantined Cells are refused
   too — a Cell under restriction that can still think and propose is only
   quarantined in name.
@@ -488,6 +491,195 @@ def _attempt_parse_repair(
     )
 
 
+# --- workflow structures (ADR-093) ---------------------------------------------
+
+
+def _refinement_instruction() -> str:
+    return (
+        "Above is the proposal you drafted for this wake. Critique it before it is "
+        "recorded: is every claim in it specific enough to check, is its cost estimate "
+        "honest, and does anything in the context contradict it? Then reply with the "
+        "improved proposal in exactly the JSON format described above — or the same "
+        "proposal unchanged if the critique finds nothing to fix. Reply with the JSON "
+        "object only. If this reply is valid it replaces the draft."
+    )
+
+
+def _review_instruction(first_draft: str, second_draft: str) -> str:
+    return (
+        "You drafted two proposals for this wake independently, from the same context. "
+        "Review both against the context above: which is more specific, more honest "
+        "about cost and risk, and better supported? Reply with one proposal in exactly "
+        "the JSON format described above — one of the drafts, or a combination of "
+        "their best parts. Reply with the JSON object only.\n\n"
+        f"Draft A:\n{first_draft}\n\nDraft B:\n{second_draft}"
+    )
+
+
+@dataclass(frozen=True)
+class _WorkflowStep:
+    name: str
+    #: `None` only when the call could not be attempted at all; a call that was
+    #: made is carried whether or not its reply validated (§24.1).
+    model_call_id: str | None
+    parsed: proposal_module.Proposal | None
+    note: str
+
+
+def _workflow_call(
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    cell: Cell,
+    provider: providers.ModelProvider,
+    model: str,
+    messages: tuple[dict, ...],
+    max_tokens: int,
+    temperature: float | None,
+    experiment_id: str | None,
+    wake_key: str,
+    parse,
+) -> _WorkflowStep:
+    """One further call of a multi-call wake.
+
+    **Its own gateway reservation, its own idempotency key** (Charter C4, C6):
+    every step is a separate `gateway.call_model`, so the Cell pays for each and
+    a redelivered wake that crashed between steps replays the steps already
+    billed instead of buying them twice. Failure is classified exactly as a
+    parse repair's is: an unaffordable or refused call, or a reply that does
+    not validate, keeps the draft already in hand; a genuine fault propagates.
+    """
+    try:
+        call = gateway.call_model(
+            conn,
+            cell_id=cell.cell_id,
+            provider=provider,
+            request=providers.ModelRequest(
+                model=model, messages=messages, max_tokens=max_tokens, temperature=temperature,
+            ),
+            experiment_id=experiment_id,
+            idempotency_key=f"deliberation:{wake_key}:workflow:{name}",
+        )
+    except _REPAIR_UNATTEMPTABLE_ERRORS as exc:
+        return _WorkflowStep(name=name, model_call_id=None, parsed=None, note=f"not attempted: {exc}")
+    try:
+        parsed = parse(call.response_text or "")
+    except proposal_module.ProposalError as exc:
+        return _WorkflowStep(
+            name=name, model_call_id=call.model_call_id, parsed=None, note=f"did not validate: {exc}"
+        )
+    return _WorkflowStep(name=name, model_call_id=call.model_call_id, parsed=parsed, note="ok")
+
+
+def _iterative_refinement(conn, *, draft, prompt, **step) -> tuple[proposal_module.Proposal | None, list[_WorkflowStep]]:
+    """Draft → one self-critique that replies with the revision.
+
+    Self-critique, not criticism in §24.3's sense: one wake holds one provider,
+    and §24.3 routes criticism to a different family. The genome can select
+    this shape; it cannot make the critic independent."""
+    revise = _workflow_call(
+        conn,
+        name="revise",
+        messages=(
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": draft.model_dump_json()},
+            {"role": "user", "content": _refinement_instruction()},
+        ),
+        parse=proposal_module.parse,
+        **step,
+    )
+    return revise.parsed, [revise]
+
+
+def _parallel_review(
+    conn, *, draft, prompt, draft_prompt, draft_max_tokens, candidates, wake_key, **step
+) -> tuple[proposal_module.Proposal | None, list[_WorkflowStep]]:
+    """Two independent drafts → one review that replies with a single proposal.
+
+    The second draft sees exactly the first call's prompt and nothing of the
+    first draft — otherwise it is a revision, not an independent draft, and
+    the review compares a proposal with its own echo."""
+    second = _workflow_call(
+        conn,
+        name="draft:1",
+        messages=({"role": "user", "content": draft_prompt},),
+        parse=lambda text: _parse_reply(text, candidates=candidates, wake_key=f"{wake_key}:draft:1")[0],
+        wake_key=wake_key,
+        **{**step, "max_tokens": draft_max_tokens},
+    )
+    if second.parsed is None:
+        return None, [second]
+    review = _workflow_call(
+        conn,
+        name="review",
+        messages=({
+            "role": "user",
+            "content": f"{prompt}\n\n"
+            f"{_review_instruction(draft.model_dump_json(), second.parsed.model_dump_json())}",
+        },),
+        parse=proposal_module.parse,
+        wake_key=wake_key,
+        **step,
+    )
+    return review.parsed, [second, review]
+
+
+#: Every structure but a single pass has a runner here, and only here —
+#: `test_every_declared_structure_has_a_runner` pins the two sets together, so
+#: a structure added to the genome cannot quietly run as a single pass.
+_WORKFLOW_RUNNERS = {
+    "iterative_refinement": _iterative_refinement,
+    "parallel_review": _parallel_review,
+}
+
+
+def _run_workflow(
+    conn: sqlite3.Connection,
+    *,
+    structure: str,
+    cell: Cell,
+    provider: providers.ModelProvider,
+    model: str,
+    assembled: context.AssembledContext,
+    draft: proposal_module.Proposal,
+    max_tokens: int,
+    draft_max_tokens: int,
+    candidates: int,
+    temperature: float | None,
+    experiment_id: str | None,
+    wake_key: str,
+) -> tuple[proposal_module.Proposal, dict]:
+    """Run a genome's multi-call structure over a draft that already validated.
+
+    The draft is the floor: a step that fails leaves the wake exactly where a
+    single pass would have left it, never worse, and the record says which
+    proposal was kept and why."""
+    rendered = assembled.render()
+    step = dict(
+        cell=cell, provider=provider, model=model, max_tokens=max_tokens,
+        temperature=temperature, experiment_id=experiment_id,
+    )
+    runner = _WORKFLOW_RUNNERS[structure]
+    if runner is _parallel_review:
+        final, steps = runner(
+            conn, draft=draft, prompt=f"{_system_prompt()}\n\n{rendered}",
+            draft_prompt=f"{_system_prompt(candidates)}\n\n{rendered}",
+            draft_max_tokens=draft_max_tokens, candidates=candidates, wake_key=wake_key, **step,
+        )
+    else:
+        final, steps = runner(
+            conn, draft=draft, prompt=f"{_system_prompt()}\n\n{rendered}", wake_key=wake_key, **step,
+        )
+    record = {
+        "structure": structure,
+        "steps": [
+            {"step": s.name, "model_call_id": s.model_call_id, "note": s.note} for s in steps
+        ],
+        "recorded": "final" if final is not None else "first_draft",
+    }
+    return (final if final is not None else draft), record
+
+
 def deliberate(
     conn: sqlite3.Connection,
     *,
@@ -596,6 +788,7 @@ def deliberate(
     )
 
     reply = call.response_text or ""
+    repair_model_call_id = None
     try:
         parsed, sampling = _parse_reply(reply, candidates=candidates, wake_key=wake_key)
     except proposal_module.ProposalError as exc:
@@ -617,8 +810,8 @@ def deliberate(
             wake_key=wake_key,
             candidates=candidates,
         )
-        if repair.parsed is not None:
-            return _record_proposal(
+        if repair.parsed is None:
+            return _record_unparseable(
                 conn,
                 cell=cell,
                 wake_key=wake_key,
@@ -626,20 +819,30 @@ def deliberate(
                 assembled=assembled,
                 model_call_id=call.model_call_id,
                 repair_model_call_id=repair.model_call_id,
-                parsed=repair.parsed,
-                experiment_id=experiment_id,
-                proposal_sink=proposal_sink,
-                sampling=repair.sampling,
+                reason=f"{exc} ({repair.note})",
             )
-        return _record_unparseable(
+        parsed, sampling, repair_model_call_id = repair.parsed, repair.sampling, repair.model_call_id
+
+    # ADR-093: §16.3's inheritable workflow structure. Runs only over a draft
+    # that already validated — a wake with nothing to refine or review is
+    # recorded unparseable above, and buys no further calls.
+    workflow = None
+    structure = genome.workflow_structure_of(canonical_genome)
+    if structure != genome.WORKFLOW_SINGLE_PASS:
+        parsed, workflow = _run_workflow(
             conn,
+            structure=structure,
             cell=cell,
-            wake_key=wake_key,
-            wake_reason=wake_reason,
+            provider=provider,
+            model=model,
             assembled=assembled,
-            model_call_id=call.model_call_id,
-            repair_model_call_id=repair.model_call_id,
-            reason=f"{exc} ({repair.note})",
+            draft=parsed,
+            max_tokens=max_tokens,
+            draft_max_tokens=request_max_tokens,
+            candidates=candidates,
+            temperature=temperature,
+            experiment_id=experiment_id,
+            wake_key=wake_key,
         )
 
     return _record_proposal(
@@ -649,12 +852,14 @@ def deliberate(
         wake_reason=wake_reason,
         assembled=assembled,
         model_call_id=call.model_call_id,
+        repair_model_call_id=repair_model_call_id,
         parsed=parsed,
         # Carried rather than re-derived, so the call and the forecasts it
         # produced cannot land on two different experiments.
         experiment_id=experiment_id,
         proposal_sink=proposal_sink,
         sampling=sampling,
+        workflow=workflow,
     )
 
 
@@ -796,6 +1001,7 @@ def _record_proposal(
     experiment_id: str | None,
     proposal_sink: ProposalSink | None,
     sampling: dict[str, int] | None = None,
+    workflow: dict | None = None,
 ) -> Deliberation:
     """Record the proposal, register its predictions, and queue it for review
     — one transaction.
@@ -909,6 +1115,9 @@ def _record_proposal(
                 # Only when a genome asked for candidates (ADR-089): the audit
                 # trail of every ordinary wake stays exactly as it was.
                 **({"sampling": sampling} if sampling is not None else {}),
+                # Only for a multi-call structure (ADR-093): which further
+                # calls were made, what each produced, and which proposal won.
+                **({"workflow": workflow} if workflow is not None else {}),
             },
         )
         conn.execute("COMMIT")

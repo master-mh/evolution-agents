@@ -46,6 +46,8 @@ from __future__ import annotations
 import random
 from typing import Any, Callable
 
+from .. import genome as genome_module
+
 #: The one required control/no-op mutation. An empty overlay collapses to the
 #: parent's own genome hash by construction (ADR-018) -- the baseline every
 #: real variation operator is compared against.
@@ -62,7 +64,11 @@ _DELIVERY_MODES = ("self_serve", "managed", "api", "white_glove")
 _ACQUISITION_CHANNELS = (
     "content_marketing", "paid_search", "partnerships", "direct_sales", "community",
 )
-_WORKFLOW_STRUCTURES = ("sequential", "parallel_review", "single_pass", "iterative_refinement")
+#: The kernel's own closed set (ADR-093), in declaration order. It was four
+#: names no code read ("sequential" among them); now every value it draws is
+#: one `deliberation.deliberate` runs, and a value outside the set would fail
+#: genome validation at birth rather than breed a structure nothing honours.
+_WORKFLOW_STRUCTURES = tuple(genome_module.WORKFLOW_STRUCTURES)
 
 _MIN_PRICE_MINOR_UNITS = 50
 _PRICE_MULTIPLIER_RANGE = (0.7, 1.3)

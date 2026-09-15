@@ -6,6 +6,38 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-15 — Every *Disproved by:* pointer, run and dated (ADR-092)
+
+Eighth of the research-driven slices; tooling, no kernel change.
+
+### What shipped
+
+- `scripts/check_disproved_by.py` extracts each open PRIORITIES.md entry's backticked pointer tokens
+  and resolves them: CLI verbs through `check_docs_facts.cli_verbs`, files, `module.name` definitions
+  by AST, tables from migrations, kernel names. It dates each resolving token with git — the commit
+  introducing it against the `git blame` date of the pointer's line — and marks an entry `RE-READ`
+  only when a token is newer than the pointer. `--selftest`; `--fail-on-resolved` for a stricter
+  caller; it never edits the file.
+- A weekly Claude Code routine (created disabled) runs it and adjudicates only the entries it flags.
+
+### Found
+
+- **Resolution alone flagged every open entry.** Most pointers name a symbol that existed when the
+  entry was written — entries narrowed or split around it on purpose. A report that flags everything
+  is a report nobody reads; with dating, the answer at commit time is **0 of 9** open entries (all 9 pointers resolve).
+- **Dotted tokens never date.** `git log -S death._budget_exhausted` matches nothing, because that
+  dotted string never appears in source. Dotted tokens are dated by their last component and files by
+  the commit that added them.
+- **One stale claim, found by reading rather than by the script.** The §23.2 liability entry said its
+  wrong claim was "still copied into `approval.py`'s `liability_minor_units` comment"; that comment
+  had already been corrected. The sentence is gone. (The script could not have caught it: the pointer
+  was right, and the stale sentence was prose around it.)
+
+### Verification
+
+`--selftest` passes; the live run's result is above. The routine's first run is left to the operator,
+who enables it.
+
 ## 2026-09-15 — A teeth-check runner that cannot touch the real tree (ADR-091)
 
 Seventh of the research-driven slices; tooling, no kernel change.
