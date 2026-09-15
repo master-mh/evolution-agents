@@ -191,7 +191,8 @@ def _reproducibility(conn, cell: lifecycle.Cell) -> GateResult:
             f"only {len(tried)} independent Cell(s) have tried this genome and concluded an "
             f"experiment; {_MIN_INDEPENDENT_TRIES} needed before this gate can judge it",
         )
-    if any(revenue.total_revenue(conn, cid, book=Book.USD_SIM) > 0 for cid in tried):
+    # Net (ADR-097): a sale that was wholly refunded did not reproduce anything.
+    if any(revenue.net_revenue(conn, cid, book=Book.USD_SIM) > 0 for cid in tried):
         return GateResult(
             cell.cell_id, "reproducibility", GateOutcome.PASSED,
             f"{len(tried)} independent Cell(s) tried this genome; at least one produced revenue",
@@ -261,7 +262,7 @@ def _realized_net_revenue(conn, cell_id: str, *, concluded: list[experiments.Exp
     concluded = _concluded_experiments(conn, cell_id) if concluded is None else concluded
     if not concluded:
         return Axis("realized_net_revenue", None, "no concluded experiments yet")
-    net = revenue.total_revenue(conn, cell_id, book=Book.USD_SIM) - ledger.spend_by_book(
+    net = revenue.net_revenue(conn, cell_id, book=Book.USD_SIM) - ledger.spend_by_book(
         conn, cell_id
     ).get(Book.USD_SIM.value, 0)
     return Axis(

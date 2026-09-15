@@ -849,6 +849,58 @@ def test_record_revenue_to_unknown_cell_exits_nonzero(tmp_path, capsys):
     assert "no such cell" in capsys.readouterr().err
 
 
+def test_record_refund_names_the_payment_and_reports_what_is_left(tmp_path, capsys):
+    """§1.1's refunds and chargebacks, from the operator's side (ADR-097). The
+    verb takes the payment `record-revenue` printed, never a Cell, and shares one
+    bound across both kinds."""
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    cli.main([
+        "--db", db_path, "record-revenue", "--cell", cell_id,
+        "--amount", "12.50", "--source", "acme-inv-7",
+    ])
+    payment = next(
+        line.split()[-1]
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("txn:")
+    )
+
+    assert cli.main([
+        "--db", db_path, "record-refund", "--payment", payment,
+        "--amount", "2.50", "--source", "processor-re-1",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert f"Recorded refund of payment {payment}" in out
+    assert "still reversible on that payment: 1000 minor units" in out
+    assert "cell earned to date (net): 1000" in out
+
+    assert cli.main([
+        "--db", db_path, "record-refund", "--payment", payment,
+        "--amount", "10.01", "--source", "dispute-1", "--chargeback",
+    ]) == 1
+    assert "1000 of its 1250 is left" in capsys.readouterr().err
+
+    assert cli.main([
+        "--db", db_path, "record-refund", "--payment", payment,
+        "--amount", "10.00", "--source", "dispute-1", "--chargeback",
+    ]) == 0
+    assert "Recorded chargeback" in capsys.readouterr().out
+
+    assert cli.main(["--db", db_path, "cell-fitness", "--cell", cell_id]) == 0
+    out = capsys.readouterr().out
+    assert "revenue:           0 minor units" in out
+    assert "received 1250, refunded or charged back 1250" in out
+
+
+def test_record_refund_of_an_unknown_payment_exits_nonzero(tmp_path, capsys):
+    db_path, _ = _init_and_cell(tmp_path, capsys)
+    capsys.readouterr()
+    assert cli.main([
+        "--db", db_path, "record-refund", "--payment", "nope",
+        "--amount", "1.00", "--source", "x",
+    ]) == 1
+    assert "no such transaction" in capsys.readouterr().err
+
+
 def test_ollama_provider_needs_no_spend_confirmation(tmp_path, capsys, monkeypatch):
     """Local inference costs nothing, so gating it behind
     --yes-spend-real-money would train the operator to pass that flag by

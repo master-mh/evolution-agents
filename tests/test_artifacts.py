@@ -483,7 +483,7 @@ def test_revenue_without_an_artifact_still_works(conn):
         source="retainer",
         book=Book.USD_SIM,
     )
-    assert revenue.total_revenue(conn, cell.cell_id, Book.USD_SIM) == 500
+    assert revenue.net_revenue(conn, cell.cell_id, Book.USD_SIM) == 500
 
 
 # --- §15.2's artifact index ---------------------------------------------------

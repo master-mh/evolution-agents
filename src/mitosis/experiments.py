@@ -163,6 +163,9 @@ class ExperimentReport:
     rung_name: str
     expected_cost_minor_units: int
 
+    #: Net of refunds and chargebacks: a reversal credits the `revenue` account
+    #: with its payment's experiment tag, so reading that account nets it out of
+    #: the experiment that made the sale (ADR-097).
     synthetic_revenue_minor_units: int
     synthetic_spend_minor_units: int
     synthetic_net_profit_minor_units: int

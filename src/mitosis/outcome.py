@@ -341,7 +341,9 @@ def assess(
         spend_since_minor_units=ledger.spend_by_book(
             conn, record.cell_id, since=funded_at
         ).get(record.book.value, 0),
-        revenue_since_minor_units=revenue.total_revenue(
+        # Net (ADR-097): a sale refunded after funding did not earn this rung
+        # anything, whenever the sale itself was made.
+        revenue_since_minor_units=revenue.net_revenue(
             conn, record.cell_id, record.book, since=funded_at
         ),
         # §13's liability reserve is Phase 6+. Reported unmodelled rather than

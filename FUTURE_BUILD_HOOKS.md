@@ -1839,3 +1839,36 @@ actually queued for building — this file is memory, not a backlog to work thro
   - *Deaths.* Immortal founders hold population means and slots for the whole run.
   - *Per-Cell diversity.* `final_distinct_genomes` counts heads; H2 passed on headcount. A registered
     diversity metric should be a rate.
+
+## From refunds and chargebacks (2026-09-15, ADR-097)
+
+- **A provider failure is recorded as an unparseable reply, and buys a repair call.** Found by this
+  slice's live check: with Ollama's Metal backend down, `gateway.call_model` recorded both calls
+  `failed` with `HTTPError 500` in `model_calls.error_text`, but `deliberation` parses
+  `call.response_text or ""`, records the wake as "reply is not JSON", and spends ADR-069's single
+  repair on a provider that has just failed. The deliberation names the wrong cause while the right one
+  sits one table over. Its own slice: it touches ADR-069's classification, not revenue.
+- **The live-model check of the refund line is still owed.** `context._realised_record_section` adds
+  "refunded or charged back (already subtracted above): N minor units" only for a Cell with a
+  reversal. Checked as rendered; not yet read by a live model, because Ollama failed a direct generate
+  (`MTLLibraryErrorDomain`) at the time. Rerun with a healthy backend, health-checked by a real generate.
+- **§1.1's remaining terms: payment fees and external operating costs.** A payment fee is USD_REAL
+  spend with no model provider. `_REAL_SPEND_TRANSACTION_TYPES` and
+  `test_charter_realspend_cap_registered_types_are_counted` assume every direct-posting type joins
+  `model_calls` through its idempotency key, so a fee would count in the global windows and fail the
+  per-provider one. A second registry for provider-less real spend, or a named non-model "provider",
+  is the decision. Then the §1.1 report itself: human minutes are metered (billed + subsidised) but
+  priced in the RESOURCE book (`HUMAN_MINUTE_RESOURCE_COST`), and §2.4 allows a reporting-only
+  USD-equivalent while forbidding a conversion.
+- **Real revenue is absent from §2.6's experiment report.** It prints synthetic revenue and profit and
+  real *spend*; a real sale under an experiment appears nowhere in it. Belongs with the §1.1 report.
+- **A chargeback the colony wins back is unmodelled.** Only a `cell_revenue` payment can be reversed, so
+  a reversal cannot itself be reversed. A won dispute needs its own type naming the chargeback, and
+  migration 0037's CHECK would have to admit it — deliberately a migration.
+- **§12.1's revenue recurrence still counts refunded payments.** `novelty.revenue_counterparties` reads
+  `cell_revenue` rows only, so a buyer who paid twice and was refunded both times still reads `repeat`.
+  Whether a refunded payment counts as revenue for an archive niche is §12.1's decision, not a side
+  effect to slip into this one.
+- **The reversal bound's race is argued, not tested.** `_reversible_locked` reads inside `BEGIN
+  IMMEDIATE`, so two connections refunding the last of one sale serialise. No test drives two
+  connections at once, and the suite has no harness for it to borrow.

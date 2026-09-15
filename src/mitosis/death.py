@@ -137,7 +137,9 @@ def contribution(conn: sqlite3.Connection, cell: Cell) -> Contribution:
     scores = prediction.scores(conn, cell.cell_id)
     return Contribution(
         cell_id=cell.cell_id,
-        revenue_minor_units=revenue.total_revenue(conn, cell.cell_id, cell.book),
+        # Net of refunds and chargebacks (ADR-097). Gross would let a Cell whose
+        # every sale was refunded dominate a peer on money it no longer has.
+        revenue_minor_units=revenue.net_revenue(conn, cell.cell_id, cell.book),
         spend_minor_units=ledger.spend_by_book(conn, cell.cell_id).get(cell.book.value, 0),
         mean_brier=scores["mean_brier"],  # type: ignore[arg-type]
         resolved_predictions=scores["resolved"],  # type: ignore[arg-type]

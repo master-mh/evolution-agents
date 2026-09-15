@@ -406,6 +406,39 @@ def test_revenue_is_recorded_but_never_changes_the_verdict(conn):
     assert rich.verdict is poor.verdict is outcome.Verdict.SUPPORTS_PROMOTION
 
 
+def test_the_read_back_nets_a_refund_out_of_revenue_since_funding(conn):
+    """§25.2 records what a funded rung earned. A sale refunded after funding
+    earned the rung nothing, so the read-back reads net revenue (ADR-097). On
+    gross, a funded rung would show itself paying its way with money the Cell
+    had already handed back."""
+    _seed(conn)
+    earner = _cell(conn, "earner")
+    forecasts = [
+        _forecast(conn, earner, f"earner claim {i}", 0.95, key=f"earner{i}") for i in range(3)
+    ]
+    record = _allocate(conn, earner, "earner")
+    _resolve_all(conn, forecasts, occurred=True)
+    sale = revenue.record_revenue(
+        conn,
+        cell_id=earner.cell_id,
+        amount_minor_units=500,
+        book=Book.USD_SIM,
+        source="a paying customer",
+        idempotency_key="rev",
+    )
+    revenue.record_reversal(
+        conn,
+        revenue_transaction_id=sale.transaction_id,
+        amount_minor_units=350,
+        source="refund of most of it",
+    )
+
+    result = outcome.assess(conn, record.promotion_id)
+
+    assert result.revenue_since_minor_units == 150
+    assert result.net_contribution_minor_units == 150 - result.spend_since_minor_units
+
+
 # --- §25.2 "cost", measured over the right window ----------------------------
 
 

@@ -1219,7 +1219,41 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #             confirmed by a full section-by-section diff, not assumed from
 #             the hash mismatch: every other section is byte-identical to
 #             version 37.
-EXPECTATION_VERSION = 38
+#
+#   38 -> 39 (refunds and chargebacks; ADR-097, migration 0037). **One refund
+#             of 5 USD_SIM against the second invoice, placed after the last
+#             deliberation, and every moved field follows from it** —
+#             confirmed by a field-by-field diff, not assumed from the hash:
+#             (a) `transaction_types` gains `USD_SIM::cell_refund: 1` and
+#                 `audit_event_types` gains `cell_revenue_reversed: 1`.
+#             (b) `balances`: the auditor's child's USD_SIM cash 585 -> 580 and
+#                 `revenue` -55 -> -50 — the two legs of one balanced posting.
+#             (c) `experiments[1]`: `synthetic_revenue` and
+#                 `synthetic_net_profit` 55 -> 50. The refund carries the
+#                 payment's experiment tag on its `revenue` leg and §2.6's
+#                 report reads that account, so the experiment that made the
+#                 sale is the one whose revenue nets down.
+#             (d) `assessments[0].revenue_since_minor_units` 55 -> 50. §25.2's
+#                 read-back now reads net revenue, and both invoices and the
+#                 refund fall after that Cell's rung-7 funding — the reader
+#                 change this slice exists for, visible in the replay. Its
+#                 verdict did not move: §10.3 records revenue and never gates
+#                 on it.
+#             (e) **`revenue_reversals` (new)**: one row, naming the payment it
+#                 reverses by idempotency key (`golden:revenue:artifact:second`),
+#                 amount 5, 10 still reversible. Refunding the first invoice
+#                 instead leaves (a)–(d) identical — both invoices belong to one
+#                 Cell and one experiment — and moves only this section and
+#                 `artifact_attributed_ledger_entries`, because a reversal copies
+#                 the artifact tag the first invoice carries. Checked by running
+#                 that mutation, not reasoned: the first draft of this note said
+#                 this section alone would move.
+#             No prompt, token count, model call or `resource_usage` row moved,
+#             and **no USD_REAL movement**. That no pre-existing transaction
+#             hash moved is not visible here (digests are excluded from the
+#             snapshot); `test_a_transaction_that_reverses_nothing_hashes_as_it_always_did`
+#             pins it.
+EXPECTATION_VERSION = 39
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -2652,6 +2686,27 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
     #      §13.2 candidate *is*, and allocating it here would consume the grant
     #      and empty the frontier again.
 
+    # 19g. A refund (§1.1, §2.2, §16.3; ADR-097). USD_SIM for the reason the
+    #      revenue above is: a golden run must never move real money. Against
+    #      the *second* invoice, so the replay pins which payment a reversal
+    #      names — reversing the first instead leaves every balance, count and
+    #      report identical, since both invoices belong to one Cell and one
+    #      experiment; only the pinned link, and the artifact attribution the
+    #      first invoice carries, would move. Partial, so what is left to reverse is a
+    #      number rather than zero. After the last deliberation, so no prompt in
+    #      the run changes.
+    second_invoice = ledger.get_transaction_by_idempotency_key(
+        conn, "golden:revenue:artifact:second"
+    )
+    assert second_invoice is not None
+    revenue.record_reversal(
+        conn,
+        revenue_transaction_id=second_invoice.transaction_id,
+        amount_minor_units=5,
+        source="golden-run refund of the second invoice",
+        idempotency_key="golden:refund:second-invoice",
+    )
+
     # 20. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
@@ -2712,6 +2767,33 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
             "GROUP BY book, transaction_type"
         ).fetchall()
     }
+
+    # §1.1's reversals (ADR-097), each pinned to the payment it names by that
+    # payment's idempotency key — a fixed string in this scenario, where the
+    # transaction id is not. `balances` and `transaction_types` cannot see a
+    # refund pointed at the wrong invoice when both invoices belong to one Cell
+    # and one experiment; this can.
+    revenue_reversals = [
+        {
+            "type": row["transaction_type"],
+            "book": row["book"],
+            "amount_minor_units": row["amount"],
+            "reverses": row["reverses_key"],
+            "still_reversible_minor_units": revenue.reversible_amount(conn, row["reverses_id"]),
+        }
+        for row in conn.execute(
+            """
+            SELECT t.transaction_type, t.book,
+                   p.idempotency_key AS reverses_key, p.transaction_id AS reverses_id,
+                   (SELECT SUM(e.amount_minor_units) FROM ledger_entries e
+                    WHERE e.transaction_id = t.transaction_id
+                      AND e.account_id = 'revenue') AS amount
+            FROM ledger_transactions t
+            JOIN ledger_transactions p ON p.transaction_id = t.reverses_transaction_id
+            ORDER BY t.rowid
+            """
+        ).fetchall()
+    ]
 
     # Parent/founder are carried as aliases, not raw ids, so the lineage tree
     # §26 names ("expected lineage tree") is part of the comparison without
@@ -3320,6 +3402,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
     return {
         "balances": balances,
         "transaction_types": transaction_types,
+        "revenue_reversals": revenue_reversals,
         "cells": cells,
         "reservations": reservation_rows,
         "resource_usage": resource_rows,

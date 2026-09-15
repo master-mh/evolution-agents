@@ -1,5 +1,5 @@
 {
-  "expectation_version": 38,
+  "expectation_version": 39,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "64457b88f952fbf212e4aaae22a66d7f0c963c8befcf72a96e26ddedec91b1e5",
+  "semantic_hash": "29e58944e8b6cffeef3284e1a21de9ca259fce0bdd1c434c889288cde2fcb794",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -187,7 +187,7 @@
         "next_rung": 8,
         "observed_mean_brier": 0.03999999999999998,
         "reality_gap": null,
-        "revenue_since_minor_units": 55,
+        "revenue_since_minor_units": 50,
         "rung": 7,
         "spend_since_minor_units": 0,
         "verdict": "supports_promotion"
@@ -205,6 +205,7 @@
       "cell_estate_reclaimed": 1,
       "cell_lifecycle_transition": 12,
       "cell_revenue_recorded": 2,
+      "cell_revenue_reversed": 1,
       "channel_frozen": 1,
       "egress_domain_allowed": 1,
       "event_dead_lettered": 1,
@@ -269,12 +270,12 @@
       "USD_SIM::cell:cell#1:cash": 400,
       "USD_SIM::cell:cell#3:cash": 1250,
       "USD_SIM::cell:cell#3:committed": 250,
-      "USD_SIM::cell:cell#4:cash": 585,
+      "USD_SIM::cell:cell#4:cash": 580,
       "USD_SIM::colony_treasury": 3250,
       "USD_SIM::external_capital": -100000,
       "USD_SIM::external_expense": 1550,
       "USD_SIM::promotion_pool": 470,
-      "USD_SIM::revenue": -55,
+      "USD_SIM::revenue": -50,
       "USD_SIM::seed_bank": 92300
     },
     "buyer_attestations": [
@@ -706,8 +707,8 @@
         "stage_tranche_rung": 7,
         "status": "concluded",
         "subsidised_human_minutes": 4,
-        "synthetic_net_profit": 55,
-        "synthetic_revenue": 55,
+        "synthetic_net_profit": 50,
+        "synthetic_revenue": 50,
         "unresolved_predictions": 0
       },
       {
@@ -1772,6 +1773,15 @@
         "resource_type": "output_tokens"
       }
     ],
+    "revenue_reversals": [
+      {
+        "amount_minor_units": 5,
+        "book": "USD_SIM",
+        "reverses": "golden:revenue:artifact:second",
+        "still_reversible_minor_units": 10,
+        "type": "cell_refund"
+      }
+    ],
     "rights_attestations": [
       {
         "attested_by": "golden-operator",
@@ -1877,6 +1887,7 @@
       "USD_SIM::cell_birth_funding": 2,
       "USD_SIM::cell_estate_reclaim": 1,
       "USD_SIM::cell_funding": 1,
+      "USD_SIM::cell_refund": 1,
       "USD_SIM::cell_reproduction_funding": 1,
       "USD_SIM::cell_revenue": 2,
       "USD_SIM::colony_seed_capital": 1,

@@ -1108,6 +1108,24 @@
   differs from the verbatim block in `docs/PHASE3_RESULTS.md`, or a manifest there whose `code_version` is
   not `9bb866c`.
 
+- [x] **Refunds and chargebacks — DONE 2026-09-15 (ADR-097); the first of §28 Phase 9's books.** Phase 9's
+  acceptance asks for "refunds/obligations tracked" and a real profit report, §1.1 subtracts refunds and
+  chargebacks from `REAL_SETTLED_NET_PROFIT`, and nothing could take money back: a refunded Cell kept its
+  full apparent earnings in every reader. `revenue.record_reversal` and `mitosis record-refund` name the
+  payment and inherit its Cell, book, experiment, artifact and buyer; reversals of one payment never
+  exceed it; the link is migration 0037's hash-chained, foreign-keyed `reverses_transaction_id`.
+  `total_revenue` is gone — domination, §25.2's read-back, the Cell's record, §2.6's report and the
+  simulator's axes all read net. Golden 38 → 39.
+  - **Next in the same arc:** payment fees and other external operating costs (§1.1's remaining
+    terms; a fee is real spend with no model provider, which the breaker's registration guard does not
+    yet admit), then the §1.1 report of both figures. Logged in FUTURE_BUILD_HOOKS.md.
+  - **Not done here:** the live-model check of the Cell's new record line — Ollama's Metal backend was
+    failing at the time.
+  - **Still the operator's to decide before any live trial:** whose legal identity and payment account,
+    and the real-money budget (§28 Phase 9's "one legal business identity, one merchant channel").
+  *Disproved by:* `revenue.total_revenue` existing, or a `cell_refund`/`cell_chargeback` row with a NULL
+  `reverses_transaction_id` (migration 0037's CHECK refuses one).
+
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
   directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped

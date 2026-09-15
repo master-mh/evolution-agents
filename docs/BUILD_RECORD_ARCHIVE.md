@@ -6,6 +6,40 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-15 — Slice H, part 2: Phase 3's pre-registered run — no selection effect (ADR-096)
+
+The pre-registration (9bb866c) was committed before the run; the confirmatory batch ran once from it; the
+result is recorded as it came out.
+
+### What shipped
+
+- `docs/PHASE3_RESULTS.md`: integrity, verdicts through each declared interval, the gate table, two post hoc
+  checks marked as such, per-arm descriptives, every `simulate-compare` invocation verbatim, and the design
+  pilot's effects beside the confirmatory ones.
+- `docs/benchmarks/phase3-confirmatory/`: `batch.json` and 224 manifests (6.2 MB), all at code version
+  9bb866c and policy version 2, so every comparison reruns from the artifact alone.
+
+### Found
+
+- **H1, the gate's selection effect: not supported** (−2.86, CI [−6.59, +0.83]). H3 not supported. H4
+  supported: the lineage cap bounds founder share. H2 and H5 supported as registered, and post hoc checks
+  show H2's diversity gain is headcount and H5's price response is as large without revenue-ranked
+  selection.
+- **`random_eligible` is weak selection on sales, not random reproduction**: a child is eligible only once
+  it has sold.
+- **A run's `code_version` names HEAD, not the tree** — the design pilot's manifests name a commit older
+  than the code they ran. Logged.
+- The runtime estimate from the pilot was low: 3,090 s, not ~1,800.
+
+### Verification
+
+Code unchanged since 3256737; full suite, golden run, ruff and docs-facts re-run before this commit. Every
+verdict in the results document is the analysis script's output; every interval reruns from the artifact.
+
+- Next: Phase 3's parallel track needs a new pre-registration, not a reread of this one (candidates in
+  FUTURE_BUILD_HOOKS.md); Phase 4 is not blocked. Still open: ADR-089's verbalized-sampling twin, and the
+  claim-drift routine once GitHub access is granted.
+
 ## 2026-09-15 — Slice H, part 1: Phase 3's arm settings, and the stall that hid every comparison (ADR-094, ADR-095)
 
 Phase 3's pre-registered comparisons need two settings that are not selection policies and metrics that

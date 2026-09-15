@@ -6067,3 +6067,77 @@ out as a Slice G decision, not this one.
 
 - **Scope (§7.4):** this validates, or here fails to validate, the selection machinery given a signal we
   planted. It says nothing about LLM-driven Cells.
+
+## ADR-097: Refunds and chargebacks name the payment they reverse — and every reader of revenue reads it net
+
+- **Status:** Accepted
+- **Spec ref:** §1.1 (`REAL_SETTLED_NET_PROFIT` subtracts refunds and chargebacks), §2.2 (both money books
+  list them), §10.2 (refund/chargeback rate), §16.3–16.4 (liability-linked inheritance), §3.4 and §3.6
+  (hash chain; corrections are new postings), §28 Phase 9 ("refunds/obligations tracked")
+
+- **Context:** Phase 3's gate is soft and Phase 4 is not blocked (ADR-096). The shortest path to real money
+  the spec allows is Phase 9's supervised trial — Cells propose, a person carries out every external
+  action — and its acceptance asks for a real profit report and tracked refunds. `record_revenue` refused
+  non-positive amounts and nothing else could take money back; FUTURE_BUILD_HOOKS parked the gap "until
+  fitness exists", and fitness has since come to read revenue in five places. The first refund of a live
+  sale would have had nowhere to go, and a refunded Cell would have kept its full apparent earnings in
+  §10.5's domination, §25.2's read-back, the Cell's own context, the simulator's two revenue axes and
+  §2.6's report.
+
+- **Decision:**
+  1. `revenue.record_reversal(revenue_transaction_id, amount, source, kind)` posts a payment's mirror
+     image — debit the Cell's cash, credit `revenue` — as `cell_refund` or `cell_chargeback`.
+     `accounts.py` already classed a posting to `revenue` as "un-earning, not spending", so neither
+     `ledger.spend_by_book` nor the real-spend breaker sees it; both types are exempted with reasons in the
+     registration guard.
+  2. **It names the payment and inherits everything else** — Cell, book, currency, experiment, artifact,
+     counterparty digest. No parameter can name a Cell, so §16.3's "cannot transfer without their related
+     refund liabilities" is a property of the signature — the shape ADR-044 gave attribution and §9.3's
+     `Displacer` gives forecasts. A structural test pins it.
+  3. **Bounded per payment:** reversals of both kinds together never exceed the payment, read inside the
+     write lock. A replay is recognised before the bound, so retrying a full refund returns it.
+  4. **A dead Cell is reversed like a living one, and its cash may go negative** — the estate's existing
+     rule (ADR-021), not a new policy.
+  5. **The link is `ledger_transactions.reverses_transaction_id`** (migration 0037): in the hash preimage
+     when set, omitted otherwise (migration 0028's mechanism, so no existing hash moves); a foreign key; and
+     a CHECK that makes a reversal type without a link, or a link on any other type, unrepresentable. No
+     amount or kind column — both are already the ledger's.
+  6. **`total_revenue` and `colony_revenue` are removed, not redefined:** `gross_revenue`,
+     `reversed_revenue(kind=)`, `net_revenue`, `colony_gross_revenue`, `colony_net_revenue`. Every reader
+     now reads net, and a structural test lists the modules allowed to read gross (today only
+     `cell-fitness`, which prints it beside net).
+  7. The Cell's record shows net revenue and, only when there is one, a line naming the reversal, so a
+     Cell never refunded reads exactly as before.
+  8. `mitosis record-refund --payment TXN --amount A --source REF [--chargeback]`.
+
+- **What it displaced, and why:**
+  - *A negative `record_revenue`.* One signed type loses §1.1's two terms and §10.2's rate, and a negative
+    amount names no payment to bound it by.
+  - *Posting a refund to `external_expense`.* It would count as consumption — a refunded Cell looks wasteful
+    to §10.5 — and as real spend, refunds filling C5's caps.
+  - *A `cell_id` parameter.* It lets a refund land on a sibling that never made the sale: §16.4's
+    "reproduce to escape liabilities while keeping profitable assets", one call away.
+  - *A side table for the link.* Editable without breaking the chain, which is migration 0028's argument
+    for a fitness-bearing fact.
+  - *Redefining `total_revenue` as net.* Every current reader wanted net, but a name that quietly changes
+    meaning is how the next reader inherits the wrong one. Removed, a stale call fails with
+    `AttributeError` wherever a test reaches it, and the structural test asserts both names are gone.
+  - *Refusing a refund that would drive a Cell's cash negative, or taking the shortfall from the treasury.*
+    The processor has already returned the money; refusing to record it misstates the books, and absorbing
+    it hides a debt ADR-021 keeps visible.
+  - *Payment fees and §1.1's report in this slice.* A fee is real spend with no model provider, and the
+    breaker's registration guard assumes every direct-posting type joins `model_calls`. That is its own
+    decision, and next.
+
+- **Verification:** 17 guards teeth-checked, 17 CAUGHT — among them the bound (M1), the bound computed per
+  Cell instead of per payment (M2), the replay-before-bound order (M3), a `cell_id` parameter (M4), each of
+  the four readers switched back to gross (M7–M10), the hash link dropped or nulled (M12, M13), the schema
+  CHECK (M16) and the golden refund pointed at the wrong invoice (M23). Golden expectation 38 → 39, every
+  moved field explained; running M23 by hand corrected the note's first draft, which had claimed the pinned
+  link was the only section that would move. 1497 tests pass. **Not verified:** a live model reading the
+  new record line — Ollama's Metal backend failed a direct generate at the time — and the two-connection
+  race on the bound, which is argued (read inside `BEGIN IMMEDIATE`), not tested.
+
+- **Consequences:** Phase 9's "refunds tracked" has a path. §1.1's two figures still need payment fees,
+  other external operating costs and the report itself. `novelty`'s revenue recurrence still counts a
+  refunded payment, and a chargeback the colony wins back is unmodelled (both logged).

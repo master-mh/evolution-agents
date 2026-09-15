@@ -63,6 +63,17 @@ _EXEMPT_TRANSACTION_TYPES = {
         "touches external_expense, and Charter C5's caps bound gross spend rather than "
         "a net position — earning must not buy permission to spend past a cap"
     ),
+    "cell_refund": (
+        "cell cash -> revenue: un-earning a payment that came in (ADR-097). It never touches "
+        "external_expense and is bounded by the sale it reverses; C5's caps bound what the "
+        "colony chooses to spend, and a refund counted there would fill a cap that exists "
+        "for spending with money that was only ever passing through"
+    ),
+    "cell_chargeback": (
+        "cell cash -> revenue: a payment taken back by the payer's bank (ADR-097) — the same "
+        "accounts and the same bound as cell_refund; any fee the processor charges on top "
+        "is an expense and would be its own type"
+    ),
     "cell_funding": "seed_bank -> cell cash: internal transfer",
     "cell_birth_funding": "funding account -> cell cash: internal transfer",
     "cell_reproduction_funding": "parent cash -> child cash: internal transfer (ADR-019)",

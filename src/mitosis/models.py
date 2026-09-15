@@ -113,6 +113,9 @@ class Transaction(_Frozen):
     #: NULL on every transaction that has no counterparty — which is most of
     #: them, and on revenue recorded before migration 0028.
     counterparty_hash: str | None = None
+    #: The revenue payment a refund or chargeback reverses (migration 0037,
+    #: ADR-097). NULL on every other transaction, and required on those two.
+    reverses_transaction_id: str | None = None
     metadata: dict[str, Any] = {}
     entries: tuple[Entry, ...]
 

@@ -559,6 +559,13 @@ def cmd_cell_fitness(args: argparse.Namespace) -> None:
     print(f"Cell {cell.cell_id} ({cell.cell_type.value}, {cell.status.value})")
     print(f"  book:              {cell.book.value}")
     print(f"  revenue:           {record.revenue_minor_units} minor units")
+    taken_back = revenue.reversed_revenue(conn, cell.cell_id, cell.book)
+    if taken_back:
+        # Net above, because domination reads net (ADR-097); what was received
+        # and what was taken back are printed beside it so a refund reads as a
+        # refund rather than as a smaller sale.
+        print(f"    received {revenue.gross_revenue(conn, cell.cell_id, cell.book)}, "
+              f"refunded or charged back {taken_back}")
     print(f"  spend:             {record.spend_minor_units} minor units")
     print(f"  net contribution:  {record.net_contribution} minor units")
     if record.mean_brier is None:
@@ -685,7 +692,7 @@ def cmd_record_revenue(args: argparse.Namespace) -> None:
     except revenue.RevenueError as exc:
         raise CliError(str(exc)) from exc
 
-    earned = revenue.total_revenue(conn, args.cell, book)
+    earned = revenue.net_revenue(conn, args.cell, book)
     print(f"Recorded revenue for cell {args.cell}")
     print(f"  amount:    {args.amount} ({amount} minor units) {book.value}")
     print(f"  source:    {args.source}")
@@ -698,6 +705,51 @@ def cmd_record_revenue(args: argparse.Namespace) -> None:
     print(f"  txn:       {transaction.transaction_id}")
     print(f"  cell earned to date: {earned} minor units {book.value}")
     print(f"  cell cash now:       {ledger.get_balance(conn, cell_cash(args.cell), book)}")
+
+
+def cmd_record_refund(args: argparse.Namespace) -> None:
+    """Take back some or all of one revenue payment: a refund, or a chargeback
+    (SPEC.md §1.1, §16.3; ADR-097).
+
+    Names the payment, never the Cell. The Cell, book, experiment and artifact
+    are the payment's own, so there is nothing here an operator could use to
+    land a refund on a Cell that did not make the sale.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    payment = ledger.get_transaction(conn, args.payment)
+    if payment is None:
+        raise CliError(f"no such transaction: {args.payment}")
+    book = payment.book
+    amount = money.parse_minor_units(args.amount, book.value)
+    kind = revenue.ReversalKind.CHARGEBACK if args.chargeback else revenue.ReversalKind.REFUND
+    try:
+        transaction = revenue.record_reversal(
+            conn,
+            revenue_transaction_id=args.payment,
+            amount_minor_units=amount,
+            source=args.source,
+            kind=kind,
+            note=args.note,
+            idempotency_key=args.idempotency_key,
+        )
+    except revenue.RevenueError as exc:
+        raise CliError(str(exc)) from exc
+
+    cell_id = next(e.cell_id for e in transaction.entries if e.cell_id is not None)
+    print(f"Recorded {kind.value} of payment {args.payment}")
+    print(f"  amount:    {args.amount} ({amount} minor units) {book.value}")
+    print(f"  cell:      {cell_id}")
+    print(f"  source:    {args.source}")
+    if args.note:
+        print(f"  note:      {args.note}")
+    print(f"  txn:       {transaction.transaction_id}")
+    print(f"  still reversible on that payment: "
+          f"{revenue.reversible_amount(conn, args.payment)} minor units")
+    print(f"  cell earned to date (net): {revenue.net_revenue(conn, cell_id, book)} "
+          f"minor units {book.value}")
+    print(f"  cell cash now:       {ledger.get_balance(conn, cell_cash(cell_id), book)}")
 
 
 def cmd_fund_cell(args: argparse.Namespace) -> None:
@@ -3230,6 +3282,30 @@ def build_parser() -> argparse.ArgumentParser:
     revenue_parser.add_argument("--note", default="")
     revenue_parser.add_argument("--idempotency-key", default=None)
     revenue_parser.set_defaults(func=cmd_record_revenue)
+
+    refund_parser = subparsers.add_parser(
+        "record-refund",
+        help="take back some or all of one revenue payment — a refund, or with "
+             "--chargeback a chargeback (§1.1; ADR-097)",
+    )
+    refund_parser.add_argument(
+        "--payment", required=True,
+        help="transaction id of the revenue payment (record-revenue prints it as "
+             "`txn:`). The Cell, book, experiment and artifact are that payment's own.",
+    )
+    refund_parser.add_argument("--amount", required=True, help="decimal amount, e.g. 2.50")
+    refund_parser.add_argument(
+        "--source", required=True,
+        help="the processor's reference for the refund. Not the customer: this text "
+             "goes into the hash-chained description.",
+    )
+    refund_parser.add_argument(
+        "--chargeback", action="store_true",
+        help="the payer's bank took the money back, rather than the colony refunding it",
+    )
+    refund_parser.add_argument("--note", default="")
+    refund_parser.add_argument("--idempotency-key", default=None)
+    refund_parser.set_defaults(func=cmd_record_refund)
 
     predict_parser = subparsers.add_parser(
         "predict", help="register a prediction before its outcome is known (SPEC.md §8.5)"

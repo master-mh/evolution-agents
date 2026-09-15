@@ -37,11 +37,12 @@ def test_revenue_credits_the_cell_and_debits_the_revenue_account(conn, cell):
     )
 
     assert ledger.get_balance(conn, cell_cash(cell.cell_id), Book.USD_REAL) == before + 500
-    # The revenue account holds gross earnings negated — an external source of
-    # value, same convention as external_capital.
+    # The revenue account holds earnings negated — an external source of value,
+    # same convention as external_capital. Net of reversals, and there are none
+    # yet, so gross and net agree (reversals: `test_revenue_reversal.py`).
     assert ledger.get_balance(conn, revenue.REVENUE_ACCOUNT, Book.USD_REAL) == -500
-    assert revenue.colony_revenue(conn) == 500
-    assert revenue.total_revenue(conn, cell.cell_id) == 500
+    assert revenue.colony_net_revenue(conn) == revenue.colony_gross_revenue(conn) == 500
+    assert revenue.net_revenue(conn, cell.cell_id) == revenue.gross_revenue(conn, cell.cell_id) == 500
     assert ledger.verify_conservation(conn, Book.USD_REAL)
     assert ledger.verify_chain(conn)
 
@@ -152,7 +153,7 @@ def test_the_same_attributed_payment_cannot_be_posted_twice(conn, cell):
     revenue.record_revenue(
         conn, cell_id=cell.cell_id, amount_minor_units=500, source="inv-003"
     )
-    assert revenue.total_revenue(conn, cell.cell_id) == 500
+    assert revenue.net_revenue(conn, cell.cell_id) == 500
 
 
 def test_a_dead_cell_can_still_receive_revenue(conn, cell):
@@ -162,7 +163,7 @@ def test_a_dead_cell_can_still_receive_revenue(conn, cell):
     revenue.record_revenue(
         conn, cell_id=cell.cell_id, amount_minor_units=250, source="late-payment"
     )
-    assert revenue.total_revenue(conn, cell.cell_id) == 250
+    assert revenue.net_revenue(conn, cell.cell_id) == 250
 
     event = conn.execute(
         "SELECT metadata_json FROM audit_events WHERE event_type = 'cell_revenue_recorded'"
@@ -203,6 +204,6 @@ def test_usd_sim_revenue_is_tracked_separately_from_usd_real(conn, cell):
     revenue.record_revenue(
         conn, cell_id=cell.cell_id, amount_minor_units=400, source="sim", book=Book.USD_SIM
     )
-    assert revenue.total_revenue(conn, cell.cell_id, Book.USD_SIM) == 400
-    assert revenue.total_revenue(conn, cell.cell_id, Book.USD_REAL) == 0
+    assert revenue.net_revenue(conn, cell.cell_id, Book.USD_SIM) == 400
+    assert revenue.net_revenue(conn, cell.cell_id, Book.USD_REAL) == 0
     assert ledger.verify_conservation(conn, Book.USD_SIM)
