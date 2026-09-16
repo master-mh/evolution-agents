@@ -1931,6 +1931,33 @@ actually queued for building — this file is memory, not a backlog to work thro
   long. §27.2's dashboard wants "true profit after shadow costs" among its colony metrics, so this is the
   natural next consumer.
 
+## From the live Haiku check of ADR-097's record line (2026-09-16)
+
+One paid wake on `claude-haiku-4-5` against a Cell with a refunded sale (operator-approved, 2 calls,
+4,245 micro-USD true cost recorded as 2 minor units). **The prompt half passed:** the record section
+rendered both lines and the model read them back — "My record shows revenue of 180 units against 120 in
+chargebacks". The owed live check from ADR-097 is discharged. Three findings came out of it:
+
+- **ADR-069's repair prompt made the reply worse, not better, and the evidence contradicts its stated
+  reasoning.** Reply 1 was `{kind: abstain, summary}` — missing `rationale` and
+  `estimated_cost_minor_units`, which every kind requires. The repair turn named exactly those two
+  errors, and reply 2 was `{kind: abstain, rationale, estimated_cost_minor_units}` — the named fields
+  supplied and the previously-correct `summary` dropped. `_repair_instruction`'s docstring argues that
+  restating the schema "would waste tokens on the part that was never the problem"; on a cheap model the
+  part that was never the problem is exactly what gets dropped. Restating the required-field list in the
+  repair turn, or diffing the reply against the first attempt, is the fix. Two billed calls and no usable
+  proposal is the cost of not having it.
+- **`abstain` invites under-filling.** The schema text says "Most wakes produce nothing" and exempts only
+  `risk_tier` (ADR-068). A model that reads "abstain" as "nothing to report" omits `rationale` and
+  `estimated_cost_minor_units` too. Worth measuring across models before changing the schema: the
+  alternative — making those two optional for `abstain` — would weaken §23.2's payload for the one kind
+  where the reasoning is the entire content.
+- **"refunded or charged back" invites conflation.** The Cell was refunded; the model reported
+  "chargebacks". §1.1 subtracts the two as separate terms and §10.2 asks for their rate separately, so the
+  combined line trades a rare extra line for a wrong word in the Cell's own reasoning. Naming whichever is
+  non-zero (or both) is a one-line change to `context._realised_record_section` — and a prompt change, so
+  it needs its own live check.
+
 ## From the trial identity (2026-09-16, ADR-100)
 
 - **Nothing is gated on the identity yet, and the first gate is obvious.** §21's `marketplace_listing`
