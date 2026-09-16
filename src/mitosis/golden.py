@@ -82,6 +82,7 @@ from . import (
     population,
     posteriors,
     prediction,
+    profit,
     promotion,
     providers,
     real_spend_breaker,
@@ -1274,7 +1275,27 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #                 idempotency key (`golden:revenue:artifact`).
 #             No USD_REAL movement, so the breaker's windows are untouched, and
 #             no prompt, token count or model call moved.
-EXPECTATION_VERSION = 40
+#
+#   40 -> 41 (§1.1's profit report and its declared shadow rate; ADR-099,
+#             migration 0039). Two changes, both deliberate:
+#             (a) `audit_event_types` gains `shadow_price_declared: 1` — step 19i
+#                 declares a reporting rate of 100 micro-USD per RESOURCE unit.
+#                 Declaring it posts nothing, so **no balance, transaction type,
+#                 reservation or resource_usage row moved**: every pre-existing
+#                 section but that one count is byte-identical.
+#             (b) **`profit` (new)**, one block per money book, derived at read
+#                 time (§2.5):
+#                 USD_REAL — revenue 0, spend 20, `real_settled_net_profit` -20,
+#                 58 human minutes of which 4 subsidised, `shadow_cost` 6,
+#                 `autonomy_adjusted_profit` -26. Real revenue is 0 because
+#                 nothing here sells for real money; the 20 is the scenario's one
+#                 settled USD_REAL reservation and predates this version.
+#                 USD_SIM — revenue 55, refunds 5, fees 2, spend 1550,
+#                 `real_settled_net_profit` -1502, and both shadow fields `null`:
+#                 §1.1's autonomy adjustment is defined for real profit, and
+#                 subtracting a USD_REAL-equivalent from synthetic profit is the
+#                 bridge §2.4 forbids.
+EXPECTATION_VERSION = 41
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -2742,6 +2763,17 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         idempotency_key="golden:fee:first-invoice",
     )
 
+    # 19i. §1.1's reporting shadow rate (ADR-099). Declared, because §2.4 forbids
+    #      the kernel choosing what a RESOURCE unit is worth — and declared *in*
+    #      the scenario so the replay pins the autonomy-adjusted arithmetic
+    #      rather than only the abstention. Posts nothing: no balance moves here.
+    profit.declare_shadow_rate(
+        conn,
+        micro_usd_per_resource_unit=100,
+        declared_by="golden-operator",
+        note="fixed scenario: reporting only",
+    )
+
     # 20. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
@@ -2802,6 +2834,31 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
             "GROUP BY book, transaction_type"
         ).fetchall()
     }
+
+    # §1.1's two profit figures per money book (ADR-099), derived from everything
+    # above rather than stored (§2.5). **USD_REAL revenue is 0 and stays 0**:
+    # nothing in this scenario sells for real money, and the mock provider is
+    # priced at zero. Real *spend* is not 0 — the scenario settles one USD_REAL
+    # reservation of 20, so the reserve->settle path is replayed — which makes
+    # real profit negative, and the autonomy-adjusted figure lower still, because
+    # 58 human minutes are a cost nobody paid for. Read off the expectations
+    # rather than assumed: the first draft of this comment claimed both were 0.
+    profit_by_book = {}
+    for profit_book in (Book.USD_REAL, Book.USD_SIM):
+        figures = profit.report(conn, profit_book)
+        profit_by_book[profit_book.value] = {
+            "gross_revenue": figures.gross_revenue_minor_units,
+            "refunds": figures.refunds_minor_units,
+            "chargebacks": figures.chargebacks_minor_units,
+            "payment_fees": figures.payment_fees_minor_units,
+            "model_and_cloud_spend": figures.model_and_cloud_spend_minor_units,
+            "real_settled_net_profit": figures.real_settled_net_profit_minor_units,
+            "human_minutes": figures.human_minutes,
+            "human_minutes_subsidised": figures.human_minutes_subsidised,
+            "local_model_calls": figures.local_model_calls,
+            "shadow_cost": figures.shadow_cost_minor_units,
+            "autonomy_adjusted_profit": figures.autonomy_adjusted_profit_minor_units,
+        }
 
     # §1.1's payment fees (ADR-098), each pinned to the charge it was taken on by
     # that charge's idempotency key, for the reason `revenue_reversals` below is.
@@ -3461,6 +3518,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "transaction_types": transaction_types,
         "revenue_reversals": revenue_reversals,
         "payment_fees": payment_fee_rows,
+        "profit": profit_by_book,
         "cells": cells,
         "reservations": reservation_rows,
         "resource_usage": resource_rows,

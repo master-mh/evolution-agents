@@ -930,6 +930,43 @@ def test_record_fee_names_the_charge_and_reports_the_cells_spend(tmp_path, capsy
     assert "revenue payment or a chargeback" in capsys.readouterr().err
 
 
+def test_profit_reports_both_figures_and_abstains_until_a_rate_is_declared(tmp_path, capsys):
+    """§1.1 asks for both figures always. The second one abstains rather than
+    guessing a RESOURCE→USD rate (§2.4), and says so (ADR-099)."""
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    cli.main([
+        "--db", db_path, "record-revenue", "--cell", cell_id,
+        "--amount", "12.50", "--source", "acme-inv-7",
+    ])
+    payment = next(
+        line.split()[-1]
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("txn:")
+    )
+    cli.main([
+        "--db", db_path, "record-fee", "--on", payment,
+        "--amount", "0.66", "--source", "processor-fee-1",
+    ])
+    capsys.readouterr()
+
+    assert cli.main(["--db", db_path, "profit"]) == 0
+    out = capsys.readouterr().out
+    assert "settled revenue:        1250" in out
+    assert "- payment fees:         66" in out
+    assert "REAL_SETTLED_NET_PROFIT: 1184" in out
+    assert "AUTONOMY_ADJUSTED_PROFIT: not available" in out
+    assert "other external operating costs" in out
+
+    assert cli.main([
+        "--db", db_path, "set-shadow-rate", "--micro-usd-per-unit", "100", "--by", "operator",
+    ]) == 0
+    assert "no transaction is posted" in capsys.readouterr().out
+
+    assert cli.main(["--db", db_path, "profit"]) == 0
+    out = capsys.readouterr().out
+    assert "AUTONOMY_ADJUSTED_PROFIT: 1184" in out, "no metered labour yet, so the two agree"
+
+
 def test_record_refund_of_an_unknown_payment_exits_nonzero(tmp_path, capsys):
     db_path, _ = _init_and_cell(tmp_path, capsys)
     capsys.readouterr()

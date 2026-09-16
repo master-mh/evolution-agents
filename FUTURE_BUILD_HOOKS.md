@@ -1901,3 +1901,32 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **Fees that belong to no single charge** — payout fees, currency conversion, monthly processor
   minimums — have nowhere to go: `record_payment_fee` requires a charge. They are operating costs in
   §1.1's sense and belong with the chosen-spend path above.
+
+## From §1.1's profit report (2026-09-16, ADR-099)
+
+- **The report has no window.** `profit.report` is to-date only. A trial will want "this month" and §25.2
+  already shows the shape (`spend_by_book(since=...)`, wall-clock rather than simulated), but every colony
+  reader it sums — `colony_gross_revenue`, `colony_reversed_revenue`, `colony_fees_total`,
+  `ledger.get_balance` — would need to take one, and a balance is a running total with no window at all.
+  Worth doing when there is a month worth reporting.
+- **One flat rate prices two different things.** The declared shadow rate converts RESOURCE units to
+  USD-equivalent for both human minutes and donated compute, and §1.1 lists them as separate terms
+  ("shadow-priced human labour" / "donated infrastructure ... free tiers"). An hour of a person's
+  attention and an hour of a GPU are not the same price. Two rates, or a rate per resource type, is the
+  obvious refinement — and it needs a reason to prefer particular numbers, which is the hard part.
+- **Free tiers are inferred from the provider, not from the price.** `_local_compute` counts calls to
+  `providers.OLLAMA_PROVIDER`. A hosted provider's free tier — a zero-priced row in
+  `pricing.PRICING_TABLE` that is not local — would be missed, and a paid local endpoint fronted by an
+  Ollama-compatible API would be miscounted as a subsidy (the same hole `pricing.py` already documents for
+  registration). Keying on "cost 0 and not the mock provider" is the alternative, and it would count a
+  genuinely free call from a paid provider as a subsidy, which it is.
+- **Donated infrastructure is unrecorded, not zero.** Nothing in the kernel knows about a machine someone
+  runs for free, a domain someone pays for, or a free SaaS tier. §1.1 names it; the report names it as
+  unmeasured on every line. Recording it needs a declaration verb of the same shape as the shadow rate.
+- **Profit is colony-wide only.** §10.2's per-Cell fitness vector asks a different question and already has
+  `death.Contribution`; a per-lineage or per-experiment profit figure would need the §1.1 terms attributed
+  the way §2.6's report attributes spend, which they now are — the query is small, the question of what a
+  lineage's "share" of colony overhead means is not.
+- **`status` prints no profit line.** Deliberate for now: one report, one verb, and `status` is already
+  long. §27.2's dashboard wants "true profit after shadow costs" among its colony metrics, so this is the
+  natural next consumer.

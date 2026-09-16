@@ -44,44 +44,42 @@ cannot touch the real tree, every *Disproved by:* pointer run and
 dated, workflow structure as a gene the kernel runs, Slice H's arm
 settings and the simulator stall they uncovered, and Phase 3's
 pre-registered run that found no selection effect, and refunds and
-chargebacks naming the payment they reverse, 2026-07-21 through
-2026-09-15):
+chargebacks naming the payment they reverse, and payment fees as a
+charge nobody chose, 2026-07-21 through 2026-09-16):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-16 — Payment fees: a charge nobody chose (ADR-098)
+## 2026-09-16 — §1.1's profit report: the colony can state its own result (ADR-099)
 
-§1.1's third deduction after refunds and chargebacks, and the one every live sale carries. No path could
-record a USD_REAL charge that was not a model call — reserved before it happened and settled after. A
-processor's fee is neither: it is taken out of the payout.
+§1.1 opens the spec with `REAL_SETTLED_NET_PROFIT` and §32 closes with the same sentence; nothing
+computed it. With refunds, chargebacks and payment fees recorded, the formula became computable.
 
 ### What shipped
 
-- `payment_fees.record_payment_fee` and `mitosis record-fee --on TXN --amount A --source REF`: a fee taken
-  on a revenue payment or a chargeback, inheriting that charge's Cell, book, experiment and artifact. A
-  refund is not chargeable — the fee on the sale was charged on the sale, and a fee on the refund would
-  count it twice.
-- Migration 0038: `ledger_transactions.charged_on_transaction_id`, beside 0037's link — in the hash
-  preimage when set, a foreign key, and a CHECK tying it to exactly `payment_fee`.
-- **Imposed, not chosen:** posted directly and never refused by a cap, then counted by every global
-  window, so the next spend the colony *does* choose meets a cap the fee helped fill.
-- The breaker's registry now names a route per registered type — a reservation, a model-call key, or
-  provider-less — and a guard refuses a type in no route or two, or a model-call charge filed
-  provider-less.
-- Golden 39 → 40: one USD_SIM fee, on the invoice that carries the artifact.
+- `profit.report` and `mitosis profit`: §1.1's formula with every term printed beside the total, derived
+  on read and stored nowhere (§2.5) — so the subtraction can be checked rather than trusted.
+- `mitosis set-shadow-rate` and migration 0039: the reporting-only rate the second figure needs, declared
+  by a person and recorded with their name. §2.4 forbids the kernel choosing what a RESOURCE unit is
+  worth, so without a declared rate the report abstains with its reason instead of printing 0.
+- Human labour counted as billed **plus** subsidised, so unpaid work makes the colony look more expensive;
+  free tiers counted as local-model calls; operating costs and donated infrastructure named as unmeasured
+  on every report rather than zeroed.
+- The autonomy adjustment is real-profit-only: a synthetic book carries the first figure and abstains on
+  the second.
+- Golden 40 → 41, pinning both books.
 
 ### Found
 
-- **§25.2's read-back sees a fee with no reader changed.** `assessments[0].spend_since_minor_units` moved
-  0 → 2 in the replay — the expense leg's Cell tag doing its job through `spend_by_book`.
-- **A fee is the first real charge with no provider.** The per-provider window reaches a direct posting
-  only through the model call its key names, so the registry had quietly assumed every direct charge had
-  one.
+- **The rate guards are defended twice.** Deleting either Python check still fails its test, because
+  migration 0039's CHECK constraints refuse the row. Two teeth-checks read WRONG-FAILURE until the
+  expected text named the schema's message — the exit code alone would have called them holes.
+- **A comment claimed more than the run does.** The first draft said the golden run pins USD_REAL at zero
+  revenue *and* zero spend; it settles one USD_REAL reservation of 20, so real profit there is −20.
+  Corrected before commit — the second such claim caught this session by checking rather than reasoning.
 
 ### Verification
 
-1524 tests pass (27 new), golden run exact at version 40, ruff and docs-facts clean. 14 guards
-teeth-checked, 14 CAUGHT.
+1540 tests pass (16 new), golden run exact at version 41, ruff and docs-facts clean. 11 guards
+teeth-checked, 11 CAUGHT.
 
-- Next: §1.1's operating-cost terms (hosting, advertising, data/software, fulfilment) — chosen spend,
-  which reserves before a person pays rather than posting after — then the report of both profit figures.
-  Still the operator's to decide: legal identity, payment account, real-money budget.
+- Next: the operator's trial identity and payment-account attestation, then §1.1's operating-cost terms —
+  chosen spend, which reserves before a person pays rather than posting after.

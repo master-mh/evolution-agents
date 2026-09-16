@@ -582,6 +582,29 @@ def colony_gross_revenue(conn: sqlite3.Connection, book: Book = Book.USD_REAL) -
     return -row["total"]
 
 
+def colony_reversed_revenue(
+    conn: sqlite3.Connection,
+    book: Book = Book.USD_REAL,
+    *,
+    kind: ReversalKind | None = None,
+) -> int:
+    """Colony-wide refunds and chargebacks, as a positive number; one kind only
+    when `kind` is given. §1.1 subtracts them as two terms, so `profit.report`
+    asks for each separately rather than for their sum."""
+    types = REVERSAL_TRANSACTION_TYPES if kind is None else (_REVERSAL_TYPE[ReversalKind(kind)],)
+    placeholders = ", ".join("?" for _ in types)
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(SUM(e.amount_minor_units), 0) AS total
+        FROM ledger_entries e
+        JOIN ledger_transactions t ON t.transaction_id = e.transaction_id
+        WHERE t.book = ? AND t.transaction_type IN ({placeholders}) AND e.account_id = ?
+        """,
+        (book.value, *types, REVENUE_ACCOUNT),
+    ).fetchone()
+    return row["total"]
+
+
 def colony_net_revenue(conn: sqlite3.Connection, book: Book = Book.USD_REAL) -> int:
     """Colony-wide earnings net of reversals, as a positive number. The `revenue`
     account holds exactly this negated, per the sign convention above — a

@@ -19,8 +19,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (
-    payment_fees,
     approval,
+    artifacts as artifacts_module,
     auditor,
     autopromotion,
     channel_registry,
@@ -44,26 +44,27 @@ from . import (
     lifecycle,
     lineage,
     money,
+    novelty,
     outcome,
+    payment_fees,
     population,
+    posteriors,
     prediction,
     pricing,
+    profit,
     promotion,
     providers,
     real_spend_breaker,
     reconciliation,
     reservations,
     resource_metering,
-    novelty,
-    posteriors,
-    rights,
-    selection,
-    artifacts as artifacts_module,
     revenue,
+    rights,
+    scheduler,
+    selection,
+    sweeper,
     tool_registry,
     tools,
-    scheduler,
-    sweeper,
 )
 from .simulation import batch as simulation_batch
 from .simulation import environment as simulation_environment
@@ -751,6 +752,75 @@ def cmd_record_refund(args: argparse.Namespace) -> None:
     print(f"  cell earned to date (net): {revenue.net_revenue(conn, cell_id, book)} "
           f"minor units {book.value}")
     print(f"  cell cash now:       {ledger.get_balance(conn, cell_cash(cell_id), book)}")
+
+
+def cmd_profit(args: argparse.Namespace) -> None:
+    """§1.1's two profit figures, derived from the books (ADR-099).
+
+    Both are always reported, and the second abstains rather than guessing when
+    no shadow rate has been declared — §2.4 forbids this code choosing what a
+    RESOURCE unit is worth in real money.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    book = Book(args.book)
+    try:
+        report = profit.report(conn, book)
+    except profit.ProfitError as exc:
+        raise CliError(str(exc)) from exc
+
+    print(f"MITOSIS profit — {book.value} (SPEC.md §1.1, derived from the books)")
+    print()
+    print(f"  settled revenue:        {report.gross_revenue_minor_units}")
+    print(f"  - refunds:              {report.refunds_minor_units}")
+    print(f"  - chargebacks:          {report.chargebacks_minor_units}")
+    print(f"  - payment fees:         {report.payment_fees_minor_units}")
+    print(f"  - API and cloud spend:  {report.model_and_cloud_spend_minor_units}")
+    print(f"  REAL_SETTLED_NET_PROFIT: {report.real_settled_net_profit_minor_units} "
+          f"minor units {book.value}")
+    print()
+    subsidised = (f", {report.human_minutes_subsidised} of them subsidised"
+                  if report.human_minutes_subsidised else "")
+    print(f"  human labour:           {report.human_minutes} minutes{subsidised} "
+          f"({report.human_shadow_resource_units} RESOURCE units)")
+    print(f"  local model calls:      {report.local_model_calls} "
+          f"({report.local_model_resource_units} RESOURCE units)")
+    if report.autonomy_adjusted_profit_minor_units is None:
+        print("  AUTONOMY_ADJUSTED_PROFIT: not available")
+    else:
+        print(f"  shadow cost at {report.shadow_rate_micro_usd_per_resource_unit} micro-USD/unit: "
+              f"{report.shadow_cost_minor_units}")
+        print(f"  AUTONOMY_ADJUSTED_PROFIT: {report.autonomy_adjusted_profit_minor_units} "
+              f"minor units {book.value}-equivalent")
+    print()
+    print("  not measured (§1.1 names it; this kernel cannot):")
+    for item in report.unmeasured:
+        print(f"    - {item}")
+    conn.close()
+
+
+def cmd_set_shadow_rate(args: argparse.Namespace) -> None:
+    """Declare what one RESOURCE unit is worth, for §1.1's second figure only
+    (ADR-099). Never posts to a ledger: §2.4 forbids a USD_SIM/RESOURCE bridge,
+    and this is a reporting rate a person chose, recorded with their name."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        rate = profit.declare_shadow_rate(
+            conn,
+            micro_usd_per_resource_unit=args.micro_usd_per_unit,
+            declared_by=args.by,
+            note=args.note,
+        )
+    except profit.ProfitError as exc:
+        raise CliError(str(exc)) from exc
+    print("Declared the reporting shadow rate (SPEC.md §1.1, §2.4)")
+    print(f"  rate:        {rate.micro_usd_per_resource_unit} micro-USD per RESOURCE unit")
+    print(f"  declared by: {rate.declared_by}")
+    if rate.note:
+        print(f"  note:        {rate.note}")
+    print("  It is used by `mitosis profit` and by nothing else — no transaction is posted.")
+    conn.close()
 
 
 def cmd_record_fee(args: argparse.Namespace) -> None:
@@ -3367,6 +3437,29 @@ def build_parser() -> argparse.ArgumentParser:
     fee_parser.add_argument("--note", default="")
     fee_parser.add_argument("--idempotency-key", default=None)
     fee_parser.set_defaults(func=cmd_record_fee)
+
+    profit_parser = subparsers.add_parser(
+        "profit", help="§1.1's real settled net profit and its autonomy-adjusted variant",
+    )
+    profit_parser.add_argument(
+        "--book", default=Book.USD_REAL.value,
+        choices=[Book.USD_REAL.value, Book.USD_SIM.value],
+    )
+    profit_parser.set_defaults(func=cmd_profit)
+
+    shadow_parser = subparsers.add_parser(
+        "set-shadow-rate",
+        help="declare what one RESOURCE unit is worth for §1.1's autonomy-adjusted "
+             "figure (reporting only; operator-only)",
+    )
+    shadow_parser.add_argument(
+        "--micro-usd-per-unit", type=int, required=True, dest="micro_usd_per_unit",
+        help="micro-USD per RESOURCE unit. §2.4 forbids the kernel choosing this, so a "
+             "person does, and the record keeps who.",
+    )
+    shadow_parser.add_argument("--by", required=True, help="who is declaring it")
+    shadow_parser.add_argument("--note", default="")
+    shadow_parser.set_defaults(func=cmd_set_shadow_rate)
 
     predict_parser = subparsers.add_parser(
         "predict", help="register a prediction before its outcome is known (SPEC.md §8.5)"

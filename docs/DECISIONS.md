@@ -6203,3 +6203,62 @@ out as a Slice G decision, not this one.
 - **Consequences:** §1.1 needs only its operating-cost terms before both profit figures can be reported.
   A fee belonging to no single charge (a payout fee, currency conversion, a monthly minimum) still has
   nowhere to go, and a processor returning a fee is unmodelled. Both logged.
+
+## ADR-099: §1.1's two profit figures, and the shadow rate a person has to declare
+
+- **Status:** Accepted
+- **Spec ref:** §1.1 (both figures), §2.2 (RESOURCE is shadow-priced for reporting, never posted as cash),
+  §2.4 (no implicit exchange-rate bridge), §2.5 (balances are derived), §2.6 (the experiment report's
+  posture), §10.1, §27.2, §32; §28 Phase 9
+
+- **Context:** §1.1 opens the spec with `REAL_SETTLED_NET_PROFIT` and §32 closes it with the same
+  sentence; §28 Phase 9's acceptance asks for both figures by name. Nothing computed either. ADR-097 and
+  ADR-098 gave the last two deduction terms a path, so the formula became computable for the first time.
+
+- **Decision:**
+  1. `profit.report(conn, book)` sums §1.1's formula and returns **every term beside the total**, derived
+     on read and stored nowhere (§2.5, Charter C3) — §2.6's experiment report's posture, one level up.
+  2. **The second figure needs a rate, and this module must not choose it.** §2.2 permits shadow-pricing
+     RESOURCE *for reporting*; §2.4 forbids an implicit bridge. So `declare_shadow_rate` (migration 0039)
+     records micro-USD per RESOURCE unit with who declared it, and until someone does, the report
+     abstains with the reason.
+  3. **The autonomy adjustment is real-profit-only.** A USD_SIM report carries the first figure and
+     abstains on the second: subtracting a USD_REAL-equivalent from synthetic profit is precisely §2.4's
+     bridge.
+  4. Human labour is **billed + subsidised** (`experiments._human_labour`'s rule, colony-wide), so
+     absorbing more unpaid work makes the colony look *more* expensive, which is what §1.1 asks for.
+  5. **Free tiers are local-model calls** — zero in USD_REAL, metered in RESOURCE. The mock provider is
+     excluded: a test double is not a subsidy.
+  6. §1.1's operating-cost terms and donated infrastructure are **named as unmeasured on every report**,
+     never folded into a 0.
+  7. `mitosis profit [--book]` and `mitosis set-shadow-rate --micro-usd-per-unit N --by WHO`.
+
+- **What it displaced, and why:**
+  - *A default rate.* Any number the code picked would be §2.4's bridge wearing a reporting label, and
+    every profit figure the colony ever published would silently depend on it.
+  - *Reporting 0 when no rate exists.* A 0 reads as "nothing was subsidised" — the claim §1.1 exists to
+    disprove, and the direction that flatters the colony.
+  - *Reading net revenue for the first term.* §1.1 subtracts refunds and chargebacks on their own lines,
+    so net would deduct them twice. ADR-097's gross-reader guard caught this in review, and `profit.py`
+    is now listed there with its reason instead of being waved through.
+  - *Storing the report.* §2.5's cached-derivation trap; a test asserts no table whose name contains
+    "profit" exists.
+  - *A `--since` window.* Every colony reader it sums would need one, and a balance has no window at all.
+    Logged rather than half-built.
+
+- **Verification:** 11 guards teeth-checked, 11 CAUGHT — the abstention replaced by a figure (P1),
+  subsidised minutes dropped (P2), local compute uncounted (P3), fees counted twice (P5), gross read as
+  net (P6), a synthetic book given an autonomy figure (P7), the RESOURCE book given a profit (P12), the
+  golden scenario declaring no rate (P13). **P8 and P9 first reported WRONG-FAILURE, and the reason is
+  worth keeping:** deleting the Python guard on a non-positive rate, or on an unnamed declarer, still
+  fails its test — migration 0039's CHECK constraints refuse the row — so the guard is defended at two
+  layers and my expected text named only one. Re-run against the schema's message: CAUGHT. Golden 40 →
+  41; the declared rate posts nothing, so only an audit count and the new `profit` section moved. 1540
+  tests pass; ruff and docs-facts clean.
+  **Corrected before commit:** the golden comment claimed the run pins USD_REAL at 0 revenue *and* 0
+  spend. It settles one USD_REAL reservation of 20, so real profit there is −20 — the second claim this
+  session caught by checking the artifact rather than reasoning about it.
+
+- **Consequences:** §1.1's formula is complete but for its operating-cost terms. The rate is flat across
+  labour and compute where §1.1 lists them separately; free tiers are keyed on the provider rather than
+  the price, so a hosted free tier is missed; donated infrastructure is unrecorded. All logged.

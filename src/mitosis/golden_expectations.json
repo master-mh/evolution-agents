@@ -1,5 +1,5 @@
 {
-  "expectation_version": 40,
+  "expectation_version": 41,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "b82755fb789a4b1ba2cd4a2e82329f175160542a05da336ad192b6deee2e3053",
+  "semantic_hash": "f48512cf0e092b11d6de638fef776e728ee1518eb50127a911a0983e59187a22",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -226,6 +226,7 @@
       "real_spend_limit_configured": 1,
       "request_audited": 1,
       "rights_attested": 1,
+      "shadow_price_declared": 1,
       "tool_call_finished": 1,
       "tool_call_requested": 1
     },
@@ -1138,6 +1139,34 @@
         "resolved": false
       }
     ],
+    "profit": {
+      "USD_REAL": {
+        "autonomy_adjusted_profit": -26,
+        "chargebacks": 0,
+        "gross_revenue": 0,
+        "human_minutes": 58,
+        "human_minutes_subsidised": 4,
+        "local_model_calls": 0,
+        "model_and_cloud_spend": 20,
+        "payment_fees": 0,
+        "real_settled_net_profit": -20,
+        "refunds": 0,
+        "shadow_cost": 6
+      },
+      "USD_SIM": {
+        "autonomy_adjusted_profit": null,
+        "chargebacks": 0,
+        "gross_revenue": 55,
+        "human_minutes": 58,
+        "human_minutes_subsidised": 4,
+        "local_model_calls": 0,
+        "model_and_cloud_spend": 1550,
+        "payment_fees": 2,
+        "real_settled_net_profit": -1502,
+        "refunds": 5,
+        "shadow_cost": null
+      }
+    },
     "promotions": [
       {
         "allocated_by": "golden-operator",

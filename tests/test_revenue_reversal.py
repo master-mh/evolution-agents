@@ -407,6 +407,11 @@ _GROSS_READERS = {
         "cell-fitness prints what was received beside what was taken back, and only "
         "beside the net figure domination reads — never instead of it"
     ),
+    "profit.py": (
+        "§1.1's first term *is* settled revenue before deductions: the formula subtracts "
+        "refunds and chargebacks itself, on their own lines, so a reader can check the "
+        "subtraction. Using net here would deduct them twice (ADR-099)"
+    ),
 }
 
 

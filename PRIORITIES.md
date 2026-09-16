@@ -1143,6 +1143,25 @@
   *Disproved by:* a `payment_fee` row with a NULL `charged_on_transaction_id` (migration 0038's CHECK
   refuses one), or `payment_fee` missing from `real_spend_breaker._REAL_SPEND_TRANSACTION_TYPES`.
 
+- [x] **§1.1's two profit figures — DONE 2026-09-16 (ADR-099); the colony's stated measure of success is
+  now computable.** §32 calls real settled net profit the final definition of MITOSIS and nothing computed
+  it. `profit.report` sums §1.1's formula from the ledger, derived on read and stored nowhere (§2.5), and
+  `mitosis profit` prints both figures with every term beside the total so the subtraction can be checked
+  rather than trusted.
+  - **The second figure needs a rate a person declares** (`mitosis set-shadow-rate`, migration 0039).
+    Human minutes and local compute are metered in the RESOURCE book, and §2.4 forbids the kernel choosing
+    what one unit is worth in real money — so without a declared rate the report abstains with the reason,
+    never 0, which would read as "nothing was subsidised". The rate posts nothing and is read by one module.
+  - **The autonomy adjustment is real-profit-only:** subtracting a USD_REAL-equivalent from a synthetic
+    book is the bridge §2.4 spends a clause forbidding, so a USD_SIM report carries the first figure and
+    abstains on the second.
+  - Golden 40 → 41 pins both books, including the USD_REAL block a replay must keep at zero revenue.
+  - **The last missing input** is §1.1's operating-cost terms (hosting, advertising, data/software,
+    fulfilment) — chosen spend, logged in FUTURE_BUILD_HOOKS with the shape it wants. Donated
+    infrastructure is named on every report as unmeasured.
+  *Disproved by:* `profit.report` returning a non-None `autonomy_adjusted_profit_minor_units` when
+  `shadow_price_config` holds no row, or any table whose name contains `profit` appearing in the schema.
+
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
   directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped

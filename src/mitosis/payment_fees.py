@@ -64,6 +64,21 @@ class PaymentFeeError(Exception):
     pass
 
 
+def colony_fees_total(conn: sqlite3.Connection, book) -> int:
+    """Colony-wide payment fees, as a positive number — §1.1's third deduction,
+    read from the expense leg so it is the same figure `spend_by_book` counted."""
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(e.amount_minor_units), 0) AS total
+        FROM ledger_entries e
+        JOIN ledger_transactions t ON t.transaction_id = e.transaction_id
+        WHERE t.book = ? AND t.transaction_type = ? AND e.account_id = ?
+        """,
+        (book.value, PAYMENT_FEE_TRANSACTION_TYPE, _EXTERNAL_EXPENSE),
+    ).fetchone()
+    return row["total"]
+
+
 def record_payment_fee(
     conn: sqlite3.Connection,
     *,

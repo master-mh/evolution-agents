@@ -6,6 +6,44 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-16 — Payment fees: a charge nobody chose (ADR-098)
+
+§1.1's third deduction after refunds and chargebacks, and the one every live sale carries. No path could
+record a USD_REAL charge that was not a model call — reserved before it happened and settled after. A
+processor's fee is neither: it is taken out of the payout.
+
+### What shipped
+
+- `payment_fees.record_payment_fee` and `mitosis record-fee --on TXN --amount A --source REF`: a fee taken
+  on a revenue payment or a chargeback, inheriting that charge's Cell, book, experiment and artifact. A
+  refund is not chargeable — the fee on the sale was charged on the sale, and a fee on the refund would
+  count it twice.
+- Migration 0038: `ledger_transactions.charged_on_transaction_id`, beside 0037's link — in the hash
+  preimage when set, a foreign key, and a CHECK tying it to exactly `payment_fee`.
+- **Imposed, not chosen:** posted directly and never refused by a cap, then counted by every global
+  window, so the next spend the colony *does* choose meets a cap the fee helped fill.
+- The breaker's registry now names a route per registered type — a reservation, a model-call key, or
+  provider-less — and a guard refuses a type in no route or two, or a model-call charge filed
+  provider-less.
+- Golden 39 → 40: one USD_SIM fee, on the invoice that carries the artifact.
+
+### Found
+
+- **§25.2's read-back sees a fee with no reader changed.** `assessments[0].spend_since_minor_units` moved
+  0 → 2 in the replay — the expense leg's Cell tag doing its job through `spend_by_book`.
+- **A fee is the first real charge with no provider.** The per-provider window reaches a direct posting
+  only through the model call its key names, so the registry had quietly assumed every direct charge had
+  one.
+
+### Verification
+
+1524 tests pass (27 new), golden run exact at version 40, ruff and docs-facts clean. 14 guards
+teeth-checked, 14 CAUGHT.
+
+- Next: §1.1's operating-cost terms (hosting, advertising, data/software, fulfilment) — chosen spend,
+  which reserves before a person pays rather than posting after — then the report of both profit figures.
+  Still the operator's to decide: legal identity, payment account, real-money budget.
+
 ## 2026-09-15 — Refunds and chargebacks: the first of Phase 9's books (ADR-097)
 
 Phase 3's gate is soft and Phase 4 is not blocked. The shortest path to real money the spec allows is §28
