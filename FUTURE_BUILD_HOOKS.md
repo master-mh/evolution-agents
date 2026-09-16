@@ -1953,3 +1953,26 @@ actually queued for building — this file is memory, not a backlog to work thro
   latest with no subject key. Phase 10's "multiple brands/legal entities" (§16.5) would need one, the way
   `rights_attestations` carries `subject_kind`/`subject` — a migration, deliberately, rather than a
   nullable column added quietly.
+
+## From the failed-call outcome (2026-09-16, ADR-101)
+
+- **The Auditors read a failed call the way `deliberation` used to** (2026-09-16, ADR-101).
+  `auditor.py:414` and `content_audit.py:518` both do `_parse(call.response_text or "")`, so a provider
+  outage is recorded as an Auditor that bought a call and produced nothing usable — which §10.4 makes a
+  fitness fact *about the Auditor*, so the misattribution is arguably worse there than it was in
+  `deliberation`. The primitive they need already exists (`gateway.call_failure`); what they do not have
+  is an answer to what an `audits` row says when no verdict was produced, and inventing a fourth audit
+  outcome is a schema decision of its own. ADR-070's rule applies: an extension to the Auditors earns
+  itself. **Carries a stale claim with it** — `auditor.py`'s comment "The call is bought and committed by
+  now (ADR-022), so the failure is recorded rather than raised" is false on exactly this path, where
+  `_handle_failure` released both reservations and nothing was bought.
+- **A wake lost to a provider outage is still consumed.** `run_wake_event` marks the event processed
+  after a `call_failed` deliberation, and the `wake_key` guard returns that deliberation on redelivery,
+  so a colony-wide outage eats an epoch's scheduled wakes and no Cell gets its turn back. Giving the wake
+  back means either re-enqueueing the event or making `call_failed` a non-terminal `wake_key` — the first
+  changes what Charter C6's idempotency settles, the second lets a persistently-down provider multiply
+  one wake into many, which is the runaway shape ADR-069's bound exists to prevent. Wants a bounded
+  policy (a colony-level "provider is down" latch, or an epoch cap on re-wakes), not a flag.
+- **The golden run has no provider-outage arm.** ADR-101's path is deterministic and pinned by tests, and
+  no snapshot field moved, so the scenario was left alone. If `golden.py` ever gains a provider double
+  that can fail, a wake against it would pin `status` and `made_repair_call` together for the whole class.

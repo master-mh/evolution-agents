@@ -259,6 +259,37 @@ def call_model(
     return result
 
 
+def call_failure(call: ModelCall) -> str | None:
+    """Why this call returned no reply — or `None` when it returned one to read.
+
+    **The question every caller of `call_model` has to ask and one did not.**
+    A provider failure does not raise out of `call_model`: it is classified
+    (`failed` when the request is known to be unbilled, `execution_unknown`
+    when it may have been), recorded on the `model_calls` row, and *returned*.
+    So a caller always holds a `ModelCall`, and a caller that goes straight to
+    `response_text or ""` hands the empty string to its own parser and records
+    a provider outage as the model failing to answer in the required shape.
+
+    §24.2 forbids exactly that confusion — "treat material model changes as
+    environment regime changes so provider drift is not mistaken for Cell
+    evolution" — and an outage is the loudest provider change there is. The
+    gateway already classified it correctly; this function is how a caller
+    reads that classification instead of overwriting it with a story about
+    the Cell.
+
+    The text is `providers.redact`ed before it is persisted (`_handle_failure`),
+    so a caller may copy it into its own record without re-running Charter
+    C14's redaction — and should, rather than inventing a description of a
+    failure it did not observe.
+    """
+    if call.status is ModelCallStatus.SUCCEEDED:
+        return None
+    return (
+        f"model call {call.status.value} at provider {call.provider}: "
+        f"{call.error_text or '(no error text recorded)'}"
+    )
+
+
 def _handle_success(
     conn: sqlite3.Connection,
     *,

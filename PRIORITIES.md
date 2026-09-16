@@ -161,7 +161,31 @@
   long-standing "no producer or consumer on the event path" gap. 549 tests passing (29 new);
   golden expectation version 4 → 5 via a reviewed migration (**no USD_REAL moves**).
 
+- [x] **A wake whose model call failed at the provider is its own outcome** — DONE (2026-09-16),
+  ADR-101. `gateway.call_model` records a provider failure and *returns* the call, so
+  `deliberation.py` read `response_text or ""`, handed `proposal.parse` an empty string, recorded the
+  outage as the Cell's `unparseable` reply, and spent ADR-069's one repair call re-prompting the
+  provider that had just gone down (observed 2026-09-15 against a dead Ollama Metal backend; both
+  `model_calls` rows `failed`). New `gateway.call_failure` — the one place a caller reads the
+  classification the gateway already made — a fourth status `call_failed` (migration 0041 rebuilds the
+  CHECK), no repair, and the same question asked by the repair call and every workflow step. **ADR-069
+  had written the false premise down** ("the first call is known to have succeeded and been billed")
+  four paragraphs above its own counter-example. §24.2 is why this is a status and not a better reason
+  string: provider drift must stay distinguishable from Cell evolution, and `status` is what every
+  reader groups by — including `scripts/measure_parse_compliance.py`, whose parse rate had been
+  counting outages as compliance failures and now reports them beside it. 15 guards teeth-checked, 15
+  CAUGHT; golden run unmoved at version 42.
+
 ## Next
+- [ ] **The Auditors read a failed call the way `deliberation` used to (ADR-101).** `auditor.py` and
+  `content_audit.py` both `_parse(call.response_text or "")`, so a provider outage is recorded as an
+  Auditor that was paid and produced nothing usable — and §10.4 makes that a fitness fact *about the
+  Auditor*, so the misattribution costs more there than it did in `deliberation`. The primitive is
+  already built; what is missing is what an `audits` row should say when no verdict was produced, which
+  is a schema decision ADR-070's rule says must earn itself rather than be assumed. Carries a stale
+  claim: `auditor.py`'s "The call is bought and committed by now (ADR-022)" is false on this exact path,
+  where both reservations were released and nothing was bought. *Disproved by:* `grep -n 'response_text
+  or ""' src/mitosis/*.py` returning nothing outside `deliberation.py`.
 - [x] **Genome pinning — TESTED, HYPOTHESIS REJECTED** (2026-08-27), ADR-056. Loosening the genome
   gives **no diversity gain** (+0.099, 65% of 48 pairs, p = 0.207; the tight genome scores *higher*
   on the all-proposals measure) and collapses concreteness from **100% to 5%** at the same summary

@@ -59,8 +59,14 @@ class _Recording:
         return len(self.requests)
 
     def complete(self, request):
+        """A reply that is a `ProviderError` is raised instead of returned —
+        the provider being down for that step, which `gateway.call_model`
+        records and returns rather than raising (ADR-101). The request is
+        recorded first either way, so `calls` counts the attempt."""
         reply = self._replies[min(len(self.requests), len(self._replies) - 1)]
         self.requests.append(request)
+        if isinstance(reply, providers.ProviderError):
+            raise reply
         return providers.MockProvider(reply=reply).complete(request)
 
 
@@ -203,6 +209,42 @@ def test_a_repaired_draft_is_still_refined(conn):
     assert provider.calls == 3
     assert "repaired idea" in provider.requests[2].messages[1]["content"]
     assert _recorded_summary(conn, cell) == "revised idea"
+
+
+def test_a_step_that_fails_at_the_provider_keeps_the_draft_and_says_so(conn):
+    """A workflow step whose call never reached a model leaves the wake exactly
+    where a single pass would have left it — the draft is the floor — but the
+    step's note must not report a reply that did not validate when no reply
+    arrived (§24.2; ADR-101). The draft already validated, so the wake is still
+    PROPOSED: the outage costs the refinement, not the proposal."""
+    cell = _make_cell(conn, structure="iterative_refinement")
+    provider = _Recording([
+        _proposal("draft idea"),
+        providers.ProviderCallError("the backend is down", execution_unknown=False),
+    ])
+    result = _deliberate(conn, cell, provider)
+
+    assert result.status == deliberation.DeliberationStatus.PROPOSED
+    assert _recorded_summary(conn, cell) == "draft idea"
+    workflow = _metadata(conn)["workflow"]
+    assert workflow["recorded"] == "first_draft"
+    (step,) = workflow["steps"]
+    assert "the backend is down" in step["note"]
+    assert step["note"].startswith("call failed at the provider")
+    assert "did not validate" not in step["note"]
+    assert step["model_call_id"] is not None, "the call was made and stays traceable (§24.1)"
+
+
+def test_a_first_call_that_fails_at_the_provider_never_reaches_the_workflow(conn):
+    """The draft is the floor and there is no draft: a wake whose very first
+    call failed is recorded as a call failure and buys nothing further — not a
+    repair, not a refinement."""
+    cell = _make_cell(conn, structure="iterative_refinement")
+    provider = _Recording([providers.ProviderCallError("down", execution_unknown=False)])
+    result = _deliberate(conn, cell, provider)
+
+    assert result.status == deliberation.DeliberationStatus.CALL_FAILED
+    assert provider.calls == 1
 
 
 def test_an_unparseable_wake_buys_no_further_calls(conn):

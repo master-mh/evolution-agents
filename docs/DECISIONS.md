@@ -6314,3 +6314,111 @@ out as a Slice G decision, not this one.
 - **Consequences:** §28 Phase 9 still needs the liability reserve, a merchant channel, and §1.1's
   operating-cost terms. The identity is a single row-space; Phase 10's "multiple brands/legal entities"
   would need a subject key like `rights_attestations` carries. Both logged.
+
+## ADR-101: A wake whose model call failed at the provider is its own outcome — not the Cell's unparseable reply
+
+- **Status:** Accepted
+- **Spec ref:** §24.2 (a material provider change is an environment regime change, "so provider drift is
+  not mistaken for Cell evolution"), §24 intro ("retries controlled failures"), §24.1 (every call
+  traceable), §4.4 / Charter C7 (the `failed` vs `execution_unknown` split), §0.3, §19.4; ADR-022,
+  ADR-069, ADR-070
+
+- **Context:** Observed 2026-09-15. Ollama's Metal backend had died — a direct
+  `curl localhost:11434/api/generate` answered `HTTP 500 llama-server process has terminated:
+  MTLLibraryErrorDomain` — and `mitosis wake --provider ollama --model qwen2.5` printed
+  `Deliberation … (unparseable) … repaired: yes … reason: reply is not JSON: Expecting value: line 1
+  column 1 (char 0) (repair reply also failed to validate …)`. The `model_calls` table held both calls,
+  original and `:repair`, each `status = failed` with the provider's error in `error_text`. **The gateway
+  classified it correctly; the deliberation layer overwrote that classification with a story about the
+  Cell** — and then spent ADR-069's one repair call re-prompting the provider that had just gone down.
+
+  The mechanism is one line: `gateway.call_model` does not raise on a provider failure, it records the
+  outcome and *returns* the call, so `call.response_text or ""` hands `proposal.parse` an empty string,
+  which raises `ProposalError`, which is indistinguishable from a model that ignored the schema.
+
+  **ADR-069 wrote the premise down and it was false.** Twice: "the first call is known to have
+  **succeeded and been billed** (it returned response text; `ProposalError` only fires after that)", and
+  "A provider-level failure on the repair call itself needs no special handling — `gateway.call_model`
+  already converts that into a `failed` `model_calls` row rather than raising, so it flows through the
+  same 'reply text failed to validate' path as an ordinary malformed reply." The second sentence is the
+  first sentence's own counter-example, sitting four paragraphs below it: a `failed` row is exactly the
+  case where nothing was returned and nothing was billed.
+
+- **Decision:**
+  1. **`gateway.call_failure(call)`** — `None` when the call succeeded, otherwise one line naming the
+     status, the provider and the gateway's already-redacted `error_text`. It lives in `gateway` because
+     that is the layer that *wrote* the status, and it sits below all three callers, so no seam is
+     needed. Every caller of `call_model` now has one question to ask before it reads a reply.
+  2. **A fourth deliberation status, `call_failed`** (migration 0041 rebuilds the CHECK; SQLite cannot
+     ALTER one). §24.2 asks for provider change to stay distinguishable from Cell behaviour, and `status`
+     is what every reader groups by — a clearer `failure_reason` is prose that no query separates. The
+     rebuild is also the one chance to make the row shape unrepresentable rather than merely correct
+     (ADR-047), so two CHECKs ride along: a `call_failed` row names the call that failed (one naming
+     none is a refusal wearing the wrong status) and names no repair (decision 3, in the schema rather
+     than only in the module that implements it).
+  3. **No repair.** `MAX_PARSE_REPAIR_ATTEMPTS` re-prompts a model that answered badly; there is no reply
+     to re-prompt about, and the only provider a repair could reach is the one that just failed. A wake
+     lost to an outage now costs one call, not two.
+  4. **The repair call and every workflow step ask the same question**, because each is a
+     `gateway.call_model` returning the same shape. A repair that fails at the provider still ends the
+     wake `unparseable` — the *first* reply genuinely did not validate, and that outcome is the Cell's —
+     but the note says the second call returned nothing rather than returning something invalid. A
+     workflow step that fails keeps the draft exactly as a step whose reply failed to validate does, and
+     the wake is still `proposed`: the outage costs the refinement, not the proposal.
+  5. **`failure_reason` repeats the gateway's text rather than composing one.** §0.3's discipline applied
+     between two kernel layers: the layer that observed the failure defines it. It also keeps Charter C14
+     intact with no second redaction, since `_handle_failure` already ran `providers.redact`.
+  6. **`scripts/measure_parse_compliance.py` reports call failures beside the parse rate.** Its own
+     docstring had named this hazard ("a slow local model is recorded as an unparseable empty reply — a
+     timeout wearing a compliance failure's clothes") and worked around it by not using the CLI. The
+     workaround is still right for a different reason — a timeout still loses the wake — but the
+     misclassification is now fixed at the source rather than avoided.
+
+- **What it displaced, and why:**
+  - *A clearer `failure_reason` inside `unparseable`.* Rejected: the rate this repo actually computes is
+    `proposed / n` over `status`, and the golden snapshot pins `status` per deliberation. Prose does not
+    separate a denominator.
+  - *Reusing `refused`.* Rejected: a refusal is the loop declining **before** it spends, and it records no
+    context because none was assembled. This wake assembled context, reserved, and reached a provider.
+  - *Raising `DeliberationError` instead of recording.* Rejected for the same reason a dead Cell's wake is
+    recorded rather than raised: "this Cell could not think" is a fact that should appear in a query, and
+    a raise would also abort the rest of a `run-wakes` batch on the first outage.
+  - *Keying the guard on an empty `response_text` instead of the call's `status`.* Rejected, and the
+    rejection is tested: a model that answers with nothing **did** answer, and that call succeeded, was
+    billed, and deserves its one repair. Keying on the text would reclassify the Cell's own empty reply
+    as the provider's fault and stop re-prompting a model that can be re-prompted.
+  - *Re-enqueueing the wake, or leaving the event unprocessed so the Cell gets its wake back.* Rejected
+    here: it changes what Charter C6's idempotency means (a `wake_key` that sometimes does not settle the
+    wake), and an automatic retry against a provider that is down is the unbounded-cost shape ADR-069's
+    own bound exists to prevent. Logged as an open question with its consequence stated below.
+  - *Porting the fix to `auditor.py` and `content_audit.py` in this slice.* They have the identical
+    defect — `_parse(call.response_text or "")` — and it is arguably worse there, because a rejected
+    audit is a §10.4 fitness fact about the Auditor. But an audit's outcome is a different schema
+    decision (what an `audits` row says when no verdict was produced), and ADR-070 established that an
+    extension to the Auditors earns itself rather than being assumed. Logged, with the stale ADR-022
+    comment it leaves behind.
+  - *Adding a provider outage to the golden run.* Rejected: the scenario would need a failing provider
+    double built for it, the path is deterministic and pinned by tests named for it, and no snapshot
+    field changes — the expectation hash is unmoved at version 42, which is the honest outcome for a
+    slice that adds an outcome the fixed scenario never produces.
+
+- **Verification:** 15 guards teeth-checked, 15 CAUGHT — the first-call guard removed, twice (the status
+  it records and the repair it must not buy), `call_failure` always reporting success, the guard keyed on
+  reply text instead of status, the repair guard removed, the status CHECK not admitting the new value, a
+  status declared in Python the schema does not admit, either row-shape CHECK dropped (and both at once),
+  the rebuild dropping the `wake_key` UNIQUE, losing a row, or not recreating the index, the audit event
+  naming the wrong outcome, and the workflow-step guard removed. The UNIQUE check first came back MISS:
+  it was passing on the fixture's dangling genome reference — the migration re-enables foreign keys on
+  its last line — so it now disables them again and matches the error by name. 1577 tests pass, golden
+  run exact at version 42, ruff and docs-facts clean. Reproduced end to end before and after with
+  `OLLAMA_HOST` pointed at a dead port: one `failed` call, both reservations released, nothing settled,
+  and `Deliberation … (call_failed) … reason: model call failed at provider ollama: cannot reach ollama
+  at http://localhost:9 …`.
+
+- **Consequences:** A wake lost to an outage is still **consumed** — `run_wake_event` marks the event
+  processed, and the `wake_key` guard returns the recorded `call_failed` deliberation on redelivery — so
+  a colony-wide outage silently eats an epoch's scheduled wakes. That was true before this slice and is
+  now visible in one query instead of hidden inside a parse-failure rate. `auditor.py` and
+  `content_audit.py` still record a provider outage as an Auditor that produced nothing usable, and
+  `auditor.py`'s comment "The call is bought and committed by now (ADR-022)" is false on exactly that
+  path. Both logged in FUTURE_BUILD_HOOKS and PRIORITIES.

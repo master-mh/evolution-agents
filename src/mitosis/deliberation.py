@@ -136,6 +136,15 @@ class DeliberationStatus:
     PROPOSED = "proposed"
     UNPARSEABLE = "unparseable"
     REFUSED = "refused"
+    #: The gateway call failed at the provider, so this Cell never had a reply
+    #: to be judged on (ADR-101). Distinct from UNPARSEABLE because §24.2
+    #: requires provider change to stay distinguishable from Cell behaviour,
+    #: and an outage is the loudest provider change there is: recorded as
+    #: "the model did not return a valid proposal", it is a row asserting the
+    #: genome produced nothing usable when in fact nothing was ever asked of
+    #: it. Distinct from REFUSED because the loop did not decline — it ran,
+    #: assembled context, and reached a provider that could not answer.
+    CALL_FAILED = "call_failed"
 
 
 #: Statuses a Cell may be woken from. Dead is Charter C8; quarantined is §18.2
@@ -376,9 +385,11 @@ class _RepairResult:
     `model_call_id` is `None` only when the attempt could not be made at all
     — an exhausted cap, an unpriced model, anything `gateway.call_model`
     raises before a call exists to bill. Whenever a repair call *was* made,
-    its id is carried regardless of whether the reply it returned parsed,
-    because the Cell paid for it either way and §24.1 requires every call to
-    be traceable.
+    its id is carried regardless of what came back, because §24.1 requires
+    every call to be traceable — including one that failed at the provider,
+    where the id is the only thing naming *which* outage, and the only way to
+    tell a clean `failed` (released, nothing billed) from an
+    `execution_unknown` whose funds are still committed.
     """
 
     model_call_id: str | None
@@ -476,6 +487,18 @@ def _attempt_parse_repair(
         # first, unwrapped gateway call in deliberate().
         return _RepairResult(model_call_id=None, parsed=None, note=f"repair not attempted: {exc}")
 
+    # The repair reached a provider that could not answer (ADR-101). The first
+    # reply is still the Cell's own unparseable one — that outcome stands — but
+    # the note must say the second call never produced a reply rather than that
+    # it produced one that failed to validate.
+    repair_failure = gateway.call_failure(repair_call)
+    if repair_failure is not None:
+        return _RepairResult(
+            model_call_id=repair_call.model_call_id,
+            parsed=None,
+            note=f"repair call failed at the provider: {repair_failure}",
+        )
+
     try:
         parsed, sampling = _parse_reply(
             repair_call.response_text or "", candidates=candidates, wake_key=wake_key
@@ -546,8 +569,9 @@ def _workflow_call(
     every step is a separate `gateway.call_model`, so the Cell pays for each and
     a redelivered wake that crashed between steps replays the steps already
     billed instead of buying them twice. Failure is classified exactly as a
-    parse repair's is: an unaffordable or refused call, or a reply that does
-    not validate, keeps the draft already in hand; a genuine fault propagates.
+    parse repair's is: an unaffordable or refused call, a call that failed at
+    the provider, or a reply that does not validate, each keeps the draft
+    already in hand; a genuine fault propagates.
     """
     try:
         call = gateway.call_model(
@@ -562,6 +586,17 @@ def _workflow_call(
         )
     except _REPAIR_UNATTEMPTABLE_ERRORS as exc:
         return _WorkflowStep(name=name, model_call_id=None, parsed=None, note=f"not attempted: {exc}")
+    # A step whose call failed at the provider keeps the draft exactly as a
+    # step whose reply failed to validate does — but the record must not say
+    # the model answered badly when it never answered (§24.2; ADR-101).
+    failure = gateway.call_failure(call)
+    if failure is not None:
+        return _WorkflowStep(
+            name=name,
+            model_call_id=call.model_call_id,
+            parsed=None,
+            note=f"call failed at the provider: {failure}",
+        )
     try:
         parsed = parse(call.response_text or "")
     except proposal_module.ProposalError as exc:
@@ -787,6 +822,27 @@ def deliberate(
         idempotency_key=f"deliberation:{wake_key}",
     )
 
+    # **Asked before `response_text` is read, and that order is the whole
+    # fix.** `gateway.call_model` does not raise when the provider fails; it
+    # classifies the outcome, records it, and returns the call — so an outage
+    # arrives here as a `ModelCall` carrying no reply, and the empty string
+    # parses exactly like a model that ignored the schema. ADR-069 assumed this
+    # could not happen ("the first call is known to have succeeded and been
+    # billed; it returned response text"), and on that assumption an outage was
+    # recorded as this Cell's unparseable reply and bought a second call to the
+    # very provider that had just failed (ADR-101).
+    provider_failure = gateway.call_failure(call)
+    if provider_failure is not None:
+        return _record_call_failure(
+            conn,
+            cell=cell,
+            wake_key=wake_key,
+            wake_reason=wake_reason,
+            assembled=assembled,
+            model_call_id=call.model_call_id,
+            reason=provider_failure,
+        )
+
     reply = call.response_text or ""
     repair_model_call_id = None
     try:
@@ -978,6 +1034,75 @@ def _record_unparseable(
                 "model_call_id": model_call_id,
                 "repair_model_call_id": repair_model_call_id,
             },
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    result = get_deliberation(conn, deliberation_id)
+    assert result is not None
+    return result
+
+
+def _record_call_failure(
+    conn: sqlite3.Connection,
+    *,
+    cell: Cell,
+    wake_key: str,
+    wake_reason: str,
+    assembled: context.AssembledContext,
+    model_call_id: str,
+    reason: str,
+) -> Deliberation:
+    """The provider could not answer, so this Cell never had a reply to be
+    judged on (ADR-101).
+
+    **Why this is not UNPARSEABLE.** §24.2 requires a material provider
+    change to be treated as an *environment* regime change "so provider drift
+    is not mistaken for Cell evolution", and an outage is the loudest provider
+    change there is. Recorded as unparseable, it is a row asserting that this
+    genome, on this context, produced nothing usable — a claim about the Cell,
+    written from an observation about the network. Everything that counts
+    these rows would count the provider's weather as the Cell's work, starting
+    with `scripts/measure_parse_compliance.py`, whose whole output is a rate
+    over exactly this status.
+
+    **Why this is not REFUSED.** A refusal is the loop declining before it
+    spends anything, and records no context because none was assembled. This
+    wake ran: it assembled context, reserved, and reached a provider. The
+    context is recorded for the same reason every other completed wake's is —
+    §15's budget is only checkable if the selection is kept — and the
+    `model_call_id` because §24.1 wants every call traceable, including the
+    one that failed.
+
+    **`failure_reason` is the gateway's own text, not a description composed
+    here.** The layer that observed the failure defines it; this one repeats
+    it. That is also what keeps Charter C14 intact without a second
+    redaction — `gateway._handle_failure` has already run `providers.redact`
+    over the provider's error.
+
+    **No repair is bought.** `MAX_PARSE_REPAIR_ATTEMPTS` re-prompts a model
+    that answered badly. There is no reply to re-prompt about, and the only
+    provider a repair could call is the one that just failed.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        deliberation_id = _insert_deliberation_locked(
+            conn,
+            cell=cell,
+            wake_key=wake_key,
+            wake_reason=wake_reason,
+            assembled=assembled,
+            model_call_id=model_call_id,
+            status=DeliberationStatus.CALL_FAILED,
+            failure_reason=reason,
+        )
+        audit.record(
+            conn,
+            event_type="cell_deliberation_call_failed",
+            cell_id=cell.cell_id,
+            description=reason,
+            metadata={"wake_key": wake_key, "model_call_id": model_call_id},
         )
         conn.execute("COMMIT")
     except Exception:

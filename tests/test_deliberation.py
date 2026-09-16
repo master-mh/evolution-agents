@@ -16,10 +16,12 @@ import pytest
 from mitosis import (
     approval,
     context,
+    db,
     death,
     deliberation,
     events,
     experiments,
+    gateway,
     ledger,
     lifecycle,
     prediction,
@@ -27,7 +29,7 @@ from mitosis import (
     providers,
     real_spend_breaker,
 )
-from mitosis.models import Book, CellStatus, CellType, EntrySpec
+from mitosis.models import Book, CellStatus, CellType, EntrySpec, ModelCallStatus
 
 GENOME = {
     "market": "small accounting firms",
@@ -535,6 +537,30 @@ class _FailsOnSecondCall:
         raise providers.ProviderCallError("simulated repair-call failure", execution_unknown=False)
 
 
+class _DeadProvider:
+    """A provider that is down, the way Ollama's Metal backend was down on
+    2026-09-15: every call raises, `gateway.call_model` records the row as
+    `failed` (or `execution_unknown`) and returns it rather than raising, and
+    the caller is handed a `ModelCall` with no reply in it.
+
+    `message` stands in for the real one — `HTTPError 500 from ollama:
+    llama-server process has terminated: MTLLibraryErrorDomain` — which is
+    what the deliberation record must end up naming."""
+
+    name = providers.MOCK_PROVIDER
+
+    def __init__(self, message="the backend is down", *, execution_unknown=False):
+        self._message = message
+        self._execution_unknown = execution_unknown
+        self.calls = 0
+
+    def complete(self, request):
+        self.calls += 1
+        raise providers.ProviderCallError(
+            self._message, execution_unknown=self._execution_unknown
+        )
+
+
 def test_a_repaired_reply_is_recorded_as_proposed(conn):
     """The headline case: a bad first reply followed by a valid repair reply
     ends up PROPOSED, not UNPARSEABLE, and both calls are on the record."""
@@ -591,10 +617,12 @@ def test_repair_is_idempotent_on_wake_key(conn):
     assert _model_call_count(conn) == 2
 
 
-def test_a_provider_level_failure_on_the_repair_is_still_recorded_unparseable(conn):
-    """`gateway.call_model` already handles a provider error internally — the
-    repair call ends up `failed`, not raised — and this module must not treat
-    that any differently from a repair reply that simply failed to parse."""
+def test_a_provider_failure_on_the_repair_names_the_provider_not_the_reply(conn):
+    """The wake is still UNPARSEABLE — the *first* reply genuinely did not
+    validate, and that outcome is the Cell's — but the record must not go on
+    to say the repair produced a reply that also failed to validate when the
+    repair produced no reply at all (§24.2; ADR-101, correcting ADR-069's
+    "needs no special handling ... flows through the same path")."""
     cell = _make_cell(conn)
     provider = _FailsOnSecondCall("not json")
 
@@ -604,8 +632,13 @@ def test_a_provider_level_failure_on_the_repair_is_still_recorded_unparseable(co
 
     assert result.status == deliberation.DeliberationStatus.UNPARSEABLE
     assert result.repair_model_call_id is not None, (
-        "the repair call was made and billed even though it then failed"
+        "the repair call was made and §24.1 wants it traceable, even though it "
+        "returned nothing and — being `failed` rather than `execution_unknown` — "
+        "cost nothing"
     )
+    assert "repair call failed at the provider" in result.failure_reason
+    assert "simulated repair-call failure" in result.failure_reason
+    assert "repair reply also failed to validate" not in result.failure_reason
 
 
 def test_a_repair_that_cannot_even_be_attempted_falls_back_gracefully(conn, monkeypatch):
@@ -678,6 +711,349 @@ def test_ledger_conservation_holds_across_a_repaired_wake(conn):
     assert ledger.verify_conservation(conn, Book.USD_REAL)
     assert ledger.verify_conservation(conn, Book.RESOURCE)
     assert ledger.verify_chain(conn)
+
+
+# --- a call that failed at the provider (ADR-101) -----------------------------
+
+
+def test_a_call_that_failed_at_the_provider_is_not_the_cells_unparseable_reply(conn):
+    """§24.2: provider change is an *environment* regime change and must not
+    be mistaken for Cell behaviour. `gateway.call_model` does not raise on a
+    provider failure — it classifies it, records it, and returns the call —
+    so an outage reaches this module as a `ModelCall` carrying no reply, and
+    reading `response_text or ""` past that classification records the
+    provider's weather as this genome's inability to answer in the required
+    shape."""
+    cell = _make_cell(conn)
+    provider = _DeadProvider("llama-server process has terminated: MTLLibraryErrorDomain")
+
+    result = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=provider, wake_key="w1", model="mock-1",
+    )
+
+    assert result.status == deliberation.DeliberationStatus.CALL_FAILED
+    assert result.status != deliberation.DeliberationStatus.UNPARSEABLE
+    assert "MTLLibraryErrorDomain" in result.failure_reason, (
+        "the record must name the failure the gateway observed, not a story "
+        "composed here about a reply that never arrived"
+    )
+    assert "is not JSON" not in result.failure_reason
+
+
+def test_a_failed_call_buys_no_parse_repair(conn):
+    """ADR-069's one re-prompt exists to fix a *reply*. There is no reply to
+    re-prompt about, and the only provider a repair could call is the one that
+    just failed — so a wake lost to an outage must cost exactly one call, not
+    two. This is the behaviour that was observed failing on 2026-09-15: two
+    `model_calls` rows, both `failed`, one wake."""
+    cell = _make_cell(conn)
+    provider = _DeadProvider()
+
+    result = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=provider, wake_key="w1", model="mock-1",
+    )
+
+    assert provider.calls == 1
+    assert _model_call_count(conn) == 1
+    assert result.repair_model_call_id is None
+
+
+def test_the_failed_call_itself_stays_on_the_record(conn):
+    """§24.1 wants every call traceable. A `call_failed` deliberation names
+    the call that failed, and that row carries the gateway's own classification
+    — which is the independent record the deliberation's `failure_reason` is
+    only repeating (§0.3's discipline, applied between two kernel layers)."""
+    cell = _make_cell(conn)
+
+    result = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=_DeadProvider(), wake_key="w1", model="mock-1",
+    )
+
+    assert result.model_call_id is not None
+    call = gateway.get_model_call(conn, result.model_call_id)
+    assert call.status is ModelCallStatus.FAILED
+    assert call.response_text is None
+
+
+def test_an_execution_unknown_call_is_a_call_failure_too(conn):
+    """The other half of §4.4's failure split: a timeout may already have been
+    billed, so the funds stay committed and reconciliation resolves it. Either
+    way this Cell got no reply, so the deliberation outcome is the same one —
+    and `failure_reason` names which of the two it was, because the money
+    consequence differs."""
+    cell = _make_cell(conn)
+    provider = _DeadProvider("read timed out", execution_unknown=True)
+
+    result = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=provider, wake_key="w1", model="mock-1",
+    )
+
+    assert result.status == deliberation.DeliberationStatus.CALL_FAILED
+    assert "execution_unknown" in result.failure_reason
+    call = gateway.get_model_call(conn, result.model_call_id)
+    assert call.status is ModelCallStatus.EXECUTION_UNKNOWN
+
+
+def test_an_empty_reply_from_a_call_that_succeeded_is_still_the_cells_failure(conn):
+    """The discriminating case, and the reason the guard reads `status` rather
+    than the text. A model that answers with nothing *did* answer: the call
+    succeeded, was billed, and the empty reply is the Cell's own output — so
+    it stays UNPARSEABLE and still buys its one repair. A fix that keyed on
+    `not reply` instead would silently reclassify this as a provider outage
+    and stop re-prompting a model that can be re-prompted."""
+    cell = _make_cell(conn)
+    provider = _SequencedProvider(["", _valid_reply()])
+
+    result = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=provider, wake_key="w1", model="mock-1",
+    )
+
+    assert result.status == deliberation.DeliberationStatus.PROPOSED
+    assert result.repair_model_call_id is not None
+    assert provider.calls == 2
+
+
+def test_a_wake_lost_to_an_outage_conserves_money_and_is_audited(conn):
+    """A failed call releases its reservations (`gateway._handle_failure`), so
+    the books must be exactly where they were — and Charter C10 wants the
+    event itself visible, since a colony whose provider is down looks, in the
+    deliberation table alone, like a colony whose Cells stopped proposing."""
+    cell = _make_cell(conn)
+    before = ledger.get_balance(conn, f"cell:{cell.cell_id}:cash", Book.USD_REAL)
+
+    deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=_DeadProvider(), wake_key="w1", model="mock-1",
+    )
+
+    assert ledger.get_balance(conn, f"cell:{cell.cell_id}:cash", Book.USD_REAL) == before
+    assert ledger.verify_conservation(conn, Book.USD_REAL)
+    assert ledger.verify_conservation(conn, Book.RESOURCE)
+    assert ledger.verify_chain(conn)
+    events_recorded = [
+        r["event_type"]
+        for r in conn.execute("SELECT event_type FROM audit_events WHERE cell_id = ?", (cell.cell_id,))
+    ]
+    assert "cell_deliberation_call_failed" in events_recorded
+    assert "cell_deliberation_unparseable" not in events_recorded
+
+
+def test_the_schema_refuses_a_deliberation_status_it_does_not_know(conn):
+    """ADR-047's discipline: the four outcomes are a closed set in the schema,
+    not only in `DeliberationStatus`. Migration 0041 widened the CHECK to
+    admit `call_failed` — it must not have widened it to admit anything."""
+    cell = _make_cell(conn)
+    result = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=_DeadProvider(), wake_key="w1", model="mock-1",
+    )
+    assert result.status == deliberation.DeliberationStatus.CALL_FAILED
+
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+        conn.execute(
+            "UPDATE deliberations SET status = 'provider_down' WHERE deliberation_id = ?",
+            (result.deliberation_id,),
+        )
+
+
+def test_the_schema_refuses_a_call_failure_that_names_no_call_or_a_repair(conn):
+    """The two things `call_failed` means, made unrepresentable rather than
+    only implemented (ADR-047's discipline): a row naming no call is a
+    *refusal* wearing the wrong status, and a row naming a repair contradicts
+    the decision that an outage buys none. `deliberation.py` writes neither —
+    these CHECKs are what stops a future caller in another module doing so."""
+    cell = _make_cell(conn)
+    failed = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=_DeadProvider(), wake_key="w1", model="mock-1",
+    )
+    parsed = _deliberate(conn, cell, wake_key="w2")
+
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+        conn.execute(
+            "UPDATE deliberations SET model_call_id = NULL WHERE deliberation_id = ?",
+            (failed.deliberation_id,),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+        conn.execute(
+            "UPDATE deliberations SET repair_model_call_id = ? WHERE deliberation_id = ?",
+            (parsed.model_call_id, failed.deliberation_id),
+        )
+
+
+def test_every_declared_deliberation_status_is_one_the_schema_admits(conn):
+    """`DeliberationStatus` and migration 0041's CHECK are two lists of the
+    same closed set, and a slice that adds to one and forgets the other fails
+    at runtime on a path that only fires when something has *already* gone
+    wrong — a provider outage, a dead Cell. Pinned together structurally, the
+    way `test_every_declared_structure_has_a_runner` pins the genome's workflow
+    structures to their runners: each declared value is written to the column
+    and rolled back, so the schema itself answers. The probe row is an ordinary
+    proposed deliberation — one call, no repair — so it satisfies the row-shape
+    CHECKs above and the *status* is the only thing under test."""
+    cell = _make_cell(conn)
+    result = _deliberate(conn, cell)
+    declared = {
+        value
+        for name, value in vars(deliberation.DeliberationStatus).items()
+        if not name.startswith("_") and isinstance(value, str)
+    }
+    assert deliberation.DeliberationStatus.CALL_FAILED in declared
+
+    for status in sorted(declared):
+        conn.execute("SAVEPOINT probe")
+        try:
+            conn.execute(
+                "UPDATE deliberations SET status = ? WHERE deliberation_id = ?",
+                (status, result.deliberation_id),
+            )
+        except sqlite3.IntegrityError as exc:  # pragma: no cover - the failure is the point
+            raise AssertionError(f"the schema does not admit {status!r}: {exc}") from exc
+        finally:
+            conn.execute("ROLLBACK TO probe")
+            conn.execute("RELEASE probe")
+
+
+def _connect_pre_migration_41() -> sqlite3.Connection:
+    """Migrated through 0040, one short of the widened CHECK, so a test can
+    write rows in the old shape and watch 0041 carry them across the rebuild."""
+    conn = db.connect()
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations ("
+        "  filename TEXT PRIMARY KEY,"
+        "  applied_at_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+        ")"
+    )
+    for migration_path in db._migration_files():
+        if migration_path.name >= "0041_":
+            break
+        conn.executescript(migration_path.read_text())
+        conn.execute(
+            "INSERT INTO schema_migrations (filename) VALUES (?)", (migration_path.name,)
+        )
+    return conn
+
+
+def test_the_rebuild_keeps_every_row_and_every_child_reference():
+    """SQLite cannot ALTER a CHECK, so 0041 rebuilds `deliberations` — and
+    three tables point at it (`proposals`, `deliberation_predictions`,
+    `artifacts`). A rebuild that dropped a row, or left a child pointing at a
+    table that no longer exists, would lose the Cell history the whole record
+    is for. One child of each kind is present across the migration."""
+    conn = _connect_pre_migration_41()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript(
+        """
+        INSERT INTO cells (cell_id, cell_type, genome_hash, book, status,
+                           created_at_utc, idempotency_key, generation)
+        VALUES ('c1', 'explorer', 'g1', 'USD_SIM', 'alive', 't', 'k1', 0);
+        INSERT INTO deliberations (
+            deliberation_id, cell_id, wake_key, wake_reason, genome_hash,
+            model_call_id, context_json, context_tokens, context_dropped_json,
+            status, failure_reason, created_at_utc, repair_model_call_id
+        ) VALUES
+            ('d1', 'c1', 'w1', 'scheduled research cycle', 'g1', NULL,
+             '{}', 10, '[]', 'proposed', NULL, 't', NULL),
+            ('d2', 'c1', 'w2', 'scheduled research cycle', 'g1', 'mc-first',
+             '{}', 10, '[]', 'unparseable', 'reply is not JSON', 't', 'mc-repair'),
+            ('d3', 'c1', 'w3', 'scheduled research cycle', 'g1', NULL,
+             '{}', 0, '[]', 'refused', 'cell is dead', 't', NULL);
+        INSERT INTO proposals (
+            proposal_id, deliberation_id, cell_id, kind, summary, rationale,
+            risk_tier, estimated_cost_minor_units, payload_json, created_at_utc
+        ) VALUES ('p1', 'd1', 'c1', 'experiment', 's', 'r', 'LOW', 0, '{}', 't');
+        INSERT INTO prediction_register (
+            prediction_id, cell_id, claim, probability, resolves_by_utc,
+            created_at_utc, previous_hash, prediction_hash, idempotency_key
+        ) VALUES ('pr1', 'c1', 'revenue >= 50', 0.4, 't', 't', NULL, 'h', 'k2');
+        INSERT INTO deliberation_predictions (deliberation_id, prediction_id)
+        VALUES ('d1', 'pr1');
+        INSERT INTO artifacts (
+            artifact_id, artifact_hash, kind, title, content, content_bytes,
+            created_by_cell_id, created_by_deliberation_id, created_at_utc,
+            licence, permitted_uses, commercial_use, contains_personal_data,
+            retention_rule, source_summary
+        ) VALUES ('a1', 'h1', 'report', 't', 'c', 1, 'c1', 'd1', 't',
+                  'unknown', 'review', 'unknown', 'unknown', 'retain', 'none');
+        """
+    )
+
+    def dangling():
+        return {tuple(r) for r in conn.execute("PRAGMA foreign_key_check")}
+
+    # The fixture references a genome and a model call it does not create —
+    # writing valid ones means a reservation chain three tables deep that says
+    # nothing more about this rebuild — so the claim is that the migration
+    # adds no dangling reference, not that the fixture had none.
+    before = dangling()
+
+    (path,) = [p for p in db._migration_files() if p.name.startswith("0041_")]
+    conn.executescript(path.read_text())
+
+    rows = {
+        r["deliberation_id"]: r["status"]
+        for r in conn.execute("SELECT deliberation_id, status FROM deliberations")
+    }
+    assert sorted(rows) == ["d1", "d2", "d3"]
+    assert rows == {"d1": "proposed", "d2": "unparseable", "d3": "refused"}
+    assert conn.execute(
+        "SELECT repair_model_call_id FROM deliberations WHERE deliberation_id = 'd2'"
+    ).fetchone()[0] == "mc-repair"
+    assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert dangling() == before
+    indexes = [
+        r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' "
+            "AND tbl_name = 'deliberations' AND name NOT LIKE 'sqlite_%'"
+        )
+    ]
+    assert "idx_deliberations_cell" in indexes, "a rebuild is where an index goes missing"
+    # Each child still resolves to the deliberation it was written against —
+    # the join, not just the row count, because a rebuild that renamed or
+    # reordered the key would leave both tables populated and unjoinable.
+    for child, key in (
+        ("proposals", "deliberation_id"),
+        ("deliberation_predictions", "deliberation_id"),
+        ("artifacts", "created_by_deliberation_id"),
+    ):
+        joined = conn.execute(
+            f"SELECT COUNT(*) FROM {child} c "
+            f"JOIN deliberations d ON d.deliberation_id = c.{key}"
+        ).fetchone()[0]
+        assert joined == 1, f"{child} lost its reference to the rebuilt table"
+    # The rebuilt table admits the new status and still refuses an unknown one.
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+        conn.execute(
+            "UPDATE deliberations SET status = 'provider_down' WHERE deliberation_id = 'd2'"
+        )
+    # …and refuses the two rows `call_failed` cannot mean: one naming no call
+    # (that is a refusal) and one naming a repair (a wake with no reply buys
+    # none). d2 carries both columns, so each CHECK is reached in turn.
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+        conn.execute(
+            "UPDATE deliberations SET status = 'call_failed' WHERE deliberation_id = 'd2'"
+        )
+    conn.execute(
+        "UPDATE deliberations SET repair_model_call_id = NULL WHERE deliberation_id = 'd2'"
+    )
+    conn.execute(
+        "UPDATE deliberations SET status = 'call_failed' WHERE deliberation_id = 'd2'"
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+        conn.execute(
+            "UPDATE deliberations SET status = 'call_failed' WHERE deliberation_id = 'd3'"
+        )
+    # The UNIQUE on wake_key is the outer idempotency guard (Charter C6) and a
+    # rebuild is exactly where a constraint gets quietly left behind. The
+    # migration script re-enables foreign keys on its last line, so they go back
+    # off here and the error is matched by name — otherwise this passes on the
+    # fixture's dangling genome reference whether or not the UNIQUE survived
+    # (which is how a teeth check found it passing for the wrong reason).
+    conn.execute("PRAGMA foreign_keys = OFF")
+    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed: deliberations.wake_key"):
+        conn.execute(
+            "INSERT INTO deliberations (deliberation_id, cell_id, wake_key, wake_reason,"
+            " genome_hash, context_json, context_tokens, context_dropped_json, status,"
+            " created_at_utc) VALUES ('d4', 'c1', 'w1', 'r', 'g1', '{}', 0, '[]',"
+            " 'proposed', 't')"
+        )
 
 
 def test_a_fenced_json_reply_is_accepted(conn):

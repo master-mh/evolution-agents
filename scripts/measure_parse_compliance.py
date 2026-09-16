@@ -30,8 +30,12 @@ Design notes, each of which cost something to learn:
     `ollama stop <other-model>` between arms.
   - **In-process rather than via the CLI**, for exactly one reason: `mitosis
     wake` has no `--timeout` and `OllamaProvider` defaults to 120s, so a slow
-    local model is recorded as an unparseable empty reply -- a timeout wearing a
-    compliance failure's clothes. Every other argument mirrors `cmd_wake`.
+    local model loses the wake. It is no longer a timeout wearing a compliance
+    failure's clothes -- since ADR-101 such a wake is recorded `call_failed`
+    and counted beside the parse rate, so a reader can see that the denominator
+    contains wakes no model ever saw, and divide by the replies that actually
+    arrived. The rate itself is still per *wake*. Every other argument mirrors
+    `cmd_wake`.
 """
 from __future__ import annotations
 
@@ -174,6 +178,11 @@ def analyse(db: pathlib.Path) -> dict:
     conn.close()
 
     res = {"n": len(rows), "proposed": 0, "unparseable": 0, "refused": 0,
+           # ADR-101: the provider failed, so the model was never asked. Kept
+           # separate from `unparseable` (and initialised here rather than
+           # left to appear only when it happens) so a run whose backend died
+           # reads as a lost wake instead of a compliance failure.
+           "call_failed": 0,
            "all_required_present": 0, "correctly_nested": 0, "flattened": 0,
            "not_json": 0, "latency_ms": [], "output_tokens": [],
            "distinct_response_hashes": len({r["response_hash"] for r in rows
@@ -227,7 +236,7 @@ def main() -> int:
 
     agg = {"model": args.model, "temperature": args.temperature,
            "genome": args.genome or "(module default)",
-           "n": 0, "proposed": 0, "per_run": []}
+           "n": 0, "proposed": 0, "call_failed": 0, "per_run": []}
     for run_index in range(args.runs):
         db = out_dir / f"arm_{tag}_run{run_index}.db"
         cell_id = setup(db, out_dir, genome)
@@ -237,8 +246,10 @@ def main() -> int:
         res = analyse(db)
         agg["n"] += res["n"]
         agg["proposed"] += res["proposed"]
+        agg["call_failed"] += res["call_failed"]
         agg["per_run"].append({
             "parsed": res["proposed"], "n": res["n"],
+            "call_failed": res["call_failed"],
             "distinct_summaries": res["distinct_summaries"],
             "distinct_response_hashes": res["distinct_response_hashes"],
             "flattened": res["flattened"], "not_json": res["not_json"],
@@ -248,11 +259,15 @@ def main() -> int:
             "failures": res["failures"],
         })
         print(f"  -> parsed {res['proposed']}/{res['n']}  "
+              f"call failures {res['call_failed']}  "
               f"distinct summaries {res['distinct_summaries']}  "
               f"distinct replies {res['distinct_response_hashes']}", flush=True)
 
+    reached = agg["n"] - agg["call_failed"]
     print(f"\n=== {args.model} t={args.temperature}: "
-          f"parsed {agg['proposed']}/{agg['n']} ===")
+          f"parsed {agg['proposed']}/{agg['n']} wakes; "
+          f"{agg['call_failed']} never reached the model, "
+          f"so {agg['proposed']}/{reached} of the replies that arrived ===")
     print("per-run parsed:  ", [r["parsed"] for r in agg["per_run"]])
     print("per-run distinct:", [r["distinct_summaries"] for r in agg["per_run"]])
     print("\nParse rate is only half the report. Now run:")

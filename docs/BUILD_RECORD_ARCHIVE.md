@@ -6,6 +6,37 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-16 — The trial's legal identity, and an account the schema cannot hold (ADR-100)
+
+§28 Phase 9 trades under "one legal business identity". Since ADR-097 the colony has recorded revenue,
+refunds, chargebacks and fees — every one attributing to a legal person who appeared nowhere in the
+database. The operator asked for the identity and payment account to live in the kernel.
+
+### What shipped
+
+- `trial_identity.attest`, `mitosis set-trial-identity`, `mitosis trial-identity`: operator-only,
+  append-only, latest wins, and a withdrawal is a new row that keeps *why* in the record (§3.6) — the
+  shape ADR-041 and ADR-062 already established, reused rather than reinvented.
+- Migration 0040, whose CHECKs refuse eight consecutive digits and the obvious secret prefixes: **an
+  account number, card or key cannot be stored by any caller.** `attest` refuses more, with a message
+  naming what to write instead ("Stripe account: personal").
+- §16.3's other half: the genome has refused a `legal_identity` gene since it shipped, and a test now pins
+  that tripwire to the record it was waiting for.
+- `mitosis profit` names whose profit it is, or says "trading as: nobody". Golden 41 → 42.
+
+### Found
+
+- **A grouped account number slips past the schema.** "GB29 NWBK 6016 1331 9268 19" has no run of eight
+  digits, so migration 0040's GLOB cannot see it; only the Python total-digit rule catches it. The two
+  rules are not redundant, and the one with no backstop has its own test and its own teeth-check.
+- **Nothing is gated on the identity**, deliberately: `real_commerce` is off, so a gate refusing a listing
+  without an identity would never be exercised. It belongs with the channel work.
+
+### Verification
+
+1565 tests pass (25 new), golden run exact at version 42, ruff and docs-facts clean. 11 guards
+teeth-checked, 11 CAUGHT — including the golden scenario refusing to store an account number.
+
 ## 2026-09-16 — §1.1's profit report: the colony can state its own result (ADR-099)
 
 §1.1 opens the spec with `REAL_SETTLED_NET_PROFIT` and §32 closes with the same sentence; nothing
