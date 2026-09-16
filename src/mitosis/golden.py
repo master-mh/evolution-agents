@@ -94,6 +94,7 @@ from . import (
     selection,
     tool_registry,
     tools,
+    trial_identity,
 )
 from .models import (
     Book,
@@ -1295,7 +1296,19 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #                 §1.1's autonomy adjustment is defined for real profit, and
 #                 subtracting a USD_REAL-equivalent from synthetic profit is the
 #                 bridge §2.4 forbids.
-EXPECTATION_VERSION = 41
+#
+#   41 -> 42 (§28 Phase 9's trial identity; ADR-100, migration 0040). An operator
+#             attestation, so **no money moves and nothing else does either**:
+#             (a) `audit_event_types` gains `trial_identity_attested: 1`.
+#             (b) **`trial_identity` (new)**: the attestation in force — entity,
+#                 jurisdiction, the payment-account *label*, who attested it, and
+#                 whether it is a withdrawal. The label is pinned, which doubles
+#                 as a standing check that a replay never learns to store an
+#                 account number: migration 0040's CHECKs cannot hold one, so a
+#                 scenario that tried would fail to insert rather than pass.
+#             Every other section is byte-identical: no balance, transaction
+#             type, reservation, resource_usage row, prompt or token count moved.
+EXPECTATION_VERSION = 42
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -2774,6 +2787,19 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         note="fixed scenario: reporting only",
     )
 
+    # 19j. §28 Phase 9's "one legal business identity" (ADR-100). Declared rather
+    #      than inferred, and stored as a *label*: migration 0040's CHECKs cannot
+    #      hold an account number, so a replay that started keeping one would fail
+    #      to insert rather than quietly succeed. Nothing is gated on it yet.
+    trial_identity.attest(
+        conn,
+        legal_entity="Golden Run Test Trading",
+        jurisdiction="GB",
+        payment_account_label="processor account: golden-run sandbox",
+        basis="fixed scenario: an operator recording their own trading identity",
+        attested_by="golden-operator",
+    )
+
     # 20. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
@@ -2859,6 +2885,18 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
             "shadow_cost": figures.shadow_cost_minor_units,
             "autonomy_adjusted_profit": figures.autonomy_adjusted_profit_minor_units,
         }
+
+    # §28 Phase 9's trial identity (ADR-100). The label is pinned, which is also a
+    # standing check that a replay never learns to store an account number: the
+    # value here is a name, and the schema refuses anything else.
+    attested_identity = trial_identity.current(conn)
+    trial_identity_row = None if attested_identity is None else {
+        "legal_entity": attested_identity.legal_entity,
+        "jurisdiction": attested_identity.jurisdiction,
+        "payment_account_label": attested_identity.payment_account_label,
+        "attested_by": attested_identity.attested_by,
+        "withdrawn": attested_identity.is_withdrawal,
+    }
 
     # §1.1's payment fees (ADR-098), each pinned to the charge it was taken on by
     # that charge's idempotency key, for the reason `revenue_reversals` below is.
@@ -3519,6 +3557,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "revenue_reversals": revenue_reversals,
         "payment_fees": payment_fee_rows,
         "profit": profit_by_book,
+        "trial_identity": trial_identity_row,
         "cells": cells,
         "reservations": reservation_rows,
         "resource_usage": resource_rows,

@@ -1162,6 +1162,26 @@
   *Disproved by:* `profit.report` returning a non-None `autonomy_adjusted_profit_minor_units` when
   `shadow_price_config` holds no row, or any table whose name contains `profit` appearing in the schema.
 
+- [x] **The trial's legal identity — DONE 2026-09-16 (ADR-100); §28 Phase 9's first requirement, and the
+  operator's own decision.** Phase 9 trades under "one legal business identity", and every sale, refund
+  and fee recorded since ADR-097 attributed to a legal person who appeared nowhere in the database.
+  `trial_identity.attest`, `mitosis set-trial-identity` and `mitosis trial-identity`: operator-only,
+  append-only, latest wins by rowid, and a withdrawal is a new row that keeps *why* in the record (§3.6) —
+  the shape ADR-041's rights attestations and ADR-062's buyer attestations already use.
+  - **The payment account is a label, and the schema is what guarantees it.** Migration 0040's CHECKs
+    refuse eight consecutive digits and the obvious secret prefixes, so an account number, card or key
+    cannot be stored by any caller present or future; `attest` refuses more (twelve digits in total, a
+    length cap) with a message naming what to write instead. Grouped numbers like an IBAN have no run of
+    eight, so the Python rule is the only thing that catches them — pinned by its own test.
+  - **§16.3's other half.** `genome.NON_INHERITABLE_SENSE` has refused a `legal_identity` gene since the
+    genome shipped ("Phase 9 has exactly one, and it is the colony's"); that tripwire now has the record
+    it was waiting for, and a test pins the two together.
+  - **Nothing is gated on it yet** — §27.1's `real_commerce` flag is off and no channel can sell. Making a
+    marketplace listing refuse while no identity is in force is a §21 change, logged in FUTURE_BUILD_HOOKS.
+  - `mitosis profit` now names who the profit belongs to, or says "trading as: nobody". Golden 41 → 42.
+  *Disproved by:* a row in `trial_identity_attestations` whose `payment_account_label` holds eight
+  consecutive digits, or `legal_identity` appearing in `genome.GENOME_FIELDS`.
+
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
   directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped

@@ -1,5 +1,5 @@
 {
-  "expectation_version": 41,
+  "expectation_version": 42,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "f48512cf0e092b11d6de638fef776e728ee1518eb50127a911a0983e59187a22",
+  "semantic_hash": "923f36263c0943b004ab733f7c39eae8a86b249bb391a9be836c19b4cd350641",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -228,7 +228,8 @@
       "rights_attested": 1,
       "shadow_price_declared": 1,
       "tool_call_finished": 1,
-      "tool_call_requested": 1
+      "tool_call_requested": 1,
+      "trial_identity_attested": 1
     },
     "audits": [
       {
@@ -1935,6 +1936,13 @@
       "USD_SIM::reservation_release": 2,
       "USD_SIM::reservation_reserve": 4,
       "USD_SIM::reservation_settle": 2
+    },
+    "trial_identity": {
+      "attested_by": "golden-operator",
+      "jurisdiction": "GB",
+      "legal_entity": "Golden Run Test Trading",
+      "payment_account_label": "processor account: golden-run sandbox",
+      "withdrawn": false
     }
   }
 }

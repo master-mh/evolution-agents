@@ -45,41 +45,41 @@ dated, workflow structure as a gene the kernel runs, Slice H's arm
 settings and the simulator stall they uncovered, and Phase 3's
 pre-registered run that found no selection effect, and refunds and
 chargebacks naming the payment they reverse, and payment fees as a
-charge nobody chose, 2026-07-21 through 2026-09-16):
+charge nobody chose, and §1.1's profit report with the shadow rate a
+person declares, 2026-07-21 through 2026-09-16):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-16 — §1.1's profit report: the colony can state its own result (ADR-099)
+## 2026-09-16 — The trial's legal identity, and an account the schema cannot hold (ADR-100)
 
-§1.1 opens the spec with `REAL_SETTLED_NET_PROFIT` and §32 closes with the same sentence; nothing
-computed it. With refunds, chargebacks and payment fees recorded, the formula became computable.
+§28 Phase 9 trades under "one legal business identity". Since ADR-097 the colony has recorded revenue,
+refunds, chargebacks and fees — every one attributing to a legal person who appeared nowhere in the
+database. The operator asked for the identity and payment account to live in the kernel.
 
 ### What shipped
 
-- `profit.report` and `mitosis profit`: §1.1's formula with every term printed beside the total, derived
-  on read and stored nowhere (§2.5) — so the subtraction can be checked rather than trusted.
-- `mitosis set-shadow-rate` and migration 0039: the reporting-only rate the second figure needs, declared
-  by a person and recorded with their name. §2.4 forbids the kernel choosing what a RESOURCE unit is
-  worth, so without a declared rate the report abstains with its reason instead of printing 0.
-- Human labour counted as billed **plus** subsidised, so unpaid work makes the colony look more expensive;
-  free tiers counted as local-model calls; operating costs and donated infrastructure named as unmeasured
-  on every report rather than zeroed.
-- The autonomy adjustment is real-profit-only: a synthetic book carries the first figure and abstains on
-  the second.
-- Golden 40 → 41, pinning both books.
+- `trial_identity.attest`, `mitosis set-trial-identity`, `mitosis trial-identity`: operator-only,
+  append-only, latest wins, and a withdrawal is a new row that keeps *why* in the record (§3.6) — the
+  shape ADR-041 and ADR-062 already established, reused rather than reinvented.
+- Migration 0040, whose CHECKs refuse eight consecutive digits and the obvious secret prefixes: **an
+  account number, card or key cannot be stored by any caller.** `attest` refuses more, with a message
+  naming what to write instead ("Stripe account: personal").
+- §16.3's other half: the genome has refused a `legal_identity` gene since it shipped, and a test now pins
+  that tripwire to the record it was waiting for.
+- `mitosis profit` names whose profit it is, or says "trading as: nobody". Golden 41 → 42.
 
 ### Found
 
-- **The rate guards are defended twice.** Deleting either Python check still fails its test, because
-  migration 0039's CHECK constraints refuse the row. Two teeth-checks read WRONG-FAILURE until the
-  expected text named the schema's message — the exit code alone would have called them holes.
-- **A comment claimed more than the run does.** The first draft said the golden run pins USD_REAL at zero
-  revenue *and* zero spend; it settles one USD_REAL reservation of 20, so real profit there is −20.
-  Corrected before commit — the second such claim caught this session by checking rather than reasoning.
+- **A grouped account number slips past the schema.** "GB29 NWBK 6016 1331 9268 19" has no run of eight
+  digits, so migration 0040's GLOB cannot see it; only the Python total-digit rule catches it. The two
+  rules are not redundant, and the one with no backstop has its own test and its own teeth-check.
+- **Nothing is gated on the identity**, deliberately: `real_commerce` is off, so a gate refusing a listing
+  without an identity would never be exercised. It belongs with the channel work.
 
 ### Verification
 
-1540 tests pass (16 new), golden run exact at version 41, ruff and docs-facts clean. 11 guards
-teeth-checked, 11 CAUGHT.
+1565 tests pass (25 new), golden run exact at version 42, ruff and docs-facts clean. 11 guards
+teeth-checked, 11 CAUGHT — including the golden scenario refusing to store an account number.
 
-- Next: the operator's trial identity and payment-account attestation, then §1.1's operating-cost terms —
-  chosen spend, which reserves before a person pays rather than posting after.
+- Next: §28 Phase 9's remaining kernel items — the liability reserve (refunds and chargebacks now give it
+  a trigger; the share and window are policy), a merchant channel behind `real_commerce`, and §1.1's
+  operating-cost terms. Still the operator's: the real-money budget, and whether to open any channel.

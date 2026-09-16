@@ -6262,3 +6262,55 @@ out as a Slice G decision, not this one.
 - **Consequences:** §1.1's formula is complete but for its operating-cost terms. The rate is flat across
   labour and compute where §1.1 lists them separately; free tiers are keyed on the provider rather than
   the price, so a hosted free tier is missed; donated infrastructure is unrecorded. All logged.
+
+## ADR-100: The colony's one legal identity is an operator attestation, and the payment account is a label the schema cannot mistake for an account
+
+- **Status:** Accepted
+- **Spec ref:** §0.3 (a Cell may explain, never define), §3.6 (corrections are new records), §16.3–§16.4
+  (legal identity is non-inheritable; reproduction must not escape liability), §21, §27.1, §28 Phase 9
+  ("one legal business identity, one narrow product class, one merchant channel")
+
+- **Context:** Since ADR-097 the colony records revenue, refunds, chargebacks and fees — every one of
+  which attributes to a legal person who appeared nowhere in the database. The operator asked (2026-09-16)
+  for the identity and payment account to live in the kernel rather than in a document.
+
+- **Decision:**
+  1. `trial_identity.attest` records who the colony trades as: operator-only, append-only, latest wins by
+     `rowid`, and a withdrawal is a new row carrying its own basis (§3.6) — the shape ADR-041's rights
+     attestations and ADR-062's buyer attestations already use, reused rather than reinvented.
+  2. **The payment account is a label, and the schema is the guarantee.** Migration 0040's CHECKs refuse
+     eight consecutive digits and the obvious secret prefixes, so no caller — present, future, or
+     forgetful — can store a card, IBAN or key. `attest` refuses more (twelve digits in total, markers, a
+     length cap) with a message naming what to write instead. **A grouped IBAN has no run of eight**, so
+     the Python total-digit rule is the only guard for that shape; it has its own test, and the teeth-check
+     confirms nothing else catches it.
+  3. **§16.3's other half.** `genome.NON_INHERITABLE_SENSE` has refused a `legal_identity` gene since the
+     genome shipped — "Phase 9 has exactly one, and it is the colony's" — written before anything could
+     declare one. A test pins the two together, so allowing the gene fails here.
+  4. **Nothing is gated on it yet**, and that is deliberate: §27.1's `real_commerce` flag is off, so a gate
+     refusing a listing without an identity would never be exercised. Logged with the channel work.
+  5. `mitosis profit` names whose profit it is, or says "trading as: nobody".
+
+- **What it displaced, and why:**
+  - *Recording it in a document.* Then nothing attributes a sale, and the record drifts from the books the
+    same slice just built.
+  - *Storing the account itself.* This colony records money; it never moves it. An account number has no
+    use here and a large downside, so it should be **unrepresentable**, not "handled carefully" —
+    ADR-047's rule applied to a credential rather than to a foreign key.
+  - *A per-Cell or genome identity.* §16.4's liability escape, exactly: reproduce, keep the asset, leave
+    the obligations.
+  - *Filing it through §23's approval queue.* ADR-041's argument, unchanged: the queue is where a Cell asks
+    to act, and a Cell that can nominate the colony's legal identity holds a lever on who is liable.
+  - *A jurisdiction vocabulary.* Free text until something branches on it; a list nobody reads is a false
+    assurance.
+
+- **Verification:** 11 guards teeth-checked, 11 CAUGHT — the secret-marker and total-digit rules (I1, I2),
+  a withdrawal carrying an identity (I3), half an identity (I4), earliest-wins ordering (I5), a withdrawal
+  reading as in force (I6), the audit trail losing what it displaced (I7), a Cell-reachable module gaining
+  a raw INSERT (I8), the schema's label CHECK (I9), the golden scenario storing an account number (I10),
+  and the genome's tripwire (I11). Golden 41 → 42: one audit event type and the new `trial_identity`
+  section, no money moved. 1565 tests pass; ruff and docs-facts clean.
+
+- **Consequences:** §28 Phase 9 still needs the liability reserve, a merchant channel, and §1.1's
+  operating-cost terms. The identity is a single row-space; Phase 10's "multiple brands/legal entities"
+  would need a subject key like `rights_attestations` carries. Both logged.

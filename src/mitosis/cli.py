@@ -65,6 +65,7 @@ from . import (
     sweeper,
     tool_registry,
     tools,
+    trial_identity,
 )
 from .simulation import batch as simulation_batch
 from .simulation import environment as simulation_environment
@@ -754,6 +755,75 @@ def cmd_record_refund(args: argparse.Namespace) -> None:
     print(f"  cell cash now:       {ledger.get_balance(conn, cell_cash(cell_id), book)}")
 
 
+def cmd_set_trial_identity(args: argparse.Namespace) -> None:
+    """§28 Phase 9's "one legal business identity", stated by a person (ADR-100).
+
+    The only writer of `trial_identity_attestations`, and deliberately a CLI
+    verb: §0.3 makes who the colony trades as an operator's fact, and §16.3 makes
+    it non-inheritable, so there is no path here from a proposal, a tool or a
+    Cell. The account is a **label** — this verb refuses anything that looks like
+    an account number, and the schema refuses it again.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        identity = trial_identity.attest(
+            conn,
+            legal_entity=None if args.withdraw else args.legal_entity,
+            jurisdiction=None if args.withdraw else args.jurisdiction,
+            payment_account_label=None if args.withdraw else args.payment_account_label,
+            basis=args.basis,
+            attested_by=args.by,
+            withdraw=args.withdraw,
+        )
+    except trial_identity.TrialIdentityError as exc:
+        raise CliError(str(exc)) from exc
+
+    if identity.is_withdrawal:
+        print("Withdrew the trial identity — the colony trades as nobody")
+    else:
+        print(f"Attested the trial identity: {identity.legal_entity}")
+        print(f"  jurisdiction:   {identity.jurisdiction}")
+        print(f"  payment account: {identity.payment_account_label}")
+    print(f"  basis:          {identity.basis}")
+    print(f"  by:             {identity.attested_by}")
+    print("  Nothing is gated on this yet: §27.1's real_commerce flag is off and no "
+          "channel can sell.")
+    conn.close()
+
+
+def cmd_trial_identity(args: argparse.Namespace) -> None:
+    """Who the colony trades as, and how that came to be (§28 Phase 9)."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    if args.history:
+        rows = trial_identity.history(conn)
+        if not rows:
+            print("No trial identity has ever been attested.")
+            conn.close()
+            return
+        print(f"Every attestation, newest first ({len(rows)}). Nothing is removed (§3.6).")
+        for item in rows:
+            who = "withdrawn" if item.is_withdrawal else (
+                f"{item.legal_entity} ({item.jurisdiction}) — {item.payment_account_label}"
+            )
+            print(f"  {item.attested_at_utc.isoformat()}  {who}")
+            print(f"      by {item.attested_by} — {item.basis}")
+        conn.close()
+        return
+
+    identity = trial_identity.in_force(conn)
+    if identity is None:
+        print("No trial identity in force. §28 Phase 9 needs one before anything is sold,")
+        print("and every sale, refund and fee recorded so far attributes to nobody in law.")
+    else:
+        print(f"Trading as: {identity.legal_entity} ({identity.jurisdiction})")
+        print(f"  payment account: {identity.payment_account_label}")
+        print(f"  attested by {identity.attested_by} — {identity.basis}")
+    conn.close()
+
+
 def cmd_profit(args: argparse.Namespace) -> None:
     """§1.1's two profit figures, derived from the books (ADR-099).
 
@@ -770,6 +840,12 @@ def cmd_profit(args: argparse.Namespace) -> None:
         raise CliError(str(exc)) from exc
 
     print(f"MITOSIS profit — {book.value} (SPEC.md §1.1, derived from the books)")
+    # Whose profit this is. A figure with no legal person behind it is the gap
+    # §28 Phase 9 closes first (ADR-100).
+    trading_as = trial_identity.in_force(conn)
+    print(f"  trading as: {trading_as.legal_entity} ({trading_as.jurisdiction})"
+          if trading_as is not None
+          else "  trading as: nobody — no trial identity attested (`mitosis set-trial-identity`)")
     print()
     print(f"  settled revenue:        {report.gross_revenue_minor_units}")
     print(f"  - refunds:              {report.refunds_minor_units}")
@@ -3460,6 +3536,44 @@ def build_parser() -> argparse.ArgumentParser:
     shadow_parser.add_argument("--by", required=True, help="who is declaring it")
     shadow_parser.add_argument("--note", default="")
     shadow_parser.set_defaults(func=cmd_set_shadow_rate)
+
+    identity_parser = subparsers.add_parser(
+        "set-trial-identity",
+        help="state the legal identity and payment account a live trial trades under "
+             "(operator-only; §28 Phase 9, ADR-100)",
+    )
+    identity_position = identity_parser.add_mutually_exclusive_group(required=True)
+    identity_position.add_argument(
+        "--legal-entity", dest="legal_entity",
+        help="the legal person or company that trades, as registered",
+    )
+    identity_position.add_argument(
+        "--withdraw", action="store_true",
+        help="assert that no identity is in force, superseding an earlier one. Still needs "
+             "a basis: a retraction leaves why in the record where a deletion leaves nothing.",
+    )
+    identity_parser.add_argument(
+        "--jurisdiction", help="where that entity is registered, e.g. GB",
+    )
+    identity_parser.add_argument(
+        "--payment-account-label", dest="payment_account_label",
+        help='a NAME for the account, e.g. "Stripe account: personal". Never the account '
+             "number, card or key: this verb refuses one and the schema refuses it again.",
+    )
+    identity_parser.add_argument(
+        "--basis", required=True,
+        help="where this comes from — a company registration, your own account, counsel",
+    )
+    identity_parser.add_argument("--by", default="operator", help="who is attesting")
+    identity_parser.set_defaults(func=cmd_set_trial_identity)
+
+    trial_identity_parser = subparsers.add_parser(
+        "trial-identity", help="who the colony trades as (§28 Phase 9)",
+    )
+    trial_identity_parser.add_argument(
+        "--history", action="store_true", help="every attestation, including withdrawn ones"
+    )
+    trial_identity_parser.set_defaults(func=cmd_trial_identity)
 
     predict_parser = subparsers.add_parser(
         "predict", help="register a prediction before its outcome is known (SPEC.md §8.5)"

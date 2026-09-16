@@ -1930,3 +1930,26 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **`status` prints no profit line.** Deliberate for now: one report, one verb, and `status` is already
   long. §27.2's dashboard wants "true profit after shadow costs" among its colony metrics, so this is the
   natural next consumer.
+
+## From the trial identity (2026-09-16, ADR-100)
+
+- **Nothing is gated on the identity yet, and the first gate is obvious.** §21's `marketplace_listing`
+  channel sits behind §27.1's `real_commerce` flag, which is off. Refusing a real-commerce claim while no
+  identity is in force would turn §28 Phase 9's "one legal business identity" from a record into an
+  enforced precondition. It belongs with the channel work because it changes a §21 refusal path, and
+  because a gate that fires when the flag is off would never be exercised.
+- **The liability reserve is still unprovisioned, and Phase 9 asks for "full liability reserves".**
+  `liability_reserve` is a §31 account classified in `accounts.py` as a spend destination with nothing
+  posting to it. Refunds and chargebacks now give it a natural trigger — provision a share of each sale,
+  release it when the refund window closes — but the share and the window are policy parameters, and
+  ADR-042's rule says a figure that should abstain must abstain rather than be invented.
+- **"Complete human-time accounting" is metered, not reconciled.** Minutes are recorded and the subsidised
+  part kept (§1.1), but nothing checks them against the operator's own record of time spent, which is what
+  "complete" would mean for a trial.
+- **Jurisdiction is free text.** No list and no validation: a wrong one is a fact about the record rather
+  than about the world. A controlled vocabulary is only worth it if something branches on it — tax
+  treatment, consumer-rights rules — and nothing does.
+- **One identity, one row-space.** §28 Phase 9 says one legal identity, so the table holds whichever is
+  latest with no subject key. Phase 10's "multiple brands/legal entities" (§16.5) would need one, the way
+  `rights_attestations` carries `subject_kind`/`subject` — a migration, deliberately, rather than a
+  nullable column added quietly.

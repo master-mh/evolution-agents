@@ -6,6 +6,42 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-16 — §1.1's profit report: the colony can state its own result (ADR-099)
+
+§1.1 opens the spec with `REAL_SETTLED_NET_PROFIT` and §32 closes with the same sentence; nothing
+computed it. With refunds, chargebacks and payment fees recorded, the formula became computable.
+
+### What shipped
+
+- `profit.report` and `mitosis profit`: §1.1's formula with every term printed beside the total, derived
+  on read and stored nowhere (§2.5) — so the subtraction can be checked rather than trusted.
+- `mitosis set-shadow-rate` and migration 0039: the reporting-only rate the second figure needs, declared
+  by a person and recorded with their name. §2.4 forbids the kernel choosing what a RESOURCE unit is
+  worth, so without a declared rate the report abstains with its reason instead of printing 0.
+- Human labour counted as billed **plus** subsidised, so unpaid work makes the colony look more expensive;
+  free tiers counted as local-model calls; operating costs and donated infrastructure named as unmeasured
+  on every report rather than zeroed.
+- The autonomy adjustment is real-profit-only: a synthetic book carries the first figure and abstains on
+  the second.
+- Golden 40 → 41, pinning both books.
+
+### Found
+
+- **The rate guards are defended twice.** Deleting either Python check still fails its test, because
+  migration 0039's CHECK constraints refuse the row. Two teeth-checks read WRONG-FAILURE until the
+  expected text named the schema's message — the exit code alone would have called them holes.
+- **A comment claimed more than the run does.** The first draft said the golden run pins USD_REAL at zero
+  revenue *and* zero spend; it settles one USD_REAL reservation of 20, so real profit there is −20.
+  Corrected before commit — the second such claim caught this session by checking rather than reasoning.
+
+### Verification
+
+1540 tests pass (16 new), golden run exact at version 41, ruff and docs-facts clean. 11 guards
+teeth-checked, 11 CAUGHT.
+
+- Next: the operator's trial identity and payment-account attestation, then §1.1's operating-cost terms —
+  chosen spend, which reserves before a person pays rather than posting after.
+
 ## 2026-09-16 — Payment fees: a charge nobody chose (ADR-098)
 
 §1.1's third deduction after refunds and chargebacks, and the one every live sale carries. No path could
