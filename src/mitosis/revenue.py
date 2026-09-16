@@ -410,6 +410,20 @@ def reversible_amount(conn: sqlite3.Connection, revenue_transaction_id: str) -> 
     return _reversible_locked(conn, payment, cash_leg)
 
 
+def cell_leg(transaction: Transaction) -> Entry:
+    """The entry on a Cell's own cash account — where a revenue payment or a
+    reversal carries its attribution: the Cell, the experiment, the artifact.
+    `payment_fees` reads a charge's attribution from here rather than taking one
+    from its caller (ADR-098)."""
+    legs = [
+        e for e in transaction.entries
+        if e.cell_id is not None and e.account_id == cell_cash(e.cell_id)
+    ]
+    if len(legs) != 1:
+        raise RevenueError(f"{transaction.transaction_id} has no single Cell cash leg")
+    return legs[0]
+
+
 def _legs(payment: Transaction) -> tuple[Entry, Entry]:
     """A revenue payment's two entries: the credit to the Cell, and the debit to
     `revenue`. `record_revenue` writes exactly these."""

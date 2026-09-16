@@ -116,6 +116,9 @@ class Transaction(_Frozen):
     #: The revenue payment a refund or chargeback reverses (migration 0037,
     #: ADR-097). NULL on every other transaction, and required on those two.
     reverses_transaction_id: str | None = None
+    #: The revenue payment or chargeback a payment fee was taken on (migration
+    #: 0038, ADR-098). NULL on every other transaction, and required on a fee.
+    charged_on_transaction_id: str | None = None
     metadata: dict[str, Any] = {}
     entries: tuple[Entry, ...]
 

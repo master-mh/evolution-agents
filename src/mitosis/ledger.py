@@ -62,6 +62,7 @@ def _compute_hash(
     entries: list[dict],
     counterparty_hash: str | None = None,
     reverses_transaction_id: str | None = None,
+    charged_on_transaction_id: str | None = None,
 ) -> str:
     canonical = {
         "transaction_id": transaction_id,
@@ -93,6 +94,9 @@ def _compute_hash(
     # absent — not null — on every other transaction, so no existing hash moves.
     if reverses_transaction_id is not None:
         canonical["reverses_transaction_id"] = reverses_transaction_id
+    # And again for a payment fee's charge (migration 0038, ADR-098).
+    if charged_on_transaction_id is not None:
+        canonical["charged_on_transaction_id"] = charged_on_transaction_id
     return hashlib.sha256(_canonical_json(canonical).encode("utf-8")).hexdigest()
 
 
@@ -110,6 +114,7 @@ def _write_transaction(
     metadata: dict | None = None,
     counterparty_hash: str | None = None,
     reverses_transaction_id: str | None = None,
+    charged_on_transaction_id: str | None = None,
 ) -> Transaction:
     """Insert a balanced transaction. Caller must already hold a write
     transaction (BEGIN IMMEDIATE) and be responsible for COMMIT/ROLLBACK.
@@ -125,7 +130,10 @@ def _write_transaction(
     (migration 0037). Opaque here too: the column's CHECK ties it to the two
     reversal types and its foreign key to a transaction that exists, and
     `revenue.record_reversal` checks what SQL cannot — that the target is a
-    revenue payment with that much left to reverse."""
+    revenue payment with that much left to reverse.
+
+    `charged_on_transaction_id` names the charge a payment fee was taken on
+    (migration 0038), on the same terms."""
     if not entries:
         raise UnbalancedTransactionError("a transaction must have at least one entry")
     total = sum(e.amount_minor_units for e in entries)
@@ -187,6 +195,7 @@ def _write_transaction(
         entries=canonical_entries,
         counterparty_hash=counterparty_hash,
         reverses_transaction_id=reverses_transaction_id,
+        charged_on_transaction_id=charged_on_transaction_id,
     )
 
     conn.execute(
@@ -195,8 +204,8 @@ def _write_transaction(
             transaction_id, book, currency, created_at_utc, effective_at_utc,
             idempotency_key, event_id, transaction_type, description,
             previous_transaction_hash, transaction_hash, metadata_json,
-            counterparty_hash, reverses_transaction_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            counterparty_hash, reverses_transaction_id, charged_on_transaction_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             transaction_id,
@@ -213,6 +222,7 @@ def _write_transaction(
             _canonical_json(metadata or {}),
             counterparty_hash,
             reverses_transaction_id,
+            charged_on_transaction_id,
         ),
     )
     try:
@@ -256,6 +266,7 @@ def _post_transaction_locked(
     metadata: dict | None = None,
     counterparty_hash: str | None = None,
     reverses_transaction_id: str | None = None,
+    charged_on_transaction_id: str | None = None,
 ) -> Transaction:
     """`post_transaction` minus the transaction boundary: the caller must
     already hold a write transaction (BEGIN IMMEDIATE) and is responsible for
@@ -282,6 +293,7 @@ def _post_transaction_locked(
         metadata=metadata,
         counterparty_hash=counterparty_hash,
         reverses_transaction_id=reverses_transaction_id,
+        charged_on_transaction_id=charged_on_transaction_id,
     )
 
 
@@ -299,6 +311,7 @@ def post_transaction(
     metadata: dict | None = None,
     counterparty_hash: str | None = None,
     reverses_transaction_id: str | None = None,
+    charged_on_transaction_id: str | None = None,
 ) -> Transaction:
     """Post a balanced, single-book transaction as a standalone operation.
 
@@ -324,6 +337,7 @@ def post_transaction(
             metadata=metadata,
             counterparty_hash=counterparty_hash,
             reverses_transaction_id=reverses_transaction_id,
+            charged_on_transaction_id=charged_on_transaction_id,
         )
         conn.execute("COMMIT")
     except sqlite3.IntegrityError as exc:
@@ -368,6 +382,7 @@ def _row_to_transaction(row: sqlite3.Row, entry_rows: list[sqlite3.Row]) -> Tran
         transaction_hash=row["transaction_hash"],
         counterparty_hash=row["counterparty_hash"],
         reverses_transaction_id=row["reverses_transaction_id"],
+        charged_on_transaction_id=row["charged_on_transaction_id"],
         metadata=json.loads(row["metadata_json"]),
         entries=entries,
     )
@@ -528,6 +543,7 @@ def verify_chain(conn: sqlite3.Connection) -> bool:
             entries=canonical_entries,
             counterparty_hash=row["counterparty_hash"],
             reverses_transaction_id=row["reverses_transaction_id"],
+            charged_on_transaction_id=row["charged_on_transaction_id"],
         )
         if expected != row["transaction_hash"]:
             return False

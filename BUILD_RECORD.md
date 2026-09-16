@@ -43,43 +43,45 @@ naming collusion and counterparty deception, a teeth-check runner that
 cannot touch the real tree, every *Disproved by:* pointer run and
 dated, workflow structure as a gene the kernel runs, Slice H's arm
 settings and the simulator stall they uncovered, and Phase 3's
-pre-registered run that found no selection effect, 2026-07-21 through
+pre-registered run that found no selection effect, and refunds and
+chargebacks naming the payment they reverse, 2026-07-21 through
 2026-09-15):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-15 — Refunds and chargebacks: the first of Phase 9's books (ADR-097)
+## 2026-09-16 — Payment fees: a charge nobody chose (ADR-098)
 
-Phase 3's gate is soft and Phase 4 is not blocked. The shortest path to real money the spec allows is §28
-Phase 9's supervised trial — Cells propose, a person carries out every external action — and its
-acceptance asks for tracked refunds and a real profit report. Nothing could take money back.
+§1.1's third deduction after refunds and chargebacks, and the one every live sale carries. No path could
+record a USD_REAL charge that was not a model call — reserved before it happened and settled after. A
+processor's fee is neither: it is taken out of the payout.
 
 ### What shipped
 
-- `revenue.record_reversal` (a refund or a chargeback) and `mitosis record-refund --payment TXN --amount A
-  --source REF [--chargeback]`. It names the payment and inherits its Cell, book, experiment, artifact and
-  buyer digest; reversals of one payment never exceed it; a replay returns before the bound; a dead Cell
-  is reversed too and its cash may go negative (ADR-021's rule).
-- Migration 0037: `ledger_transactions.reverses_transaction_id` — in the hash preimage when set, a foreign
-  key, and a CHECK tying it to exactly the two reversal types.
-- `total_revenue` and `colony_revenue` removed in favour of gross, reversed and net readers. Domination,
-  §25.2's read-back, the Cell's record (plus a line naming the reversal, only when there is one),
-  `cell-fitness`, the simulator's two revenue axes and §2.6's report all read net.
-- Golden 38 → 39: one USD_SIM refund, pinned to the invoice it reverses.
+- `payment_fees.record_payment_fee` and `mitosis record-fee --on TXN --amount A --source REF`: a fee taken
+  on a revenue payment or a chargeback, inheriting that charge's Cell, book, experiment and artifact. A
+  refund is not chargeable — the fee on the sale was charged on the sale, and a fee on the refund would
+  count it twice.
+- Migration 0038: `ledger_transactions.charged_on_transaction_id`, beside 0037's link — in the hash
+  preimage when set, a foreign key, and a CHECK tying it to exactly `payment_fee`.
+- **Imposed, not chosen:** posted directly and never refused by a cap, then counted by every global
+  window, so the next spend the colony *does* choose meets a cap the fee helped fill.
+- The breaker's registry now names a route per registered type — a reservation, a model-call key, or
+  provider-less — and a guard refuses a type in no route or two, or a model-call charge filed
+  provider-less.
+- Golden 39 → 40: one USD_SIM fee, on the invoice that carries the artifact.
 
 ### Found
 
-- **Every reader of revenue wanted net and read gross** — five modules a refund could not have reached.
-- **The golden note's first draft overclaimed.** It said the pinned link was the only section that tells
-  the two invoices apart; running the mutation showed `artifact_attributed_ledger_entries` moves too.
-  Corrected before commit.
-- **A provider failure is recorded as an unparseable reply and buys a repair call** — found by the live
-  check against a failing Ollama. Logged, and offered as its own task.
+- **§25.2's read-back sees a fee with no reader changed.** `assessments[0].spend_since_minor_units` moved
+  0 → 2 in the replay — the expense leg's Cell tag doing its job through `spend_by_book`.
+- **A fee is the first real charge with no provider.** The per-provider window reaches a direct posting
+  only through the model call its key names, so the registry had quietly assumed every direct charge had
+  one.
 
 ### Verification
 
-1497 tests pass (31 new), golden run exact, ruff and docs-facts clean. 17 guards teeth-checked, 17 CAUGHT.
-**Not verified:** a live model reading the new record line (Ollama's Metal backend failed a direct
-generate); the two-connection race on the bound is argued, not tested.
+1524 tests pass (27 new), golden run exact at version 40, ruff and docs-facts clean. 14 guards
+teeth-checked, 14 CAUGHT.
 
-- Next: payment fees and other external operating costs, then §1.1's report of both profit figures. Before
-  any live trial the operator decides the legal identity, payment account and real-money budget.
+- Next: §1.1's operating-cost terms (hosting, advertising, data/software, fulfilment) — chosen spend,
+  which reserves before a person pays rather than posting after — then the report of both profit figures.
+  Still the operator's to decide: legal identity, payment account, real-money budget.

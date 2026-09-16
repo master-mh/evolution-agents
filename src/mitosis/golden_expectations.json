@@ -1,5 +1,5 @@
 {
-  "expectation_version": 39,
+  "expectation_version": 40,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "29e58944e8b6cffeef3284e1a21de9ca259fce0bdd1c434c889288cde2fcb794",
+  "semantic_hash": "b82755fb789a4b1ba2cd4a2e82329f175160542a05da336ad192b6deee2e3053",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -145,7 +145,7 @@
         "status": "approved"
       }
     ],
-    "artifact_attributed_ledger_entries": 1,
+    "artifact_attributed_ledger_entries": 2,
     "artifact_lineage": {
       "edges": 1,
       "from_artifacts": 0,
@@ -189,7 +189,7 @@
         "reality_gap": null,
         "revenue_since_minor_units": 50,
         "rung": 7,
-        "spend_since_minor_units": 0,
+        "spend_since_minor_units": 2,
         "verdict": "supports_promotion"
       }
     ],
@@ -219,6 +219,7 @@
       "human_minutes_subsidised": 1,
       "model_call_reconciled": 1,
       "model_call_settled": 14,
+      "payment_fee_recorded": 1,
       "prediction_registered": 10,
       "prediction_resolved": 5,
       "promotion_pool_funded": 1,
@@ -270,10 +271,10 @@
       "USD_SIM::cell:cell#1:cash": 400,
       "USD_SIM::cell:cell#3:cash": 1250,
       "USD_SIM::cell:cell#3:committed": 250,
-      "USD_SIM::cell:cell#4:cash": 580,
+      "USD_SIM::cell:cell#4:cash": 578,
       "USD_SIM::colony_treasury": 3250,
       "USD_SIM::external_capital": -100000,
-      "USD_SIM::external_expense": 1550,
+      "USD_SIM::external_expense": 1552,
       "USD_SIM::promotion_pool": 470,
       "USD_SIM::revenue": -50,
       "USD_SIM::seed_bank": 92300
@@ -707,7 +708,7 @@
         "stage_tranche_rung": 7,
         "status": "concluded",
         "subsidised_human_minutes": 4,
-        "synthetic_net_profit": 50,
+        "synthetic_net_profit": 48,
         "synthetic_revenue": 50,
         "unresolved_predictions": 0
       },
@@ -1027,6 +1028,14 @@
       "unbinned_genomes": 1,
       "unmeasured_dimensions": []
     },
+    "payment_fees": [
+      {
+        "amount_minor_units": 2,
+        "book": "USD_SIM",
+        "charged_on": "golden:revenue:artifact",
+        "charged_on_type": "cell_revenue"
+      }
+    ],
     "predictions": [
       {
         "brier_score": 0.04,
@@ -1892,6 +1901,7 @@
       "USD_SIM::cell_revenue": 2,
       "USD_SIM::colony_seed_capital": 1,
       "USD_SIM::event_side_effect": 3,
+      "USD_SIM::payment_fee": 1,
       "USD_SIM::promotion_pool_funding": 1,
       "USD_SIM::reservation_release": 2,
       "USD_SIM::reservation_reserve": 4,

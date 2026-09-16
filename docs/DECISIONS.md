@@ -6141,3 +6141,65 @@ out as a Slice G decision, not this one.
 - **Consequences:** Phase 9's "refunds tracked" has a path. §1.1's two figures still need payment fees,
   other external operating costs and the report itself. `novelty`'s revenue recurrence still counts a
   refunded payment, and a chargeback the colony wins back is unmodelled (both logged).
+
+## ADR-098: A payment fee is a charge nobody chose — recorded past a cap, and counted by one afterwards
+
+- **Status:** Accepted
+- **Spec ref:** §1.1 (`REAL_SETTLED_NET_PROFIT` subtracts payment fees), §2.2 (USD_REAL includes payment
+  processing), §3.6 (reconciliation against payment-processor transactions), §5.1–5.3 (per-provider cap;
+  settled + reserved), §16.3 (attribution), §28 Phase 9
+
+- **Context:** ADR-097 gave refunds and chargebacks a path; §1.1's third deduction is payment fees, and
+  every live sale carries one. No path could record it: every USD_REAL charge this kernel knew belonged to
+  a model call — reserved before it happened, settled after. A processor's fee is neither. It is taken out
+  of the payout, so a supervised trial's profit would have overstated by the fee on every sale.
+
+- **Decision:**
+  1. `payment_fees.record_payment_fee(charged_on_transaction_id, amount, source)` posts Cell cash to
+     `external_expense` as `payment_fee`, on a revenue payment or a chargeback, inheriting that charge's
+     Cell, book, experiment and artifact. No parameter names a Cell (ADR-097's rule, same reason).
+  2. **Imposed, so never refused.** No reservation and no cap check: refusing to record money the
+     processor has already taken would misstate the books without un-taking it — ADR-021's posture for a
+     cost overrun. It *is* registered as real spend, so every global window counts it afterwards and the
+     next spend the colony chooses meets a cap the fee helped fill.
+  3. **Registered with a named route.** The per-provider window reaches a direct posting only through the
+     `model_calls` row its idempotency key names; a fee has none, and nothing reserves against a
+     processor, so a cap on one would bound nothing. `_PROVIDERLESS_REAL_SPEND_TYPES` says so,
+     `_MODEL_CALL_KEYED_TYPES` names the other direct route, and the registration guard requires every
+     registered type to sit in exactly one — and refuses a provider-less type posted from the gateway or
+     reconciliation, where a charge always has a provider.
+  4. **The buyer's digest is not copied.** A fee is paid to the processor; §16.3's digest identifies who
+     paid the colony, and copying it would make a processor read as a repeat buyer to §12.1.
+  5. Migration 0038 adds `charged_on_transaction_id` beside 0037's link: in the hash preimage when set, a
+     foreign key, and a CHECK tying it to exactly `payment_fee`.
+  6. **No reader changed.** The expense leg carries the Cell and the experiment, so `ledger.spend_by_book`,
+     §10.5's net contribution and §2.6's real spend already count it.
+  7. `mitosis record-fee --on TXN --amount A --source REF`.
+
+- **What it displaced, and why:**
+  - *Reusing `reverses_transaction_id`.* A fee takes nothing back from the buyer, and a column whose name
+    is true of half its rows is how a reader sums the wrong thing.
+  - *Recording sales net of the fee.* §1.1 subtracts fees as their own term and §10.2 asks for a rate; a
+    net sale hides both, and a processor's statement is gross plus fee, which is what §3.6 reconciles to.
+  - *Reserving a fee, or checking the cap before posting it.* Both amount to refusing a charge that has
+    already happened. C5 bounds what the colony chooses to spend.
+  - *A fee on a refund.* The fee on the sale was charged on the sale; a fee "on the refund" counts it
+    twice. Only a payment or a chargeback is chargeable.
+  - *A generic `record-expense` covering §1.1's other cost terms.* Hosting, advertising, data and
+    fulfilment are chosen spend that must reserve *before* a person pays — the opposite requirement — and
+    `reservations` already has sockets for the category and the vendor. Logged, not built here.
+  - *Bounding a fee by its charge.* A fixed per-charge fee on a small sale, or a chargeback fee, exceeds
+    it routinely.
+
+- **Verification:** 14 guards teeth-checked, 14 CAUGHT — a fee taken on any transaction (F1), a `cell_id`
+  parameter (F2), the expense leg losing its Cell or its experiment tag (F3, F4), the fee unregistered
+  (F5), a fee refused by a reached cap (F6), a type in two routes (F7), a model-call charge filed
+  provider-less (F8), the hash link dropped or nulled (F10, F11), the schema CHECK (F12), a reused key
+  (F13), the buyer's digest copied (F14), and the golden fee taken on the wrong invoice (F15). Golden
+  expectation 39 → 40, every moved field explained — including
+  `assessments[0].spend_since_minor_units` 0 → 2, which is §25.2's read-back seeing the fee through a
+  reader nobody edited. 1524 tests pass; ruff and docs-facts clean.
+
+- **Consequences:** §1.1 needs only its operating-cost terms before both profit figures can be reported.
+  A fee belonging to no single charge (a payout fee, currency conversion, a monthly minimum) still has
+  nowhere to go, and a processor returning a fee is unmodelled. Both logged.

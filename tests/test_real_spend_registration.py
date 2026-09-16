@@ -28,6 +28,9 @@ Three angles, because no one of them is sufficient:
    sufficient for the per-provider query, which additionally depends on the
    `{transaction_type}:{model_call_id}` idempotency-key convention — an
    undocumented coupling that a newly-registered type could silently break.
+   Since ADR-098 a registered type names its route — a reservation, a model-call
+   key, or none — and `..._every_registered_type_has_exactly_one_route` refuses
+   a type in no route or two; a provider-less type is counted globally only.
 
 Named to be collectible as `pytest -k charter_realspend_cap` alongside the
 existing C5 property test, per SPEC.md §0.1.
@@ -43,7 +46,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import mitosis
-from mitosis import ids, ledger, lifecycle, real_spend_breaker, reservations
+from mitosis import ids, ledger, lifecycle, payment_fees, real_spend_breaker, reservations, revenue
 from mitosis.models import Book, CellType, EntrySpec, RealSpendLimits
 
 SRC = pathlib.Path(mitosis.__file__).parent
@@ -414,6 +417,20 @@ def _post_spend(conn, cell_id: str, transaction_type: str) -> None:
         )
         return
 
+    if transaction_type == payment_fees.PAYMENT_FEE_TRANSACTION_TYPE:
+        # A processor's fee names the payment it was taken on and no model call,
+        # so the per-provider window cannot reach it and is not meant to (ADR-098).
+        payment = revenue.record_revenue(
+            conn, cell_id=cell_id, amount_minor_units=_AMOUNT, source=f"sale:{cell_id}"
+        )
+        payment_fees.record_payment_fee(
+            conn,
+            charged_on_transaction_id=payment.transaction_id,
+            amount_minor_units=_AMOUNT,
+            source=f"fee:{cell_id}",
+        )
+        return
+
     # Every other registered type posts directly, and the per-provider query
     # finds it by joining model_calls on `{transaction_type}:{model_call_id}`.
     model_call_id = _model_call_row(conn, cell_id)
@@ -445,10 +462,46 @@ def test_charter_realspend_cap_registered_types_are_counted(conn, spender, trans
         f"{transaction_type!r} is registered but the global hour/day/month window does not "
         "count it — the caps would fail open on this spend"
     )
+    expected_for_provider = (
+        0 if transaction_type in real_spend_breaker._PROVIDERLESS_REAL_SPEND_TYPES else _AMOUNT
+    )
     assert (
-        real_spend_breaker._settled_spend_for_provider_since(conn, _PROVIDER, since) == _AMOUNT
+        real_spend_breaker._settled_spend_for_provider_since(conn, _PROVIDER, since)
+        == expected_for_provider
     ), (
         f"{transaction_type!r} is registered but the per-provider window does not count it. "
         "Registration alone is not enough for a direct-posting type: its idempotency key must "
         f"be '{transaction_type}:{{model_call_id}}' for the model_calls join to find it."
     )
+
+
+def test_charter_realspend_cap_every_registered_type_has_exactly_one_route():
+    """Each registered type reaches the per-provider window by exactly one route:
+    a reservation's `provider`, the `model_calls` row its key names, or none
+    (ADR-098). A type in no route is counted globally and skipped per provider
+    in silence; a type in two is a registry nobody can reason about."""
+    routes = {
+        "reservation": {"reservation_settle"},
+        "model_call_key": set(real_spend_breaker._MODEL_CALL_KEYED_TYPES),
+        "providerless": set(real_spend_breaker._PROVIDERLESS_REAL_SPEND_TYPES),
+    }
+    for name, types in routes.items():
+        others = set().union(*(t for other, t in routes.items() if other != name))
+        assert not types & others, f"{sorted(types & others)} sit in more than one route"
+    unrouted = set(real_spend_breaker._REAL_SPEND_TRANSACTION_TYPES) - set().union(*routes.values())
+    assert not unrouted, f"registered type(s) in no route: {sorted(unrouted)}"
+    assert set().union(*routes.values()) <= set(real_spend_breaker._REAL_SPEND_TRANSACTION_TYPES)
+
+
+def test_charter_realspend_cap_model_call_charges_are_never_providerless():
+    """The gateway and reconciliation post charges for a model call, and a model
+    call always has a provider. A provider-less type posted from either would be
+    real spend that escapes §5.1's per-provider cap."""
+    sites, _ = _call_sites()
+    offenders = sorted(
+        f"{s.module}:{s.lineno} posts {s.transaction_type!r}"
+        for s in sites
+        if s.transaction_type in real_spend_breaker._PROVIDERLESS_REAL_SPEND_TYPES
+        and s.module in {"gateway.py", "reconciliation.py"}
+    )
+    assert not offenders, f"model-call charges filed as provider-less: {offenders}"

@@ -37,8 +37,8 @@ validated self-evolving business colony. [`PRIORITIES.md`](PRIORITIES.md) is can
 | | |
 |---|---|
 | Tests | full suite (`pytest`), including Hypothesis property tests for the Colony Charter |
-| Golden-run replay | expectation version 39, verified in CI |
-| Schema | 37 numbered migrations |
+| Golden-run replay | expectation version 40, verified in CI |
+| Schema | 38 numbered migrations |
 | Python | 3.11+ |
 | Real money spent to date | 0.19¢, once, deliberately |
 

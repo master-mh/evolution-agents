@@ -25,6 +25,10 @@ uncapped by that check — the global caps still apply — because inventing a
 default cap for an unlisted provider would fail closed on a colony that has
 simply not configured one. Reservations carry the provider tag
 (`reservations.provider`, migration 0010); only the gateway sets it.
+
+Not every real charge has a provider to cap. A payment fee (ADR-098) is taken by
+a processor nothing ever reserves against, so it is counted by the global
+windows and by no provider's: `_PROVIDERLESS_REAL_SPEND_TYPES`.
 """
 
 from __future__ import annotations
@@ -183,13 +187,15 @@ def _settled_spend_for_provider_since(
     is when the cap matters most. Those are reached through the `model_calls`
     row named in the transaction's idempotency key.
 
-    Both routes read `_REAL_SPEND_TRANSACTION_TYPES`, so adding a type there
-    is now sufficient — the split that made this function silently miss a new
-    type is closed. The direct-posting branch also relies on the convention
-    that such a transaction's idempotency key is `{type}:{model_call_id}`.
+    The direct route reads `_MODEL_CALL_KEYED_TYPES` and relies on the
+    convention that such a transaction's idempotency key is
+    `{type}:{model_call_id}`. Every registered type sits in exactly one route —
+    a reservation, a model-call key, or none (`_PROVIDERLESS_REAL_SPEND_TYPES`)
+    — and `test_real_spend_registration.py` refuses a type in no route or two,
+    which is what keeps a new type from being skipped here in silence.
     """
     since_iso = since.astimezone(timezone.utc).isoformat()
-    direct_types = tuple(t for t in _REAL_SPEND_TRANSACTION_TYPES if t != "reservation_settle")
+    direct_types = tuple(t for t in _REAL_SPEND_TRANSACTION_TYPES if t in _MODEL_CALL_KEYED_TYPES)
 
     settled = 0
     if "reservation_settle" in _REAL_SPEND_TRANSACTION_TYPES:
@@ -264,7 +270,23 @@ _REAL_SPEND_TRANSACTION_TYPES = (
     "reservation_settle",
     "model_call_cost_overrun",
     "model_call_reconciliation_adjustment",
+    "payment_fee",
 )
+
+#: Direct postings the per-provider window reaches through the `model_calls` row
+#: their idempotency key names.
+_MODEL_CALL_KEYED_TYPES = (
+    "model_call_cost_overrun",
+    "model_call_reconciliation_adjustment",
+)
+
+#: Real charges no provider's cap can bound, counted by the global windows only.
+#: A processor's fee is taken by a party nothing reserves against, so a cap on
+#: that party would bound nothing; counted globally, the fee still limits the
+#: spend the colony does choose (ADR-098). A model-call charge filed here would
+#: escape its provider's cap — the registration guard refuses one posted from the
+#: gateway or reconciliation.
+_PROVIDERLESS_REAL_SPEND_TYPES = ("payment_fee",)
 
 # The leg that measures real money leaving the colony. Summing this account's
 # *signed* entries — rather than filtering on `amount > 0` as the first two

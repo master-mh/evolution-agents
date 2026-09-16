@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (
+    payment_fees,
     approval,
     auditor,
     autopromotion,
@@ -748,6 +749,47 @@ def cmd_record_refund(args: argparse.Namespace) -> None:
     print(f"  still reversible on that payment: "
           f"{revenue.reversible_amount(conn, args.payment)} minor units")
     print(f"  cell earned to date (net): {revenue.net_revenue(conn, cell_id, book)} "
+          f"minor units {book.value}")
+    print(f"  cell cash now:       {ledger.get_balance(conn, cell_cash(cell_id), book)}")
+
+
+def cmd_record_fee(args: argparse.Namespace) -> None:
+    """Record what a payment processor kept from a sale or a chargeback
+    (SPEC.md §1.1; ADR-098).
+
+    Record the gross sale with `record-revenue` and the fee here, even when the
+    processor paid out the net: §1.1 subtracts fees as their own term, and a sale
+    recorded net would hide them. Names the charge, never the Cell.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+
+    charge = ledger.get_transaction(conn, args.on)
+    if charge is None:
+        raise CliError(f"no such transaction: {args.on}")
+    book = charge.book
+    amount = money.parse_minor_units(args.amount, book.value)
+    try:
+        transaction = payment_fees.record_payment_fee(
+            conn,
+            charged_on_transaction_id=args.on,
+            amount_minor_units=amount,
+            source=args.source,
+            note=args.note,
+            idempotency_key=args.idempotency_key,
+        )
+    except payment_fees.PaymentFeeError as exc:
+        raise CliError(str(exc)) from exc
+
+    cell_id = next(e.cell_id for e in transaction.entries if e.cell_id is not None)
+    print(f"Recorded payment fee on {args.on}")
+    print(f"  amount:    {args.amount} ({amount} minor units) {book.value}")
+    print(f"  cell:      {cell_id}")
+    print(f"  source:    {args.source}")
+    if args.note:
+        print(f"  note:      {args.note}")
+    print(f"  txn:       {transaction.transaction_id}")
+    print(f"  cell spend to date: {ledger.spend_by_book(conn, cell_id).get(book.value, 0)} "
           f"minor units {book.value}")
     print(f"  cell cash now:       {ledger.get_balance(conn, cell_cash(cell_id), book)}")
 
@@ -3306,6 +3348,25 @@ def build_parser() -> argparse.ArgumentParser:
     refund_parser.add_argument("--note", default="")
     refund_parser.add_argument("--idempotency-key", default=None)
     refund_parser.set_defaults(func=cmd_record_refund)
+
+    fee_parser = subparsers.add_parser(
+        "record-fee",
+        help="record what a payment processor kept from a sale or a chargeback (§1.1; ADR-098)",
+    )
+    fee_parser.add_argument(
+        "--on", required=True,
+        help="transaction id of the revenue payment or chargeback the fee was taken on. "
+             "The Cell, book, experiment and artifact are that transaction's own.",
+    )
+    fee_parser.add_argument("--amount", required=True, help="decimal amount, e.g. 0.59")
+    fee_parser.add_argument(
+        "--source", required=True,
+        help="the processor's reference for the fee. Not the customer: this text goes "
+             "into the hash-chained description.",
+    )
+    fee_parser.add_argument("--note", default="")
+    fee_parser.add_argument("--idempotency-key", default=None)
+    fee_parser.set_defaults(func=cmd_record_fee)
 
     predict_parser = subparsers.add_parser(
         "predict", help="register a prediction before its outcome is known (SPEC.md §8.5)"

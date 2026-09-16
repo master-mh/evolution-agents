@@ -891,6 +891,45 @@ def test_record_refund_names_the_payment_and_reports_what_is_left(tmp_path, caps
     assert "received 1250, refunded or charged back 1250" in out
 
 
+def test_record_fee_names_the_charge_and_reports_the_cells_spend(tmp_path, capsys):
+    """§1.1's payment fees, from the operator's side (ADR-098): the gross sale is
+    recorded as revenue and the fee beside it, taken on the payment by id."""
+    db_path, cell_id = _init_and_cell(tmp_path, capsys)
+    cli.main([
+        "--db", db_path, "record-revenue", "--cell", cell_id,
+        "--amount", "12.50", "--source", "acme-inv-7",
+    ])
+    payment = next(
+        line.split()[-1]
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("txn:")
+    )
+
+    assert cli.main([
+        "--db", db_path, "record-fee", "--on", payment,
+        "--amount", "0.66", "--source", "processor-fee-1",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert f"Recorded payment fee on {payment}" in out
+    assert "cell spend to date: 66 minor units USD_REAL" in out
+
+    refund = cli.main([
+        "--db", db_path, "record-refund", "--payment", payment,
+        "--amount", "1.00", "--source", "processor-re-1",
+    ])
+    assert refund == 0
+    refund_txn = next(
+        line.split()[-1]
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("txn:")
+    )
+    assert cli.main([
+        "--db", db_path, "record-fee", "--on", refund_txn,
+        "--amount", "0.10", "--source", "refund-fee",
+    ]) == 1
+    assert "revenue payment or a chargeback" in capsys.readouterr().err
+
+
 def test_record_refund_of_an_unknown_payment_exits_nonzero(tmp_path, capsys):
     db_path, _ = _init_and_cell(tmp_path, capsys)
     capsys.readouterr()

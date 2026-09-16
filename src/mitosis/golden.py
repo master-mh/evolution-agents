@@ -61,12 +61,12 @@ from pathlib import Path
 from . import (
     approval,
     artifacts,
-    channel_registry,
     auditor,
+    channel_registry,
     clock,
     counterparty,
-    deliberation,
     db,
+    deliberation,
     events,
     experiment_grants,
     experiments,
@@ -78,9 +78,9 @@ from . import (
     lineage,
     novelty,
     outcome,
-    posteriors,
-    selection,
+    payment_fees,
     population,
+    posteriors,
     prediction,
     promotion,
     providers,
@@ -90,6 +90,7 @@ from . import (
     resource_metering,
     revenue,
     rights,
+    selection,
     tool_registry,
     tools,
 )
@@ -1253,7 +1254,27 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #             hash moved is not visible here (digests are excluded from the
 #             snapshot); `test_a_transaction_that_reverses_nothing_hashes_as_it_always_did`
 #             pins it.
-EXPECTATION_VERSION = 39
+#
+#   39 -> 40 (payment fees; ADR-098, migration 0038). **One fee of 2 USD_SIM on
+#             the first invoice, after the refund, and every moved field
+#             follows from it** — confirmed by a field-by-field diff:
+#             (a) `transaction_types` gains `USD_SIM::payment_fee: 1` and
+#                 `audit_event_types` gains `payment_fee_recorded: 1`.
+#             (b) `balances`: the auditor's child's USD_SIM cash 580 -> 578 and
+#                 `external_expense` 1550 -> 1552 — one balanced posting.
+#             (c) `experiments[1].synthetic_net_profit` 50 -> 48 with revenue
+#                 unchanged at 50: a fee is spend, not a reversal, and its
+#                 expense leg carries the invoice's experiment tag.
+#             (d) `assessments[0].spend_since_minor_units` 0 -> 2: §25.2's
+#                 read-back sees the fee as consumption through `spend_by_book`,
+#                 with no reader changed. Verdict unchanged.
+#             (e) `artifact_attributed_ledger_entries` 1 -> 2: the fee's cash
+#                 leg inherits the artifact the first invoice sold.
+#             (f) **`payment_fees` (new)**: one row pinning the charge by its
+#                 idempotency key (`golden:revenue:artifact`).
+#             No USD_REAL movement, so the breaker's windows are untouched, and
+#             no prompt, token count or model call moved.
+EXPECTATION_VERSION = 40
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.
@@ -2707,6 +2728,20 @@ def _run_scenario_body(conn: sqlite3.Connection) -> None:
         idempotency_key="golden:refund:second-invoice",
     )
 
+    # 19h. A payment fee (§1.1, §2.2; ADR-098). On the *first* invoice — the one
+    #      carrying the artifact — so the fee's inherited attribution reaches
+    #      `artifact_attributed_ledger_entries` as well as the pinned charge. USD_SIM
+    #      for the reason every money movement here is.
+    first_invoice = ledger.get_transaction_by_idempotency_key(conn, "golden:revenue:artifact")
+    assert first_invoice is not None
+    payment_fees.record_payment_fee(
+        conn,
+        charged_on_transaction_id=first_invoice.transaction_id,
+        amount_minor_units=2,
+        source="golden-run processor fee on the first invoice",
+        idempotency_key="golden:fee:first-invoice",
+    )
+
     # 20. Simulated clock.
     clock.advance(conn, timedelta(days=7))
 
@@ -2767,6 +2802,28 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
             "GROUP BY book, transaction_type"
         ).fetchall()
     }
+
+    # §1.1's payment fees (ADR-098), each pinned to the charge it was taken on by
+    # that charge's idempotency key, for the reason `revenue_reversals` below is.
+    payment_fee_rows = [
+        {
+            "book": row["book"],
+            "amount_minor_units": row["amount"],
+            "charged_on": row["charged_key"],
+            "charged_on_type": row["charged_type"],
+        }
+        for row in conn.execute(
+            """
+            SELECT t.book, p.idempotency_key AS charged_key, p.transaction_type AS charged_type,
+                   (SELECT SUM(e.amount_minor_units) FROM ledger_entries e
+                    WHERE e.transaction_id = t.transaction_id
+                      AND e.account_id = 'external_expense') AS amount
+            FROM ledger_transactions t
+            JOIN ledger_transactions p ON p.transaction_id = t.charged_on_transaction_id
+            ORDER BY t.rowid
+            """
+        ).fetchall()
+    ]
 
     # §1.1's reversals (ADR-097), each pinned to the payment it names by that
     # payment's idempotency key — a fixed string in this scenario, where the
@@ -3403,6 +3460,7 @@ def semantic_snapshot(conn: sqlite3.Connection) -> dict:
         "balances": balances,
         "transaction_types": transaction_types,
         "revenue_reversals": revenue_reversals,
+        "payment_fees": payment_fee_rows,
         "cells": cells,
         "reservations": reservation_rows,
         "resource_usage": resource_rows,

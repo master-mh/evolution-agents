@@ -1872,3 +1872,32 @@ actually queued for building — this file is memory, not a backlog to work thro
 - **The reversal bound's race is argued, not tested.** `_reversible_locked` reads inside `BEGIN
   IMMEDIATE`, so two connections refunding the last of one sale serialise. No test drives two
   connections at once, and the suite has no harness for it to borrow.
+
+## From payment fees (2026-09-16, ADR-098)
+
+- **The other half of §1.1's costs is chosen spend, and has a different shape.** Hosting, advertising,
+  data/software and fulfilment are not imposed like a processor's fee: §4's two-phase model says they
+  reserve *before* a person pays and settle at the actual amount, so Charter C4 and C5 gate them the
+  way they gate a model call. Two sockets are already there — `reservations.external_operation_type`
+  (which would carry §1.1's category, as `model_call`/`tool_call`/`external_action` already do) and
+  `reservations.provider` (the vendor, which §5.1's per-provider cap reads). `real_spend_breaker`'s
+  docstring and `reservations.request` both say "only the gateway sets it", which a vendor reservation
+  would change deliberately. Deliberately not built beside fees: an imposed charge that must never be
+  refused and a chosen one that must be gated are opposite requirements.
+- **§1.1's report is now mostly computable, and still unwritten.** `REAL_SETTLED_NET_PROFIT` = settled
+  revenue − reversals − fees − real API/cloud spend, and every term but the operating costs above now
+  has a path. `AUTONOMY_ADJUSTED_PROFIT` additionally needs the human-minute shadow price (metered in
+  the RESOURCE book at `HUMAN_MINUTE_RESOURCE_COST`; §2.4 permits a reporting-only USD-equivalent and
+  forbids a conversion), plus donated infrastructure and free tiers, which nothing records at all —
+  Ollama's zero price is exactly the "free tier" §1.1 wants exposed. `status` prints no colony revenue
+  or profit line today.
+- **A processor returning a fee is unmodelled.** `record_payment_fee` refuses a non-positive amount and
+  points at an adjustment; `reconciliation.py`'s signed adjustment is the shape, and it would want to
+  name the fee it corrects.
+- **§10.2's refund/chargeback rate and a fee rate are computable and uncomputed.** `gross_revenue`,
+  `reversed_revenue(kind=)` and the fee rows make all three ratios one query each, but §10.2 asks for
+  them as *fitness dimensions*, which is `death.Contribution`/`candidate.py`'s question, not the
+  ledger's.
+- **Fees that belong to no single charge** — payout fees, currency conversion, monthly processor
+  minimums — have nowhere to go: `record_payment_fee` requires a charge. They are operating costs in
+  §1.1's sense and belong with the chosen-spend path above.

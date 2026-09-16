@@ -1126,6 +1126,23 @@
   *Disproved by:* `revenue.total_revenue` existing, or a `cell_refund`/`cell_chargeback` row with a NULL
   `reverses_transaction_id` (migration 0037's CHECK refuses one).
 
+- [x] **Payment fees — DONE 2026-09-16 (ADR-098); §1.1's third deduction, after refunds and
+  chargebacks.** Every live sale carries a processor fee, and no path could record one: every USD_REAL
+  charge the kernel knew belonged to a model call. `payment_fees.record_payment_fee` and `mitosis
+  record-fee` take a fee on a revenue payment or a chargeback and inherit that charge's Cell, book,
+  experiment and artifact (migration 0038's hash-chained `charged_on_transaction_id`). **Imposed, not
+  chosen:** posted directly like ADR-021's cost overrun, never refused by a cap, and counted by every
+  global window afterwards so the next spend the colony *does* choose meets a cap the fee helped fill.
+  Registered with the breaker on an explicit route — provider-less, since nothing reserves against a
+  processor — and every registered type must now name exactly one route. No reader changed: the fee is
+  consumption to `spend_by_book`, §10.5's net contribution and §2.6's real spend. Golden 39 → 40.
+  - **Next in the arc:** §1.1's remaining cost terms — hosting, advertising, data/software, fulfilment,
+    other operating. These are *chosen* spend, so they reserve before a person pays rather than post
+    after, and the reservation already carries `external_operation_type` (the category) and `provider`
+    (the vendor, §5.1's per-provider cap). Then the §1.1 report of both profit figures.
+  *Disproved by:* a `payment_fee` row with a NULL `charged_on_transaction_id` (migration 0038's CHECK
+  refuses one), or `payment_fee` missing from `real_spend_breaker._REAL_SPEND_TRANSACTION_TYPES`.
+
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
   directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped
