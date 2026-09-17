@@ -217,7 +217,12 @@ def _realised_record_section(conn: sqlite3.Connection, cell: Cell) -> Section:
     cash = ledger.get_balance(conn, cell_cash(cell.cell_id), cell.book)
     committed = ledger.get_balance(conn, cell_committed(cell.cell_id), cell.book)
     earned = revenue.net_revenue(conn, cell.cell_id, cell.book)
-    taken_back = revenue.reversed_revenue(conn, cell.cell_id, cell.book)
+    refunded = revenue.reversed_revenue(
+        conn, cell.cell_id, cell.book, kind=revenue.ReversalKind.REFUND
+    )
+    charged_back = revenue.reversed_revenue(
+        conn, cell.cell_id, cell.book, kind=revenue.ReversalKind.CHARGEBACK
+    )
     spent = ledger.spend_by_book(conn, cell.cell_id).get(cell.book.value, 0)
     scores = prediction.scores(conn, cell.cell_id)
 
@@ -227,13 +232,28 @@ def _realised_record_section(conn: sqlite3.Connection, cell: Cell) -> Section:
         f"cash available: {cash} minor units",
         f"committed (in flight): {committed} minor units",
         f"revenue earned to date: {earned} minor units",
-        # Only when there is one, so a Cell that was never refunded reads
-        # exactly as before. Net above, and the reversal named here, because a
-        # Cell that sees only a smaller number cannot tell a refund from a
-        # sale that never happened (ADR-097).
+        # Each kind on its own line, and only when it happened — a Cell that was
+        # never reversed reads exactly as it did before ADR-097. Net above, and
+        # the reversal named here, because a Cell that sees only a smaller number
+        # cannot tell a refund from a sale that never happened.
+        #
+        # **Named separately after the 2026-09-16 live check.** The earlier
+        # combined wording ("refunded or charged back") led a live model to
+        # report a refund as a chargeback in its own rationale — the Cell
+        # reasoning from a distinction the colony never drew for it. §1.1
+        # subtracts the two as separate terms and §10.2 asks for their rates
+        # separately, so the record draws it.
         *(
-            [f"refunded or charged back (already subtracted above): {taken_back} minor units"]
-            if taken_back
+            [f"refunded to customers (already subtracted above): {refunded} minor units"]
+            if refunded
+            else []
+        ),
+        *(
+            [
+                "charged back by a payer's bank (already subtracted above): "
+                f"{charged_back} minor units"
+            ]
+            if charged_back
             else []
         ),
         f"spend to date: {spent} minor units",

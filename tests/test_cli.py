@@ -888,7 +888,7 @@ def test_record_refund_names_the_payment_and_reports_what_is_left(tmp_path, caps
     assert cli.main(["--db", db_path, "cell-fitness", "--cell", cell_id]) == 0
     out = capsys.readouterr().out
     assert "revenue:           0 minor units" in out
-    assert "received 1250, refunded or charged back 1250" in out
+    assert "received 1250, refunded 250, charged back 1000" in out
 
 
 def test_record_fee_names_the_charge_and_reports_the_cells_spend(tmp_path, capsys):

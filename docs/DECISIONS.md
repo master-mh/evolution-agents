@@ -6142,6 +6142,19 @@ out as a Slice G decision, not this one.
   other external operating costs and the report itself. `novelty`'s revenue recurrence still counts a
   refunded payment, and a chargeback the colony wins back is unmodelled (both logged).
 
+- **Revised 2026-09-17, by the live check this ADR owed.** The Cell's record said "refunded or charged
+  back (already subtracted above): N minor units" — one line for both kinds, chosen so a Cell never
+  reversed reads exactly as before. On `claude-haiku-4-5` a Cell that had only been *refunded* reported
+  in its own rationale that it had 120 "in chargebacks": the Cell reasoning from a distinction the colony
+  had not drawn for it, which is the §0.3 shape at the prompt end — the kernel states the record, so a
+  record that blurs two facts hands the Cell a third. §1.1 subtracts refunds and chargebacks as separate
+  terms and §10.2 asks for their rates separately, so **each kind is now named on its own line, and only
+  when it happened** (`context._realised_record_section`); `cell-fitness` carried the identical wording
+  and got the identical fix. Re-checked live with a Cell holding both: "130 units earned, 170 units lost
+  to refunds and chargebacks" — both figures, both names, correct sum. The one-line-per-kind cost is a
+  second line in the rare case where both happened; the combined line's cost was a wrong word in a Cell's
+  reasoning, every time.
+
 ## ADR-098: A payment fee is a charge nobody chose — recorded past a cap, and counted by one afterwards
 
 - **Status:** Accepted

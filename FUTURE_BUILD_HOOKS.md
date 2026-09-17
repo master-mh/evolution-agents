@@ -1957,6 +1957,11 @@ chargebacks". The owed live check from ADR-097 is discharged. Three findings cam
   combined line trades a rare extra line for a wrong word in the Cell's own reasoning. Naming whichever is
   non-zero (or both) is a one-line change to `context._realised_record_section` — and a prompt change, so
   it needs its own live check.
+  **Fixed 2026-09-17** (ADR-097, revised): each kind is named on its own line and only when it happened,
+  in the Cell's record and in `cell-fitness`. Re-checked live on `claude-haiku-4-5` with a Cell holding
+  both — "130 units earned, 170 units lost to refunds and chargebacks", both named, sum correct. Still
+  open from the same run: the repair turn dropped *everything* the second time (reply 2 was
+  `{"kind": "abstain"}` alone), which is the defect above and is being fixed in its own session.
 
 ## From the trial identity (2026-09-16, ADR-100)
 

@@ -355,10 +355,14 @@ def test_domination_reads_revenue_net_of_reversals(conn, cell):
     assert record.net_contribution == -record.spend_minor_units
 
 
-def test_the_cells_own_record_shows_net_revenue_and_names_the_reversal(conn, cell):
+def test_the_cells_own_record_names_each_reversal_kind(conn, cell):
     """A Cell shown only a smaller number cannot tell a refund from a sale that
-    never happened, so the reversal is named. A Cell never refunded reads exactly
-    as it did before this slice — the line is absent, not zero."""
+    never happened, so the reversal is named — and **each kind is named on its
+    own line**. §1.1 subtracts refunds and chargebacks as separate terms and
+    §10.2 asks for their rates separately; the earlier combined wording
+    ("refunded or charged back") led a live model to report this Cell's refund as
+    a chargeback in its own rationale. A Cell with neither reads exactly as it did
+    before ADR-097: the lines are absent, not zero."""
     untouched = _cell(conn, "untouched")
     _sale(conn, untouched, 100, source="inv-u")
     sale = _sale(conn, cell, 500)
@@ -366,11 +370,21 @@ def test_the_cells_own_record_shows_net_revenue_and_names_the_reversal(conn, cel
 
     body = context._realised_record_section(conn, cell).body
     assert "revenue earned to date: 300 minor units" in body
-    assert "refunded or charged back (already subtracted above): 200 minor units" in body
+    assert "refunded to customers (already subtracted above): 200 minor units" in body
+    assert "charged back" not in body, (
+        "nothing was charged back — naming a kind that did not happen is the "
+        "conflation this wording exists to prevent"
+    )
+
+    _refund(conn, sale, 50, source="dispute-1", kind=revenue.ReversalKind.CHARGEBACK)
+    both = context._realised_record_section(conn, cell).body
+    assert "revenue earned to date: 250 minor units" in both
+    assert "refunded to customers (already subtracted above): 200 minor units" in both
+    assert "charged back by a payer's bank (already subtracted above): 50 minor units" in both
 
     plain = context._realised_record_section(conn, untouched).body
     assert "revenue earned to date: 100 minor units" in plain
-    assert "refunded" not in plain
+    assert "refunded" not in plain and "charged back" not in plain
 
 
 def test_an_experiment_report_nets_a_refund_out_of_the_experiment_that_sold(conn):

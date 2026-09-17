@@ -562,13 +562,23 @@ def cmd_cell_fitness(args: argparse.Namespace) -> None:
     print(f"Cell {cell.cell_id} ({cell.cell_type.value}, {cell.status.value})")
     print(f"  book:              {cell.book.value}")
     print(f"  revenue:           {record.revenue_minor_units} minor units")
-    taken_back = revenue.reversed_revenue(conn, cell.cell_id, cell.book)
-    if taken_back:
+    refunded = revenue.reversed_revenue(
+        conn, cell.cell_id, cell.book, kind=revenue.ReversalKind.REFUND
+    )
+    charged_back = revenue.reversed_revenue(
+        conn, cell.cell_id, cell.book, kind=revenue.ReversalKind.CHARGEBACK
+    )
+    if refunded or charged_back:
         # Net above, because domination reads net (ADR-097); what was received
         # and what was taken back are printed beside it so a refund reads as a
-        # refund rather than as a smaller sale.
+        # refund rather than as a smaller sale. Each kind named on its own,
+        # for the reason `context._realised_record_section` gives: §1.1 and
+        # §10.2 keep refunds and chargebacks apart, and the combined wording
+        # was read back as the wrong one.
+        taken = [f"refunded {refunded}"] if refunded else []
+        taken += [f"charged back {charged_back}"] if charged_back else []
         print(f"    received {revenue.gross_revenue(conn, cell.cell_id, cell.book)}, "
-              f"refunded or charged back {taken_back}")
+              + ", ".join(taken))
     print(f"  spend:             {record.spend_minor_units} minor units")
     print(f"  net contribution:  {record.net_contribution} minor units")
     if record.mean_brier is None:
