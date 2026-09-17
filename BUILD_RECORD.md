@@ -108,9 +108,20 @@ as UNPARSEABLE), the assistant turn dropped from the repair request fails the te
 being edited is present, and `always_required_keys` narrowed by hand fails the skeleton-agreement
 test and — narrowed past a parser-required field — the test binding it to `Proposal`.
 
-- Owed: **a paid wake to confirm this model now repairs correctly.** The test double encodes the
-  observed behaviour and says so; what it proves is conditional (*if* a model supplies the keys it
-  is told to supply, the turn must name them all). `scripts/measure_parse_compliance.py` is the
-  instrument and already separates call failures from parse failures (ADR-101). The operator's call.
+### Confirmed live
+
+One operator-approved paid call (`claude-haiku-4-5`), replaying the observed conversation through
+the production path — `_attempt_parse_repair`, the real gateway, the real provider, reply 1 and its
+validation error verbatim. **The model kept the `summary` byte-for-byte** and added the two fields
+it was missing, correctly omitting `risk_tier` for `abstain`. 1,716 in / 196 out, 2,696 micro-USD
+recorded as 1 minor unit, conservation and the hash chain green in all three books. One call, not
+two: the first reply's outcome was already known.
+
+n=1 and one model — it shows the observed failure no longer reproduces, not a repair *rate*. The
+rationale it produced answered the other question in passing: generation 0, no revenue, every
+channel and tool OFF, "proposing work I cannot execute serves no purpose." That is the content
+§10.3/§10.5 need to tell "nothing worth doing because X" from "produced nothing", and relaxing the
+requirement would have thrown it away.
+
 - Next: §28 Phase 9's remaining kernel items — the liability reserve, a merchant channel behind
   `real_commerce`, and §1.1's operating-cost terms.

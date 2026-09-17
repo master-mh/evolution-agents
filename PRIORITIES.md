@@ -193,15 +193,20 @@
   be optimised against. 5 guards teeth-checked, 5 CAUGHT; golden unmoved at version 42.
 
 ## Next
-- [ ] **Confirm the repaired repair turn on a paid wake (ADR-102's owed live check).** Every test of
-  this ships a conditional: `_SuppliesExactlyTheKeysNamed` encodes one measured behaviour
-  (`claude-haiku-4-5`, 2026-09-16 — the reply carries exactly the keys the turn names) and proves that
-  *if* a model supplies the keys it is told to supply, the turn has to name them all. Whether this model
-  now repairs correctly is not knowable from `MockProvider`, whose reply is an input rather than a
-  response to the wording (ADR-049) — the same blindness that let ADR-069 ship this and ADR-101's false
-  premise. The instrument exists: `scripts/measure_parse_compliance.py`, which already reports call
-  failures beside the parse rate. Needs the operator's authorisation to spend. *Disproved by:* a dated
-  live-run line in BUILD_RECORD naming a repaired wake and its two `model_calls` rows.
+- [x] **The repaired repair turn confirmed live — DONE** (2026-09-17), one operator-approved paid call
+  on `claude-haiku-4-5`. The observed conversation replayed through `_attempt_parse_repair`, the real
+  gateway and the real provider, reply 1 and its error verbatim: the model **kept the `summary`
+  byte-for-byte**, added `rationale` and `estimated_cost_minor_units: 0`, and correctly omitted
+  `risk_tier` for `abstain`. 1,716 in / 196 out, 2,696 micro-USD recorded as 1 minor unit, conservation
+  and hash chain green. **n=1 and one model** — the observed failure no longer reproduces; this is not a
+  repair rate, which is what the item below still wants.
+- [ ] **A repair *rate*, and the per-kind breakdown, still unmeasured.** One replayed conversation shows
+  the observed failure is gone; it says nothing about how often a repair succeeds, or whether `abstain`
+  fails more than the other kinds. `scripts/measure_parse_compliance.py` is the instrument and already
+  separates call failures from parse failures (ADR-101), but reports no breakdown by claimed `kind`.
+  Costs real cents over ~20 wakes and needs the operator's authorisation. *Disproved by:* a
+  `--by-kind` (or equivalent) flag on `scripts/measure_parse_compliance.py` plus a dated arm in
+  BUILD_RECORD.
 - [ ] **`abstain` may be under-filled by a prompt rule that is not about `abstain` (ADR-102).** The
   sentence that looks guilty is not: "Most wakes produce nothing" is the tail of the **`artifact`**
   key's description, one clause after `never with kind "abstain"`, which is what makes it read as being

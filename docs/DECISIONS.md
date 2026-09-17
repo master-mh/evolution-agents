@@ -6579,3 +6579,21 @@ FUTURE_BUILD_HOOKS and PRIORITIES rather than guessed at here.
   in the replay and no prompt length moves — unlike ADR-068, which shifted `input_tokens` by a
   constant because it lengthened the *first* turn. This slice touches only a turn the golden run
   never reaches.
+- **Confirmed live, one operator-approved paid call (2026-09-17, `claude-haiku-4-5`).** The
+  observed conversation replayed through the production path — `_attempt_parse_repair`, the real
+  gateway, the real provider — with reply 1 and its validation error verbatim. The model **kept the
+  `summary` byte-for-byte** ("No proposal at this scheduled cycle."), added a `rationale` and
+  `estimated_cost_minor_units: 0`, and correctly omitted `risk_tier` for `abstain`. `repaired`;
+  1,716 in / 196 out; 2,696 micro-USD recorded as 1 minor unit; conservation and the hash chain
+  green in all three books. One call, because the first reply's outcome was already known and
+  re-buying it would have answered nothing.
+
+  **What this is and is not.** n=1, one model, one replayed conversation: it shows the specific
+  observed failure no longer reproduces. It is not a repair *rate*, and the wording is not proven
+  better in general — that needs the per-kind campaign PRIORITIES now carries.
+
+  **It also answered the `abstain` question from the other direction.** The rationale the model
+  supplied was substantive — generation 0, no revenue, every channel and tool OFF, "proposing work
+  I cannot execute serves no purpose." That is exactly the content §10.3/§10.5 need in order to
+  tell "nothing worth doing because X" from "produced nothing", produced on the first ask once the
+  field was actually requested. Relaxing the requirement would have thrown it away.
