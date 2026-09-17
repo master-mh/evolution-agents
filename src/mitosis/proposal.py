@@ -671,6 +671,25 @@ def _summarise_validation_error(exc: ValidationError) -> str:
     return "; ".join(parts)
 
 
+def always_required_keys() -> tuple[str, ...]:
+    """The keys every reply carries whatever its `kind`, in the order the
+    prompt shows them.
+
+    Derived from `_prompt_schema` — the skeleton minus the conditional payloads
+    — rather than written out again, for the reason that docstring gives about
+    itself: a hand-written second copy drifts, and the failure lands on every
+    Cell at once. The one caller outside the prompt is
+    `deliberation._repair_instruction`, which has to name this list to a model
+    that has just been told only what it got *wrong* (ADR-102).
+
+    **Not the same claim as "always mandatory."** `risk_tier` is shown
+    unconditionally and may be omitted by exactly one kind, `abstain`
+    (ADR-068); a caller naming these keys must carry that exception itself.
+    """
+    conditional = set(KIND_PAYLOADS.values())
+    return tuple(key for key in _prompt_schema() if key not in conditional)
+
+
 def response_schema_hint() -> str:
     """The reply format, rendered for the prompt.
 

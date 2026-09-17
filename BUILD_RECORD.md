@@ -46,57 +46,71 @@ settings and the simulator stall they uncovered, and Phase 3's
 pre-registered run that found no selection effect, and refunds and
 chargebacks naming the payment they reverse, and payment fees as a
 charge nobody chose, and §1.1's profit report with the shadow rate a
-person declares, and the trial's legal identity, 2026-07-21 through
-2026-09-16):
+person declares, and the trial's legal identity, and a failed model
+call becoming its own deliberation outcome, 2026-07-21 through 2026-09-16):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-16 — A failed call is its own outcome, not the Cell's unparseable reply (ADR-101)
+## 2026-09-17 — A repair turn that names only the error specifies the whole reply (ADR-102)
 
-Ollama's Metal backend died mid-session on 2026-09-15 and `mitosis wake` reported the Cell had failed to
-produce a valid proposal — then bought a second call to re-prompt the provider that was down.
-`gateway.call_model` does not raise on a provider failure: it classifies the outcome, records it, and
-returns the call. `deliberation.py` read `response_text or ""` straight past that, and an empty string
-parses exactly like a model ignoring the schema.
+One paid wake on 2026-09-16 (`claude-haiku-4-5`) spent two calls and recorded nothing, and the
+second reply was **worse** than the first. Reply 1 was `{"kind": "abstain", "summary": "No proposal
+at this scheduled cycle."}`, rejected for a missing `rationale` and `estimated_cost_minor_units`.
+The repair turn named those two fields. Reply 2 carried exactly those two fields and had dropped
+the `summary` it had already produced correctly. Between them the two replies contain a complete
+proposal; neither one is.
+
+ADR-069's docstring named the choice that caused it: point at the specific error rather than repeat
+the schema, because "the schema is already the first turn's own content, still in context, and
+restating it would waste tokens on the part that was never the problem." The premise is true. The
+inference is not — **on a small model the part that was never the problem is what gets dropped**,
+because a turn naming two field names does not read as a patch to an object. It reads as a
+specification of the reply.
 
 ### What shipped
 
-- `gateway.call_failure(call)` — `None` when the call succeeded, otherwise the status, the provider and
-  the gateway's already-redacted error. One place a caller reads the classification the gateway made,
-  living in the layer that wrote it.
-- A fourth deliberation status, `call_failed`, and migration 0041 rebuilding the CHECK (SQLite cannot
-  ALTER one). §24.2 is the reason it is a status and not a better sentence: provider drift must stay
-  distinguishable from Cell evolution, and `status` is what every reader groups by. Two row-shape CHECKs
-  ride along, since the rebuild is the chance to take them: a `call_failed` row names the call that
-  failed — one naming none is a refusal wearing the wrong status — and names no repair.
-- **No repair.** A wake lost to an outage costs one call, not two. The repair call and every workflow step
-  ask the same question: a repair that fails still ends the wake `unparseable` (the first reply really was
-  the Cell's), but the note says the second call returned nothing; a workflow step that fails keeps the
-  draft and the wake is still `proposed`.
-- `scripts/measure_parse_compliance.py` reports call failures beside the parse rate, which had been
-  counting outages as compliance failures — the hazard its own docstring named.
+- **The repair turn asks for an edit.** "Correct the JSON object you just sent. Do not write a new
+  one: keep every key you already sent, with its value unchanged, and change only what the error
+  above names." The failed reply was already the middle message of the repair request (ADR-069 built
+  that); what was missing was an instruction pointing at it. No new message, no new context.
+- **It names every required key**, from a new `proposal.always_required_keys()` — the reply skeleton
+  minus the conditional payloads, derived so it cannot drift from what the parser demands. This
+  covers what an edit instruction structurally cannot: a first reply that was not JSON has no object
+  to edit *from*, and that is the commonest unparseable shape this repo has measured.
+- **No merge.** Carrying a field forward from reply 1 into reply 2 was the third candidate and the
+  tempting one. Refused: it manufactures an utterance no Cell made, it is the salvage
+  `proposal.parse` explicitly refuses one layer up, and it destroys the premise ADR-070 used to keep
+  parse-repair away from the Auditors — repair reformats and never re-judges; a merge is the kernel
+  *authoring*.
+- **`rationale` and `estimated_cost_minor_units` stay required for `abstain`.** For that kind the
+  rationale is the entire content, and §23.5 says the queue will be optimised against — a
+  zero-content abstain is an outcome a Cell can always emit for free.
 
 ### Found
 
-- **ADR-069 wrote the false premise down**, four paragraphs above its own counter-example: "the first call
-  is known to have **succeeded and been billed** (it returned response text)" — and then, below, that a
-  `failed` row "needs no special handling ... flows through the same path". A `failed` row is exactly the
-  case where nothing was returned.
-- **The Auditors have the identical defect and it costs more there.** `auditor.py` and `content_audit.py`
-  parse `response_text or ""` too, and §10.4 makes a rejected audit a fitness fact about the *Auditor*.
-  Not fixed here — what an `audits` row says with no verdict is its own schema decision, and ADR-070's
-  rule is that an extension to the Auditors earns itself. Logged, with the stale ADR-022 comment
-  ("the call is bought and committed by now") it leaves behind.
-- **A teeth check caught a test passing for the wrong reason.** The rebuilt table's `wake_key` UNIQUE
-  check was satisfied by the fixture's dangling genome reference, because the migration re-enables foreign
-  keys on its last line. Now disabled again and matched by error name.
+- **The under-filling invitation is real and is not where it looked.** "Most wakes produce nothing"
+  is the trailing sentence of the **`artifact`** key's description, one clause after `never with
+  kind "abstain"` — which is what makes it read as being about abstain wakes. The likelier cause is
+  the general rule below it, "Leave out any key you are not using": an abstaining model applying
+  that to `rationale` produces the observed reply 1 exactly. A wording hypothesis, not a finding —
+  this repo does not tune prompt wording without a live run.
+- **Second ADR premise to be its own defect.** ADR-101 found ADR-069's "the first call is known to
+  have succeeded and been billed" disproved four paragraphs below itself; this is ADR-069's other
+  stated premise. Both were invisible to the suite for the same reason: `MockProvider`'s reply is an
+  input, not a response to the wording (ADR-049).
 
 ### Verification
 
-1577 tests pass (12 new), golden run exact at version 42 — no snapshot field moved, which is the
-honest outcome for an outcome the fixed scenario never produces — ruff and docs-facts clean. 15 guards
-teeth-checked, 15 CAUGHT. Reproduced end to end with `OLLAMA_HOST` pointed at a dead port: one `failed`
-call, both reservations released, nothing settled, `Deliberation … (call_failed)` naming the provider.
+1582 tests pass (5 new), golden run exact at version 42 — `_repair_instruction` is never rendered in
+a replay with no malformed reply, so unlike ADR-068 no prompt length moves. Ruff and docs-facts
+clean. 5 guards teeth-checked, 5 CAUGHT: ADR-069's instruction restored verbatim fails both new
+guards (the structural one names the missing keys, the end-to-end one reproduces the observed wake
+as UNPARSEABLE), the assistant turn dropped from the repair request fails the test that the object
+being edited is present, and `always_required_keys` narrowed by hand fails the skeleton-agreement
+test and — narrowed past a parser-required field — the test binding it to `Proposal`.
 
-- Next: §28 Phase 9's remaining kernel items — the liability reserve (refunds and chargebacks now give it
-  a trigger; the share and window are policy), a merchant channel behind `real_commerce`, and §1.1's
-  operating-cost terms. Still the operator's: the real-money budget, and whether to open any channel.
+- Owed: **a paid wake to confirm this model now repairs correctly.** The test double encodes the
+  observed behaviour and says so; what it proves is conditional (*if* a model supplies the keys it
+  is told to supply, the turn must name them all). `scripts/measure_parse_compliance.py` is the
+  instrument and already separates call failures from parse failures (ADR-101). The operator's call.
+- Next: §28 Phase 9's remaining kernel items — the liability reserve, a merchant channel behind
+  `real_commerce`, and §1.1's operating-cost terms.

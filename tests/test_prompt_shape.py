@@ -338,3 +338,40 @@ def test_kind_payloads_covers_exactly_the_kinds_the_parser_demands_one_for():
         f"KIND_PAYLOADS lists {sorted(k.value for k in KIND_PAYLOADS)} — the prompt "
         "and the parser now disagree about which kinds need one"
     )
+
+
+# --- the repair turn has to name the same keys the skeleton does (ADR-102) ----
+
+
+def test_the_always_required_list_matches_the_skeleton_it_is_derived_from():
+    """`proposal.always_required_keys()` exists so a second caller — the
+    parse-repair follow-up turn — can name the required keys without writing
+    them out again.
+
+    `ALWAYS_REQUIRED` above is the independent, hand-written statement of the
+    same thing; this test is the two-source agreement. If the skeleton gains or
+    loses an unconditional key and this file is not updated, one of them is
+    wrong and the repair turn is about to describe a reply the parser will
+    reject.
+    """
+    assert proposal.always_required_keys() == ALWAYS_REQUIRED
+
+
+def test_the_always_required_list_covers_every_field_the_parser_demands():
+    """Binds the list to the *parser*, not just to the prompt.
+
+    A new field added to `Proposal` with no default is required of every reply
+    from that moment on. If it never reaches `always_required_keys`, the repair
+    turn keeps reciting the old list and a model that follows it exactly still
+    fails to validate — the exact shape ADR-102 was written about, one layer up.
+    """
+    demanded = {
+        name
+        for name, field in proposal.Proposal.model_fields.items()
+        if field.is_required()
+    }
+    missing = demanded - set(proposal.always_required_keys())
+    assert missing == set(), (
+        f"the parser requires {missing} of every reply, and neither the reply "
+        "skeleton nor the repair turn names it"
+    )

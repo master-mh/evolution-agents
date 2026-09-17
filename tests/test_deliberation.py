@@ -1323,3 +1323,149 @@ def test_run_ready_wakes_ignores_other_event_types(conn):
     )
     assert results == []
     assert events.count_by_status(conn).get("pending") == 1
+
+
+# --- ADR-102: the repair turn must not narrow the reply ------------------------
+
+
+#: The abstain reply `claude-haiku-4-5` actually sent on 2026-09-16, before any
+#: repair: a correct `summary`, and neither of the two other keys every reply
+#: owes. Reproduced verbatim so the regression is anchored to the observed
+#: failure rather than to a convenient stand-in.
+_OBSERVED_FIRST_REPLY = json.dumps(
+    {"kind": "abstain", "summary": "No proposal at this scheduled cycle."}
+)
+
+
+class _SuppliesExactlyTheKeysNamed:
+    """A model that answers a repair turn with an object carrying exactly the
+    proposal keys that turn *mentions*, and nothing else.
+
+    **This encodes one measured behaviour, not a claim about models in
+    general.** On 2026-09-16 `claude-haiku-4-5` was told
+    `rationale: Field required; estimated_cost_minor_units: Field required`
+    and replied with an object holding those two keys — having silently dropped
+    the `summary` it had produced correctly one turn earlier. The repair turn
+    named two keys, so the reply had two keys. That is the behaviour this double
+    reproduces, and it is the reason a repair turn that names only the error can
+    hand back a reply strictly worse than the one it was repairing.
+
+    A canned reply cannot respond to prompt wording at all (`MockProvider`'s
+    reply is an input — ADR-049), so this is the nearest a test can get to the
+    live failure without spending money. What it genuinely proves is
+    conditional and worth stating plainly: *if* the model supplies the keys it
+    is told to supply, the repair turn has to tell it all of them.
+    """
+
+    name = providers.MOCK_PROVIDER
+
+    def __init__(self, first_reply=_OBSERVED_FIRST_REPLY):
+        self._first_reply = first_reply
+        self.calls = 0
+        self.repair_turn = None
+
+    def complete(self, request):
+        self.calls += 1
+        if self.calls == 1:
+            return providers.MockProvider(reply=self._first_reply).complete(request)
+
+        self.repair_turn = request.messages[-1]["content"]
+        named = [
+            key
+            for key in proposal.Proposal.model_fields
+            if key in self.repair_turn
+        ]
+        values = {
+            "kind": "abstain",
+            "summary": "No proposal at this scheduled cycle.",
+            "rationale": "nothing in the context is worth a call this wake",
+            "estimated_cost_minor_units": 0,
+        }
+        reply = {key: values[key] for key in named if key in values}
+        return providers.MockProvider(reply=json.dumps(reply)).complete(request)
+
+
+def test_the_repair_turn_names_every_key_a_reply_must_carry(conn):
+    """The guard, stated where it is enforced.
+
+    A repair turn that names a *subset* of the required keys reads to a small
+    model as a specification of the whole reply, not as a patch to one. Naming
+    all of them costs a handful of tokens and removes the failure mode; the
+    list is derived from the schema, so it cannot drift from what the parser
+    demands.
+    """
+    instruction = deliberation._repair_instruction("summary: Field required")
+
+    missing = [
+        key for key in proposal.always_required_keys() if key not in instruction
+    ]
+    assert missing == [], (
+        f"the repair turn does not name {missing}, so a model that supplies "
+        "exactly what it is asked for will omit them"
+    )
+
+
+def test_a_repair_does_not_drop_a_field_the_first_reply_got_right(conn):
+    """The observed 2026-09-16 failure, end to end: an abstain reply missing
+    two required keys, repaired by a model that supplies the keys it is told
+    to supply.
+
+    Before ADR-102 this wake ended UNPARSEABLE after two billed calls, and the
+    second reply was *worse* than the first — it had traded a correct `summary`
+    for the two fields the error named. The repair now has to leave the model
+    able to produce a complete object.
+    """
+    cell = _make_cell(conn)
+    provider = _SuppliesExactlyTheKeysNamed()
+
+    result = deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=provider, wake_key="w1", model="mock-1",
+    )
+
+    assert result.status == deliberation.DeliberationStatus.PROPOSED, (
+        f"the repair reply still did not validate: {result.failure_reason}"
+    )
+    assert provider.calls == 2
+    assert result.repair_model_call_id is not None
+
+    row = conn.execute(
+        "SELECT kind, summary FROM proposals WHERE proposal_id = ?", (result.proposal_id,)
+    ).fetchone()
+    assert row["kind"] == "abstain"
+    assert row["summary"] == "No proposal at this scheduled cycle.", (
+        "the summary the first reply got right did not survive the repair"
+    )
+
+
+def test_the_repair_request_still_shows_the_model_its_own_failed_reply(conn):
+    """The precondition for asking a model to *edit* rather than regenerate.
+
+    The repair turn says "correct the JSON object you just sent"; that
+    instruction is empty unless the object is actually in the request. It is
+    the middle of three messages — original prompt, the failed reply as the
+    assistant turn, the correction request — and a refactor that dropped it
+    would leave the wording pointing at nothing.
+    """
+    cell = _make_cell(conn)
+    captured = []
+
+    class _Capturing:
+        name = providers.MOCK_PROVIDER
+
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, request):
+            self.calls += 1
+            captured.append(request.messages)
+            return providers.MockProvider(reply="not json").complete(request)
+
+    deliberation.deliberate(
+        conn, cell_id=cell.cell_id, provider=_Capturing(), wake_key="w1", model="mock-1",
+    )
+
+    repair_messages = captured[1]
+    assert [m["role"] for m in repair_messages] == ["user", "assistant", "user"]
+    assert repair_messages[1]["content"] == "not json", (
+        "the reply being repaired is not in the repair request"
+    )

@@ -6435,3 +6435,147 @@ out as a Slice G decision, not this one.
   `content_audit.py` still record a provider outage as an Auditor that produced nothing usable, and
   `auditor.py`'s comment "The call is bought and committed by now (ADR-022)" is false on exactly that
   path. Both logged in FUTURE_BUILD_HOOKS and PRIORITIES.
+
+## ADR-102: A repair turn that names only the error specifies the whole reply — so it names every required key, and asks for an edit rather than a reply
+
+- **Status:** Accepted; `proposal.always_required_keys()`, `deliberation._repair_instruction`,
+  5 new tests across two files, no migration, golden unchanged
+- **Spec ref:** §24 (intro: "validates structured output"), §15.1, §23.5, §0.3; ADR-049, ADR-050,
+  ADR-068, ADR-069 (the mechanism this corrects), ADR-070
+
+- **Context:** One paid wake on 2026-09-16 (`claude-haiku-4-5`, `mitosis wake --provider anthropic`)
+  spent two calls and recorded nothing, and the second reply was **worse** than the first:
+
+  | turn | reply | rejected for |
+  | --- | --- | --- |
+  | 1 | `{"kind": "abstain", "summary": "No proposal at this scheduled cycle."}` | `rationale: Field required; estimated_cost_minor_units: Field required` |
+  | 2 | `{"kind": "abstain", "rationale": "…", "estimated_cost_minor_units": 0}` | `summary: Field required` |
+
+  The model supplied the two fields the error named and dropped the `summary` it had already
+  produced correctly. Between them the two replies contain a complete, valid proposal; neither one
+  is.
+
+### ADR-069's own stated reason is what produced this
+
+`_repair_instruction`'s docstring named the design choice: point at the specific error rather than
+repeat the schema, because "the schema is already the first turn's own content, still in context,
+and restating it would waste tokens on the part that was never the problem." The premise is true —
+the schema *is* still in context. The inference does not hold. **On a small model the part that was
+never the problem is precisely what gets dropped**, because a follow-up turn naming two field names
+does not read as a patch to an object; it reads as a specification of the reply. The model answered
+the question it was asked.
+
+This is the second time an ADR's own premise turned out to be the defect (ADR-101 found ADR-069's
+"the first call is known to have succeeded and been billed" disproved four paragraphs below itself).
+Both were unfalsifiable in this suite for the same reason: `MockProvider`'s reply is an input, not a
+response to the wording (ADR-049), so no test could see either one.
+
+### What shipped: the repair turn says two things the error alone could not
+
+- **Edit, do not regenerate.** The failed reply is *already* the middle message of the repair
+  request — ADR-069 built that and argued for it. What was missing was an instruction pointing at
+  it: "Correct the JSON object you just sent. Do not write a new one: keep every key you already
+  sent, with its value unchanged, and change only what the error above names. A key you got right
+  is still right." This adds no message and no context; it changes what the model is told to do with
+  one it already has, which is why it is the cheap half of the fix.
+- **The whole required-key list**, from a new `proposal.always_required_keys()`. This covers the
+  case an edit instruction structurally cannot: a first reply that was not JSON at all has no object
+  to edit *from*, and that is the most common unparseable shape this repo has measured.
+
+`always_required_keys()` is derived — the `_prompt_schema()` skeleton minus `KIND_PAYLOADS.values()`
+— for the reason that function's own docstring gives about itself: a hand-written second copy drifts,
+and the failure lands on every Cell at once. It carries `risk_tier`'s one exception (`abstain`,
+ADR-068) as prose and interpolates `ProposalKind.ABSTAIN.value` rather than spelling it.
+
+### The §15.1 cost, paid deliberately
+
+This spends roughly 40 tokens of a repair turn that the prior design spent zero on, on exactly the
+"part that was never the problem." §15.1 bounds the *per-wake* budget, and the trade is not close:
+the alternative price, measured once, is a whole second billed call returning nothing. A repair turn
+is also the one place in the loop where the token argument is weakest — it exists only on the path
+where the cheap version has already failed.
+
+### Why the kernel does not merge the two replies
+
+The tempting fix is the third one: validate the repair reply and, where a field is absent but was
+present and valid in the first, carry it forward. Both observed replies are in hand; between them
+the object is complete. Rejected, and the reason is not §0.3 — a proposal is an *intention*, not the
+canonical result §0.3 governs, and the kernel composing one breaks something else:
+
+- **It manufactures an utterance no Cell made.** A merged object pairs a `summary` from turn 1 with
+  an `estimated_cost_minor_units` from turn 2 and asserts the pair as one Cell's proposal. Nothing
+  checks that the two agree; the model that wrote the second was, on the evidence, no longer
+  thinking about the first. §23.4 names "misleading summaries" as a thing the approval queue must
+  detect, and a kernel-built summary/cost pair is one the Cell can disown and the Auditor cannot
+  attribute.
+- **It is exactly the salvage `proposal.parse` refuses**, one layer up. That docstring is explicit:
+  an unparseable reply "is never salvaged into a 'best effort' record, because a half-understood
+  intention stored next to fully-understood ones is worse than an honest gap." Merging is
+  half-understanding assembled from two halves.
+- **It breaks the premise ADR-070 used to exclude the Auditors.** Repair is defensible in
+  `deliberation` and nowhere else because it *reformats and never re-judges*. A merge is neither: it
+  is the kernel authoring part of a Cell's output. Ship it and ADR-070's line — the one keeping
+  parse-repair away from an independent §10.4 verdict — no longer has a principle behind it.
+
+Restating the *whole* schema (the other candidate) was rejected as strictly more tokens for the same
+effect: the observed failure is a required key going missing, the required keys are five, and
+`_payload_rule`'s conditional prose is already the weakest-read part of the first turn (lesson 3 in
+`_prompt_schema`'s docstring).
+
+### `rationale` and `estimated_cost_minor_units` stay required for `abstain`
+
+Weighed because the failure landed on an abstain reply, and rejected — relaxing them would have
+"fixed" this by deleting the data:
+
+- ADR-068 already made and scoped this argument. `risk_tier` is the one field an abstaining Cell
+  structurally cannot state (§23.1 classifies *actions*; there is no action). For `abstain` the
+  rationale is the **entire content** — "nothing worth doing, because X" is the whole proposal — and
+  the cost is trivially 0, which the prompt already says.
+- §23.5: the approval queue is part of the environment and will be optimised against. A zero-content
+  `abstain` is an outcome a Cell under selection pressure can always emit at no cost, and §10.3/§10.5
+  need "nothing worth doing because X" to stay distinguishable from "produced nothing."
+
+**The under-filling invitation is real, and it is not where it looked.** "Most wakes produce nothing"
+is the trailing sentence of the **`artifact`** key's description, not a statement about abstain
+wakes — it sits one clause after `never with kind "abstain"`, which is what makes it read that way.
+The likelier cause is the general rule two lines below it: "Leave out any key you are not using" /
+"A key you have nothing to put in is left out entirely, never sent empty." An abstaining model
+applying that rule to `rationale` produces the observed reply 1 exactly. That is a prompt-wording
+hypothesis, and this repo does not tune prompt wording without a live run (ADR-049); logged in
+FUTURE_BUILD_HOOKS and PRIORITIES rather than guessed at here.
+
+### What it displaced
+
+- **Merging the two replies field by field.** Rejected per the three arguments above; the ADR-070
+  one is decisive, since the merge removes the principle that bounds repair to this module.
+- **Restating the entire schema in the repair turn.** Rejected: more tokens, and the part it would
+  add beyond the required keys is the part measured to be read most weakly.
+- **Relaxing `rationale`/`estimated_cost_minor_units` for `abstain`.** Rejected per ADR-068's own
+  scoping discipline: it treats a symptom of the repair turn as a fault in the schema, and it
+  deletes the only content an abstention carries.
+- **Leaving the repair turn alone and accepting the second call as a coin flip.** Rejected: ADR-069
+  bought the second call on the argument that it "would probably lift the rate a lot." A repair that
+  can hand back a reply strictly worse than the one it repaired is not a lift; it is a second charge
+  for a regression.
+- **A live re-measurement in this slice.** Not run — a paid call is the operator's to authorise, and
+  the machinery a measurement would use (`scripts/measure_parse_compliance.py`, which ADR-101 taught
+  to separate call failures from parse failures) is already built. Logged as owed.
+
+### Verification
+
+- **5 guards teeth-checked, 5 CAUGHT.** ADR-069's error-only instruction restored verbatim fails
+  both new guards — the structural one names the missing keys, and the end-to-end one reproduces the
+  observed wake as UNPARSEABLE. Dropping the assistant turn from the repair request fails the test
+  that the object being edited is actually present. `always_required_keys` narrowed by hand fails
+  the skeleton-agreement test; narrowed past a parser-required field it fails the test that binds
+  the list to `Proposal` rather than to the prompt. One first reported WRONG-FAILURE on a truncated
+  pytest tuple repr, not a bad mutation — re-run against the assertion's actual text.
+- **What the tests cannot prove, stated in the test itself.** `_SuppliesExactlyTheKeysNamed` encodes
+  one measured behaviour (`claude-haiku-4-5`, 2026-09-16: reply carries exactly the keys the turn
+  names) and its docstring says so. The conditional it establishes is the honest one: *if* a model
+  supplies the keys it is told to supply, the repair turn has to tell it all of them. Whether this
+  model now repairs correctly needs a paid wake.
+- **Golden unchanged.** No scenario reply is malformed, so `_repair_instruction` is never rendered
+  in the replay and no prompt length moves — unlike ADR-068, which shifted `input_tokens` by a
+  constant because it lengthened the *first* turn. This slice touches only a turn the golden run
+  never reaches.

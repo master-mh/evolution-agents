@@ -176,7 +176,42 @@
   counting outages as compliance failures and now reports them beside it. 15 guards teeth-checked, 15
   CAUGHT; golden run unmoved at version 42.
 
+- [x] **The parse-repair turn could make a reply worse than the one it repaired — FIXED** (2026-09-17),
+  ADR-102. One paid `claude-haiku-4-5` wake spent two calls and recorded nothing: reply 1 was a valid
+  `summary` missing `rationale` and `estimated_cost_minor_units`; the repair turn named those two
+  fields; reply 2 carried exactly those two and had **dropped the `summary` it already had right**.
+  ADR-069's stated reason is what produced it — naming only the error, because "restating [the schema]
+  would waste tokens on the part that was never the problem". True premise, wrong inference: on a small
+  model the part that was never the problem is what gets dropped, because a turn naming two field names
+  reads as a *specification of the reply*, not a patch to an object. The turn now asks for an edit of
+  the object already in the request (ADR-069 put it there; nothing pointed at it) and names every
+  required key from a derived `proposal.always_required_keys()`. **The merge was refused** — carrying a
+  field forward from reply 1 manufactures an utterance no Cell made, is the salvage `proposal.parse`
+  refuses one layer up, and destroys the premise ADR-070 used to keep repair away from the Auditors
+  (repair reformats, never authors). `rationale`/`estimated_cost_minor_units` stay required for
+  `abstain`: there the rationale is the entire content, and §23.5 says a free zero-content outcome will
+  be optimised against. 5 guards teeth-checked, 5 CAUGHT; golden unmoved at version 42.
+
 ## Next
+- [ ] **Confirm the repaired repair turn on a paid wake (ADR-102's owed live check).** Every test of
+  this ships a conditional: `_SuppliesExactlyTheKeysNamed` encodes one measured behaviour
+  (`claude-haiku-4-5`, 2026-09-16 — the reply carries exactly the keys the turn names) and proves that
+  *if* a model supplies the keys it is told to supply, the turn has to name them all. Whether this model
+  now repairs correctly is not knowable from `MockProvider`, whose reply is an input rather than a
+  response to the wording (ADR-049) — the same blindness that let ADR-069 ship this and ADR-101's false
+  premise. The instrument exists: `scripts/measure_parse_compliance.py`, which already reports call
+  failures beside the parse rate. Needs the operator's authorisation to spend. *Disproved by:* a dated
+  live-run line in BUILD_RECORD naming a repaired wake and its two `model_calls` rows.
+- [ ] **`abstain` may be under-filled by a prompt rule that is not about `abstain` (ADR-102).** The
+  sentence that looks guilty is not: "Most wakes produce nothing" is the tail of the **`artifact`**
+  key's description, one clause after `never with kind "abstain"`, which is what makes it read as being
+  about abstain wakes. The likelier cause is the general rule below it — "Leave out any key you are not
+  using" / "A key you have nothing to put in is left out entirely" — which an abstaining model applying
+  to `rationale` produces the observed reply 1 exactly. This is a wording hypothesis and this repo does
+  not tune wording without a live run (ADR-049; two prompt bugs already hidden by `MockProvider`).
+  Requires the *decision* above it to stay settled: the fix is to the prompt, never to the requirement.
+  *Disproved by:* a per-kind parse-failure breakdown from `scripts/measure_parse_compliance.py` showing
+  `abstain` no worse than the other kinds.
 - [ ] **The Auditors read a failed call the way `deliberation` used to (ADR-101).** `auditor.py` and
   `content_audit.py` both `_parse(call.response_text or "")`, so a provider outage is recorded as an
   Auditor that was paid and produced nothing usable — and §10.4 makes that a fitness fact *about the

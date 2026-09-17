@@ -2008,3 +2008,27 @@ chargebacks". The owed live check from ADR-097 is discharged. Three findings cam
 - **The golden run has no provider-outage arm.** ADR-101's path is deterministic and pinned by tests, and
   no snapshot field moved, so the scenario was left alone. If `golden.py` ever gains a provider double
   that can fail, a wake against it would pin `status` and `made_repair_call` together for the whole class.
+
+## From the parse-repair turn slice (ADR-102, 2026-09-17)
+
+- **`always_required_keys()` is derived from the *prompt skeleton*, not from `Proposal`.** It is the
+  skeleton minus `KIND_PAYLOADS.values()`, and a test binds it to the parser's required fields in one
+  direction only (every parser-required field must appear). The reverse — a key in the list that the
+  parser does not require — is legal today and load-bearing: `risk_tier`, which `abstain` may omit
+  (ADR-068). If a third such conditional key ever appears, the repair turn's one-line prose exception
+  stops scaling and the list wants to carry its own per-key condition.
+- **The repair turn now describes the reply in two places.** The first turn renders
+  `response_schema_hint()`; the repair turn names the required keys again in prose. They are generated
+  from the same source so they cannot disagree about *which* keys, but they can disagree about tone and
+  emphasis, and `_prompt_schema`'s docstring records four measured cases where exactly that mattered.
+  A single renderer for both is the tidy version and is not obviously better — the repair turn wants to
+  be short, and the first turn was measured in its current shape.
+- **No instrument distinguishes "the repair worked" from "the first reply was fine".** `deliberations`
+  records `repair_model_call_id` and the outcome, so a repaired-and-PROPOSED wake is queryable, but
+  nothing records *what the repair changed*. ADR-069 deliberately does not store either reply text
+  (`model_calls.response_text` has both). A per-slice diff would answer "did it edit or regenerate?"
+  directly, which is the question this slice had to infer from two replies pasted into an issue.
+- **`abstain`'s under-filling has never been measured per kind.** `scripts/measure_parse_compliance.py`
+  reports a parse rate and, since ADR-101, call failures beside it — but not a breakdown by the `kind`
+  the reply claimed. Two of the three live failures on record (ADR-068's `qwen2.5` collapse, this one)
+  landed on `abstain`, which is suggestive and not evidence.

@@ -245,22 +245,50 @@ def _system_prompt(candidates: int = 1) -> str:
 
 
 def _repair_instruction(error: str) -> str:
-    """The follow-up turn sent after an unparseable reply (ADR-069).
+    """The follow-up turn sent after an unparseable reply (ADR-069, corrected
+    by ADR-102).
 
-    Points at the specific validation error rather than repeating the whole
-    schema — the schema is already the first turn's own content, still in
-    context, and restating it would waste tokens on the part that was never
-    the problem. "This is your only chance" is true and stated rather than
-    implied: `MAX_PARSE_REPAIR_ATTEMPTS` really is 1, and a model told it has
-    one shot is closer to the truth than one that thinks it can iterate.
+    **Naming only the error made the second reply worse than the first.**
+    ADR-069 argued that restating the schema "would waste tokens on the part
+    that was never the problem", because the schema is the first turn's own
+    content and still in context. Measured on `claude-haiku-4-5` (2026-09-16),
+    the part that was never the problem is precisely what a small model drops:
+    told `rationale: Field required; estimated_cost_minor_units: Field
+    required`, it returned an object carrying exactly those two keys and no
+    `summary` — a key it had already produced correctly one turn earlier. Two
+    billed calls, nothing recorded. A repair turn that names a subset of the
+    required keys reads as a *specification* of the reply, not as a patch to
+    one.
+
+    So this turn now says two things the error alone could not:
+
+    - **Edit, do not regenerate.** The model's own prior reply is already the
+      middle message of the repair request; the instruction now points at it
+      and asks for that object back with the named fault fixed, so the keys it
+      got right have somewhere to survive. This changes no message the request
+      carries — only what the model is told to do with one it already has.
+    - **The whole required-key list**, from `proposal.always_required_keys()`
+      so it cannot drift from the schema the first turn rendered. This is what
+      covers the case an edit instruction cannot: a first reply that was not
+      JSON at all has no object to edit from.
+
+    "This is your only chance" is true and stated rather than implied:
+    `MAX_PARSE_REPAIR_ATTEMPTS` really is 1, and a model told it has one shot
+    is closer to the truth than one that thinks it can iterate.
     """
+    required = ", ".join(proposal_module.always_required_keys())
     return (
         "That reply did not validate:\n"
         f"    {error}\n\n"
-        "Reply again with ONE corrected JSON object matching the schema from "
-        "your first message, and nothing else — no prose before or after. "
-        "This is your only chance to fix it: if this reply does not validate "
-        "either, nothing from this wake is recorded."
+        "Correct the JSON object you just sent. Do not write a new one: keep "
+        "every key you already sent, with its value unchanged, and change only "
+        "what the error above names. A key you got right is still right.\n\n"
+        f"Whatever you change, the corrected object must still carry: {required} "
+        f'(risk_tier only if your kind is not "{proposal_module.ProposalKind.ABSTAIN.value}"), '
+        "plus the payload key your kind requires.\n\n"
+        "Reply with ONE corrected JSON object and nothing else — no prose "
+        "before or after. This is your only chance to fix it: if this reply "
+        "does not validate either, nothing from this wake is recorded."
     )
 
 
