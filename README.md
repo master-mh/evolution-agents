@@ -136,6 +136,14 @@ diff. An unexplained diff means behaviour drifted.
 .venv/bin/mitosis verify-golden-run
 ```
 
+**Frameworks where they fit, and no further.** A Cell's genome can choose a self-critique loop —
+critique, revise, repeat until kept or capped — whose control flow is a **LangGraph** state graph. The
+graph decides which step runs next; the kernel still makes, reserves and bills every call, and the
+graph module cannot import the kernel at all. LangGraph's checkpointer is deliberately unused: the
+gateway's idempotency keys already replay a crashed wake down the same path for free. **LangSmith
+tracing** is opt-in, enforced off otherwise, and never the record. Both are optional extras. The
+walkthrough is [`docs/LANGGRAPH_AND_TRACING.md`](docs/LANGGRAPH_AND_TRACING.md).
+
 ---
 
 ## Repository map
@@ -146,6 +154,7 @@ diff. An unexplained diff means behaviour drifted.
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Architecture decision records — each one names what it *displaced*, not just what was chosen |
 | [`docs/STATE_MACHINES.md`](docs/STATE_MACHINES.md) | Cell lifecycle and reservation FSMs |
 | [`docs/EVENT_SEMANTICS.md`](docs/EVENT_SEMANTICS.md) | Delivery, ordering, poison-event handling |
+| [`docs/LANGGRAPH_AND_TRACING.md`](docs/LANGGRAPH_AND_TRACING.md) | The LangGraph self-critique loop and opt-in LangSmith tracing, in plain language |
 | [`src/mitosis/`](src/mitosis/) | The kernel |
 | [`tests/`](tests/) | Tests named for the property they defend, citing the clause that requires it |
 | [`PRIORITIES.md`](PRIORITIES.md) | What is done, what is next, and what is knowingly missing |

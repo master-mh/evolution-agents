@@ -233,6 +233,12 @@ WORKFLOW_STRUCTURES: dict[str, str] = {
         "reviews both and replies with one proposal; the first draft is "
         "recorded if the second draft or the review does not validate"
     ),
+    "self_critique_loop": (
+        "draft, then up to two rounds of: one call judging the current proposal "
+        "keep-or-revise, and on revise one call addressing the issues it named; "
+        "the last proposal that validated is recorded (ADR-103). Runs on the "
+        "optional `langgraph` extra; without it the draft is recorded"
+    ),
 }
 
 #: Valid `risk_class` values. Held as plain strings rather than importing

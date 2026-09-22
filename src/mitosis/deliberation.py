@@ -50,7 +50,7 @@ from __future__ import annotations
 import json
 import random
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
@@ -70,6 +70,8 @@ from . import (
     providers,
     real_spend_breaker,
     reservations,
+    tracing,
+    workflow_graph,
 )
 from .accounts import cell_cash
 from .models import Book, Cell, CellStatus
@@ -567,6 +569,66 @@ def _review_instruction(first_draft: str, second_draft: str) -> str:
     )
 
 
+#: `self_critique_loop`'s designed bound (ADR-103): at most this many revisions,
+#: so at most twice this many calls after the draft. Bounded for ADR-069's
+#: reason — a critic that always says "revise" must cost a known amount.
+MAX_CRITIQUE_REVISIONS = 2
+MAX_CRITIQUE_ISSUES = 5
+MAX_CRITIQUE_ISSUE_CHARS = 300
+
+
+def _critique_instruction() -> str:
+    return (
+        "Above is the proposal you currently hold for this wake. Judge it before it is "
+        "recorded: is every claim specific enough to check, is its cost estimate honest, "
+        "and does anything in the context contradict it? Do not rewrite it here. Reply "
+        'with ONE JSON object and nothing else: {"verdict": "keep"} if it is ready, or '
+        '{"verdict": "revise", "issues": ["...", ...]} naming at most '
+        f"{MAX_CRITIQUE_ISSUES} specific problems."
+    )
+
+
+def _address_instruction(issues: tuple[str, ...]) -> str:
+    listed = "\n".join(f"- {issue}" for issue in issues)
+    return (
+        "A critique of the proposal above found these problems:\n"
+        f"{listed}\n\n"
+        "Reply with the revised proposal in exactly the JSON format described above, "
+        "addressing each of them. Reply with the JSON object only. If this reply is "
+        "valid it replaces the proposal you hold."
+    )
+
+
+def _parse_verdict(raw_text: str) -> workflow_graph.Verdict:
+    """A critique reply, validated as strictly as a proposal is (ADR-103).
+
+    Raises `ProposalError` so `_workflow_call` classifies an invalid verdict
+    exactly as it classifies an invalid proposal: the step is recorded and the
+    proposal in hand is kept. The verdict lives only inside the wake — it is
+    never a prediction, never a review input, never fitness — so the one thing a
+    Cell can buy by gaming it is more or fewer calls it pays for itself.
+    """
+    try:
+        payload = json.loads(proposal_module._strip_code_fence(raw_text))
+    except json.JSONDecodeError as exc:
+        raise proposal_module.ProposalError(f"verdict is not JSON: {exc}") from exc
+    if not isinstance(payload, dict) or set(payload) - {"verdict", "issues"}:
+        raise proposal_module.ProposalError("verdict must be an object with only 'verdict' and 'issues'")
+    verdict = payload.get("verdict")
+    issues = payload.get("issues", [])
+    if verdict not in ("keep", "revise"):
+        raise proposal_module.ProposalError(f"verdict must be 'keep' or 'revise', got {verdict!r}")
+    if not isinstance(issues, list) or not all(isinstance(i, str) and i.strip() for i in issues):
+        raise proposal_module.ProposalError("issues must be a list of non-empty strings")
+    if verdict == "revise" and not issues:
+        raise proposal_module.ProposalError("a 'revise' verdict must name at least one issue")
+    if len(issues) > MAX_CRITIQUE_ISSUES or any(len(i) > MAX_CRITIQUE_ISSUE_CHARS for i in issues):
+        raise proposal_module.ProposalError(
+            f"at most {MAX_CRITIQUE_ISSUES} issues of at most {MAX_CRITIQUE_ISSUE_CHARS} characters"
+        )
+    return workflow_graph.Verdict(verdict, tuple(i.strip() for i in issues) if verdict == "revise" else ())
+
+
 @dataclass(frozen=True)
 class _WorkflowStep:
     name: str
@@ -687,12 +749,61 @@ def _parallel_review(
     return review.parsed, [second, review]
 
 
+def _self_critique_loop(conn, *, draft, prompt, **step) -> tuple[proposal_module.Proposal | None, list[_WorkflowStep]]:
+    """Critique → revise, repeated until kept or `MAX_CRITIQUE_REVISIONS`.
+
+    The graph decides which step runs next; every step is still one
+    `_workflow_call` on its own key (`critique:0`, `revise:0`, `critique:1`, …),
+    so billing, replay and the draft-is-the-floor rule are exactly the other
+    structures'. Self-critique again, not §24.3 criticism: one provider."""
+
+    def critique(current, round_):
+        s = _workflow_call(
+            conn,
+            name=f"critique:{round_}",
+            messages=(
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": current.model_dump_json()},
+                {"role": "user", "content": _critique_instruction()},
+            ),
+            parse=_parse_verdict,
+            **step,
+        )
+        return s.parsed, (replace(s, note=f"ok: {s.parsed.verdict}") if s.parsed else s)
+
+    def revise(current, issues, round_):
+        s = _workflow_call(
+            conn,
+            name=f"revise:{round_}",
+            messages=(
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": current.model_dump_json()},
+                {"role": "user", "content": _address_instruction(issues)},
+            ),
+            parse=proposal_module.parse,
+            **step,
+        )
+        return s.parsed, s
+
+    try:
+        result = workflow_graph.run_critique_loop(
+            draft=draft, critique=critique, revise=revise, max_revisions=MAX_CRITIQUE_REVISIONS,
+        )
+    except workflow_graph.GraphUnavailable as exc:
+        # Degrades like an unaffordable step: nothing was attempted, the draft
+        # is kept, and the record says why on every wake it happens.
+        return None, [_WorkflowStep(name="critique:0", model_call_id=None, parsed=None,
+                                    note=f"not attempted: {exc}")]
+    return result.final, result.steps
+
+
 #: Every structure but a single pass has a runner here, and only here —
 #: `test_every_declared_structure_has_a_runner` pins the two sets together, so
 #: a structure added to the genome cannot quietly run as a single pass.
 _WORKFLOW_RUNNERS = {
     "iterative_refinement": _iterative_refinement,
     "parallel_review": _parallel_review,
+    "self_critique_loop": _self_critique_loop,
 }
 
 
@@ -760,7 +871,41 @@ def deliberate(
     Idempotent on `wake_key` (Charter C6): a redelivered wake returns the
     existing deliberation without re-assembling context or paying for a second
     model call.
+
+    One wake is one trace when tracing is opted in (ADR-104): this span is the
+    root, each gateway call and each graph step nests under it.
     """
+    with tracing.span(
+        "cell_wake",
+        inputs={"cell_id": cell_id, "wake_reason": wake_reason, "wake_key": wake_key},
+        metadata={"cell_id": cell_id, "wake_key": wake_key, "model": model},
+    ) as span:
+        result = _deliberate(
+            conn, cell_id=cell_id, provider=provider, wake_key=wake_key, wake_reason=wake_reason,
+            model=model, context_budget_tokens=context_budget_tokens, max_tokens=max_tokens,
+            proposal_sink=proposal_sink,
+        )
+        span.finish({
+            "status": result.status,
+            "deliberation_id": result.deliberation_id,
+            "proposal_id": result.proposal_id,
+            "failure_reason": result.failure_reason,
+        })
+        return result
+
+
+def _deliberate(
+    conn: sqlite3.Connection,
+    *,
+    cell_id: str,
+    provider: providers.ModelProvider,
+    wake_key: str,
+    wake_reason: str,
+    model: str,
+    context_budget_tokens: int,
+    max_tokens: int,
+    proposal_sink: ProposalSink | None,
+) -> Deliberation:
     existing = get_deliberation_by_wake_key(conn, wake_key)
     if existing is not None:
         return existing

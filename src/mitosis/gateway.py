@@ -90,6 +90,7 @@ from . import (
     reservations,
     resource_metering,
     sweeper,
+    tracing,
 )
 from .accounts import cell_cash
 from .models import (
@@ -221,7 +222,33 @@ def call_model(
     )
 
     try:
-        response = provider.complete(request)
+        # A view for an opted-in operator, never the record (ADR-104): the
+        # row inserted above is. Opened after the reservation commits, which
+        # is why `tracing.span` swallows its own faults and never ours.
+        with tracing.span(
+            "model_call",
+            run_type="llm",
+            inputs={"messages": list(request.messages)},
+            metadata={
+                "ls_provider": provider.name,
+                "ls_model_name": request.model,
+                "ls_max_tokens": request.max_tokens,
+                "ls_temperature": request.temperature,
+                "model_call_id": model_call_id,
+                "cell_id": cell_id,
+                "idempotency_key": idempotency_key,
+            },
+        ) as span:
+            response = provider.complete(request)
+            span.finish({
+                "text": response.text,
+                "resolved_model": response.resolved_model,
+                "usage_metadata": {
+                    "input_tokens": response.input_tokens,
+                    "output_tokens": response.output_tokens,
+                    "total_tokens": response.input_tokens + response.output_tokens,
+                },
+            })
     except (providers.ProviderError, network_seal.NetworkSealed) as exc:
         if isinstance(exc, network_seal.NetworkSealed):
             # Refused by the interpreter before a byte left the process

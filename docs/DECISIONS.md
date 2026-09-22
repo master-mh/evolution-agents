@@ -6597,3 +6597,105 @@ FUTURE_BUILD_HOOKS and PRIORITIES rather than guessed at here.
   I cannot execute serves no purpose." That is exactly the content §10.3/§10.5 need in order to
   tell "nothing worth doing because X" from "produced nothing", produced on the first ask once the
   field was actually requested. Relaxing the requirement would have thrown it away.
+
+## ADR-103: A self-critique loop whose control flow is a LangGraph graph — and nothing else is
+
+- **Status:** Accepted
+- **Spec ref:** §14.1 ("critic addition/removal"), §16.3 (workflow structure inheritable), §17.5 (durable
+  workflow engines deferred), §19.3 (dependency allowlist), §2.5, §23.5, §24.3, Charter C4, C6, C15;
+  ADR-069, ADR-093
+
+- **Context:** ADR-093's structures are fixed sequences — `iterative_refinement` is draft → revise,
+  `parallel_review` is draft → draft → review. A structure that *branches on what a step said* and
+  *loops* until a condition holds is the next thing §14.1's "critic addition" reaches for, and it is the
+  shape hand-written straight-line runners express worst: the stop conditions end up scattered across
+  nested ifs. It is also the shape a graph framework exists for.
+
+- **Decision:** `self_critique_loop` joins the kernel's closed set. After a validated draft: *critique*
+  (one call; reply `{"verdict": "keep"}` or `{"verdict": "revise", "issues": [...]}`), and on revise,
+  *revise* (one call shown those issues), repeated up to `MAX_CRITIQUE_REVISIONS = 2`. The control flow
+  is a LangGraph `StateGraph` in `workflow_graph.py`: nodes `critique` and `revise`, a conditional edge
+  out of each, a list reducer for step records, `recursion_limit = 2·max + 2`. The runner in
+  `deliberation` hands the graph two closures over `_workflow_call`; the graph never sees anything else.
+
+- **What it displaced, and why:**
+  - *LangGraph's checkpointer (durable, resumable graph state).* The obvious reason to adopt the
+    framework, and refused. Every step is already `gateway.call_model` on
+    `deliberation:{wake_key}:workflow:{step}:{round}`, so a redelivered wake replays each billed reply and,
+    the replies being identical, walks the same edges to the same proposal — pinned by
+    `test_a_self_critique_wake_that_crashed_replays_its_path_without_paying_again`. A checkpointer would
+    be a second record of "where this wake got to" beside `model_calls` (the §2.5 trap) and is the durable
+    workflow engine §17.5 defers.
+  - *Letting LangGraph make the calls* (a LangChain chat-model node). That routes a model call around the
+    gateway — no reservation, no metering — which is C4's violation in a friendlier API. The graph module
+    imports nothing from `mitosis`, pinned by an AST test, so it has no path to a provider.
+  - *Hand-writing the loop.* Fifteen lines would do it, and for this graph alone that would be defensible.
+    The graph was chosen because the next structures §14.1 lists (a critic on another family per §24.3,
+    role decomposition) are graphs too, and because a compiled graph draws its own diagram
+    (`workflow_graph.mermaid()`) that documentation cannot drift from.
+  - *A numeric confidence as the stop condition.* A probability the Cell writes about its own proposal
+    sits next to §8.5's scored forecasts and invites being read as one. A keep/revise verdict with named
+    issues is what the revise step needs anyway. The verdict never leaves the wake — not a prediction, not
+    a review input, not fitness — so the only thing gaming it buys (§23.5) is more or fewer calls the Cell
+    pays for, capped.
+  - *A required dependency.* LangGraph brings ~20 transitive packages (langsmith, httpx, websockets, …)
+    and §19.3 treats each as untrusted. It is the optional `langgraph` extra; without it the runner
+    records `not attempted: … pip install 'mitosis[langgraph]'` and keeps the draft, exactly as an
+    unaffordable step does.
+  - *Breeding it in the simulator.* `SimulationPolicyProvider` only ever replies with a proposal, so a
+    critique never validates and the loop is a single pass plus one billed call, every time. Selection
+    would punish a surcharge the simulator invented, and seeded runs would depend on which extras are
+    installed. `mutation._NOT_BRED_STRUCTURES` names it; a founder genome may still declare it.
+
+- **Still self-critique, not §24.3 criticism** — one wake holds one provider. The graph makes a critic
+  on another family a node away; that is logged, not built.
+
+- **Verification:** 13 tests in `tests/test_workflow_structure.py`; 10 teeth-checks CAUGHT (revision cap
+  removed — the recursion limit then stops it; rounds sharing a key; the second critique shown the draft;
+  the revision not shown the issues; a failed later revision dropping an earlier valid one; a missing
+  extra raising out of the wake; the verdict accepting unknown keys; a revise naming no issue; the graph
+  module importing the kernel; the simulator breeding it). Golden run unchanged. No live-model run: the
+  local Ollama failed every call on the day (see BUILD_RECORD).
+
+## ADR-104: LangSmith tracing is opt-in, enforced off otherwise, and a view — never the record
+
+- **Status:** Accepted
+- **Spec ref:** §19.3 ("network disabled by default; egress domain allowlist"), §2.5, §7.1, ADR-022,
+  ADR-085
+
+- **Context:** An operator asked for LangSmith traces of the colony's wakes, in project
+  `my-first-agent`. A trace ships prompts — genome content, ledger state, `UNTRUSTED_EXTERNAL` tool
+  results — and replies to a third-party server. §19.3 puts network off by default.
+
+- **Decision:** `tracing.enabled()` is true only when `LANGSMITH_TRACING=true` and a non-blank
+  `LANGSMITH_API_KEY` are both set in the operator's own shell, no `network_seal.sealed()` block is
+  active, no `tracing.suppressed()` block is active, and `langsmith` imports. Every span enters
+  `tracing_context(enabled=<that decision>)`. Three spans: `cell_wake` around `deliberation.deliberate`
+  (the root), `model_call` (`run_type="llm"`) around the provider call in `gateway.call_model`, and
+  LangGraph's own node runs, which nest without glue. `golden.run_scenario` runs suppressed;
+  `tests/conftest.py` strips both variables for every test.
+
+- **What it displaced, and why:**
+  - *LangSmith's own switches* (`LANGSMITH_TRACING` alone, or `LANGCHAIN_TRACING_V2`). A variable exported
+    for another project would start shipping this colony's wakes. The explicit context overrides them —
+    checked against a local collector, and pinned by
+    `test_off_overrides_langchains_own_environment_switches`.
+  - *Tracing during sealed runs.* The flight simulator's seal (ADR-085) promises nothing leaves the
+    interpreter; LangSmith's uploader would try, and would either break the seal's promise or trip it.
+  - *Reading traces back* (e.g. costs from LangSmith). `model_calls` and the ledger are the record; a
+    trace is a copy elsewhere. Nothing in the kernel reads one, so a lost upload changes no outcome. Each
+    `model_call` span carries `model_call_id` and the idempotency key so the copy can be joined to the
+    record, never the reverse.
+  - *Letting a tracing fault surface.* The gateway's span opens after both reservations commit; a raise
+    there would strand them. Span entry and `finish` swallow their own exceptions; the traced block's
+    exceptions pass through unchanged.
+  - *Wrapping the providers* (a `wrap_anthropic`-style client). The gateway is the one choke point every
+    call already passes, whichever provider — mock, Ollama, Anthropic — so one span there covers all three.
+
+- **Not done:** redacting fields before upload (an opted-in operator gets the full prompt), and an
+  egress allowlist entry for the LangSmith endpoint — both logged.
+
+- **Verification:** 15 tests in `tests/test_tracing.py` against a collector on 127.0.0.1; 6 teeth-checks
+  CAUGHT (context not entered; seal ignored; `suppressed()` ignored; the golden run not suppressed; a
+  tracing fault escaping the gateway; the flag alone opting in). CLI end to end: three wakes, three traces
+  in `my-first-agent`, flushed before exit.

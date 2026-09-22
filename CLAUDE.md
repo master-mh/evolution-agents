@@ -107,6 +107,13 @@ gate on every push/PR to `main`.
 run all work without it. CI installs `.[dev]` only, so CI reports one extra skip versus a local
 install that has it.
 
+**`langgraph` and `langsmith` are optional too** (extras `langgraph`, `tracing`; ADR-103, ADR-104), but
+`dev` includes `langgraph`, so CI runs the `self_critique_loop` and tracing tests. LangGraph owns that
+structure's control flow only — every call still goes through `_workflow_call` and the gateway, and
+`workflow_graph.py` must import nothing from `mitosis`. **Tracing is off unless both
+`LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` are set**; `tests/conftest.py` strips them for every
+test, and the golden run and sealed simulator runs are never traced.
+
 ---
 
 ## Architecture

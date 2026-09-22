@@ -94,6 +94,7 @@ from . import (
     selection,
     tool_registry,
     tools,
+    tracing,
     trial_identity,
 )
 from .models import (
@@ -1515,8 +1516,11 @@ def run_scenario(conn: sqlite3.Connection) -> None:
     input from outside this function — every id the kernel generates while
     this runs is seeded (`GOLDEN_RUN_ID_SEED`) too, so the whole run,
     not just its semantic snapshot, is reproducible run to run.
+
+    Tracing is suppressed even for an operator who opted in (ADR-104): a
+    replay must not ship its wakes to a third party any more than it may fetch.
     """
-    with ids.seeded(GOLDEN_RUN_ID_SEED):
+    with ids.seeded(GOLDEN_RUN_ID_SEED), tracing.suppressed():
         _run_scenario_body(conn)
 
 

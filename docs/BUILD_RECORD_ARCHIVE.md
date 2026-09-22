@@ -6,6 +6,82 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-17 — A repair turn that names only the error specifies the whole reply (ADR-102)
+
+One paid wake on 2026-09-16 (`claude-haiku-4-5`) spent two calls and recorded nothing, and the
+second reply was **worse** than the first. Reply 1 was `{"kind": "abstain", "summary": "No proposal
+at this scheduled cycle."}`, rejected for a missing `rationale` and `estimated_cost_minor_units`.
+The repair turn named those two fields. Reply 2 carried exactly those two fields and had dropped
+the `summary` it had already produced correctly. Between them the two replies contain a complete
+proposal; neither one is.
+
+ADR-069's docstring named the choice that caused it: point at the specific error rather than repeat
+the schema, because "the schema is already the first turn's own content, still in context, and
+restating it would waste tokens on the part that was never the problem." The premise is true. The
+inference is not — **on a small model the part that was never the problem is what gets dropped**,
+because a turn naming two field names does not read as a patch to an object. It reads as a
+specification of the reply.
+
+### What shipped
+
+- **The repair turn asks for an edit.** "Correct the JSON object you just sent. Do not write a new
+  one: keep every key you already sent, with its value unchanged, and change only what the error
+  above names." The failed reply was already the middle message of the repair request (ADR-069 built
+  that); what was missing was an instruction pointing at it. No new message, no new context.
+- **It names every required key**, from a new `proposal.always_required_keys()` — the reply skeleton
+  minus the conditional payloads, derived so it cannot drift from what the parser demands. This
+  covers what an edit instruction structurally cannot: a first reply that was not JSON has no object
+  to edit *from*, and that is the commonest unparseable shape this repo has measured.
+- **No merge.** Carrying a field forward from reply 1 into reply 2 was the third candidate and the
+  tempting one. Refused: it manufactures an utterance no Cell made, it is the salvage
+  `proposal.parse` explicitly refuses one layer up, and it destroys the premise ADR-070 used to keep
+  parse-repair away from the Auditors — repair reformats and never re-judges; a merge is the kernel
+  *authoring*.
+- **`rationale` and `estimated_cost_minor_units` stay required for `abstain`.** For that kind the
+  rationale is the entire content, and §23.5 says the queue will be optimised against — a
+  zero-content abstain is an outcome a Cell can always emit for free.
+
+### Found
+
+- **The under-filling invitation is real and is not where it looked.** "Most wakes produce nothing"
+  is the trailing sentence of the **`artifact`** key's description, one clause after `never with
+  kind "abstain"` — which is what makes it read as being about abstain wakes. The likelier cause is
+  the general rule below it, "Leave out any key you are not using": an abstaining model applying
+  that to `rationale` produces the observed reply 1 exactly. A wording hypothesis, not a finding —
+  this repo does not tune prompt wording without a live run.
+- **Second ADR premise to be its own defect.** ADR-101 found ADR-069's "the first call is known to
+  have succeeded and been billed" disproved four paragraphs below itself; this is ADR-069's other
+  stated premise. Both were invisible to the suite for the same reason: `MockProvider`'s reply is an
+  input, not a response to the wording (ADR-049).
+
+### Verification
+
+1582 tests pass (5 new), golden run exact at version 42 — `_repair_instruction` is never rendered in
+a replay with no malformed reply, so unlike ADR-068 no prompt length moves. Ruff and docs-facts
+clean. 5 guards teeth-checked, 5 CAUGHT: ADR-069's instruction restored verbatim fails both new
+guards (the structural one names the missing keys, the end-to-end one reproduces the observed wake
+as UNPARSEABLE), the assistant turn dropped from the repair request fails the test that the object
+being edited is present, and `always_required_keys` narrowed by hand fails the skeleton-agreement
+test and — narrowed past a parser-required field — the test binding it to `Proposal`.
+
+### Confirmed live
+
+One operator-approved paid call (`claude-haiku-4-5`), replaying the observed conversation through
+the production path — `_attempt_parse_repair`, the real gateway, the real provider, reply 1 and its
+validation error verbatim. **The model kept the `summary` byte-for-byte** and added the two fields
+it was missing, correctly omitting `risk_tier` for `abstain`. 1,716 in / 196 out, 2,696 micro-USD
+recorded as 1 minor unit, conservation and the hash chain green in all three books. One call, not
+two: the first reply's outcome was already known.
+
+n=1 and one model — it shows the observed failure no longer reproduces, not a repair *rate*. The
+rationale it produced answered the other question in passing: generation 0, no revenue, every
+channel and tool OFF, "proposing work I cannot execute serves no purpose." That is the content
+§10.3/§10.5 need to tell "nothing worth doing because X" from "produced nothing", and relaxing the
+requirement would have thrown it away.
+
+- Next: §28 Phase 9's remaining kernel items — the liability reserve, a merchant channel behind
+  `real_commerce`, and §1.1's operating-cost terms.
+
 ## 2026-09-16 — A failed call is its own outcome, not the Cell's unparseable reply (ADR-101)
 
 Ollama's Metal backend died mid-session on 2026-09-15 and `mitosis wake` reported the Cell had failed to

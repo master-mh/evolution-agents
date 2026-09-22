@@ -2032,3 +2032,24 @@ chargebacks". The owed live check from ADR-097 is discharged. Three findings cam
   reports a parse rate and, since ADR-101, call failures beside it — but not a breakdown by the `kind`
   the reply claimed. Two of the three live failures on record (ADR-068's `qwen2.5` collapse, this one)
   landed on `abstain`, which is suggestive and not evidence.
+
+## From the self-critique loop and opt-in tracing (2026-09-22, ADR-103, ADR-104)
+
+- **The live `qwen2.5` smoke for `self_critique_loop` is owed.** Ollama's Metal backend failed every call
+  on 2026-09-22 (`XPC_ERROR_CONNECTION_INVALID`), so the three-wake run ADR-093 did for its structures
+  has not been done for this one. What it should report: how often the first critique validates at all
+  (the verdict format is new to the model), the keep/revise split, and calls per wake.
+- **Does a revision improve a proposal?** Still unmeasured, for this structure as for ADR-093's. LangSmith
+  now makes the obvious harness cheap — export traces, build a dataset of draft/final pairs, score both
+  with an evaluator on a *different* family — but the judge-entanglement caveat of the earlier
+  measurement instruments applies, and the scores must never flow back into fitness.
+- **A critic on another family (§24.3).** The graph makes it one node; what it lacks is a wake holding two
+  providers, which changes what a `deliberation` row names as its model call. A schema question first.
+- **Pin the new dependency tree (§19.3).** `langgraph>=1.2,<2` and `langsmith>=0.14,<1` are ranges, and
+  the repo has no lockfile or package hashes for any extra. §19.3 lists both; the extras are where the
+  untrusted surface grew.
+- **Redaction before upload.** An opted-in operator ships full prompts, including `UNTRUSTED_EXTERNAL`
+  tool results and ledger figures. LangSmith supports input/output hiding; a policy for which fields
+  leave is a §20 data-rights question, not a tracing flag.
+- **The LangSmith endpoint is not on any egress allowlist**, because there is no allowlist outside the
+  sealed run. When §19.3's allowlist exists, tracing is its first non-provider entry.

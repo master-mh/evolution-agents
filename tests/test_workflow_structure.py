@@ -150,8 +150,13 @@ def test_every_declared_structure_has_a_runner():
 
 def test_the_simulator_can_only_breed_structures_the_kernel_runs():
     """Its operator once drew from four names no code read; one of them is now
-    refused at birth. A mutated genome must always validate."""
-    assert set(mutation._WORKFLOW_STRUCTURES) == set(genome.WORKFLOW_STRUCTURES)
+    refused at birth. A mutated genome must always validate. It breeds every
+    kernel structure except the ones excluded by name (ADR-103) — so a new
+    structure is bred by default and leaving one out is a visible decision."""
+    assert mutation._NOT_BRED_STRUCTURES == {"self_critique_loop"}
+    assert set(mutation._WORKFLOW_STRUCTURES) == (
+        set(genome.WORKFLOW_STRUCTURES) - mutation._NOT_BRED_STRUCTURES
+    )
     parent = {"workflow": {"structure": genome.WORKFLOW_SINGLE_PASS}}
     for seed in ("a", "b", "c", "d", "e", "f"):
         overlay, _ = mutation.workflow_variation(parent, seed=seed)
@@ -370,3 +375,210 @@ def test_a_genuine_fault_in_a_step_propagates(conn, monkeypatch):
     with pytest.raises(RuntimeError, match="a real bug"):
         _deliberate(conn, cell, _Recording([_proposal("draft idea"), _proposal("revised idea")]))
     assert deliberation.get_deliberation_by_wake_key(conn, "w1") is None
+
+
+# --- self-critique loop (ADR-103) -------------------------------------------------------
+
+
+def _verdict(verdict: str, *issues: str) -> str:
+    return json.dumps({"verdict": verdict, **({"issues": list(issues)} if issues else {})})
+
+
+def _keys(conn, cell) -> list[str]:
+    return [
+        row[0] for row in conn.execute(
+            "SELECT idempotency_key FROM model_calls WHERE cell_id = ? ORDER BY rowid", (cell.cell_id,)
+        )
+    ]
+
+
+def test_a_kept_draft_costs_one_critique_and_is_recorded_as_the_draft(conn):
+    cell = _make_cell(conn, structure="self_critique_loop")
+    provider = _Recording([_proposal("draft idea"), _verdict("keep")])
+    _deliberate(conn, cell, provider)
+
+    assert provider.calls == 2
+    critique = provider.requests[1]
+    assert "draft idea" in critique.messages[1]["content"]
+    assert critique.messages[2]["content"] == deliberation._critique_instruction()
+    assert _recorded_summary(conn, cell) == "draft idea"
+    workflow = _metadata(conn)["workflow"]
+    assert workflow["structure"] == "self_critique_loop"
+    assert [(s["step"], s["note"]) for s in workflow["steps"]] == [("critique:0", "ok: keep")]
+    assert workflow["recorded"] == "first_draft"
+
+
+def test_a_revise_verdict_buys_a_revision_shown_the_issues_it_named(conn):
+    cell = _make_cell(conn, structure="self_critique_loop")
+    provider = _Recording([
+        _proposal("draft idea"),
+        _verdict("revise", "the cost estimate is a guess"),
+        _proposal("revised idea"),
+        _verdict("keep"),
+    ])
+    _deliberate(conn, cell, provider)
+
+    assert provider.calls == 4
+    revise = provider.requests[2]
+    assert "draft idea" in revise.messages[1]["content"]
+    assert "the cost estimate is a guess" in revise.messages[2]["content"]
+    assert "revised idea" in provider.requests[3].messages[1]["content"], (
+        "the second critique must judge the revision, not the draft again"
+    )
+    assert _recorded_summary(conn, cell) == "revised idea"
+    workflow = _metadata(conn)["workflow"]
+    assert [s["step"] for s in workflow["steps"]] == ["critique:0", "revise:0", "critique:1"]
+    assert workflow["recorded"] == "final"
+
+
+def test_a_critic_that_never_keeps_costs_a_known_number_of_calls(conn):
+    """ADR-103's designed bound: a verdict the Cell writes can buy at most
+    `MAX_CRITIQUE_REVISIONS` revisions, each billed on its own key (C4, C6)."""
+    cell = _make_cell(conn, structure="self_critique_loop")
+    replies = [_proposal("draft idea")]
+    for n in range(10):
+        replies += [_verdict("revise", "not specific enough"), _proposal(f"revision {n}")]
+    provider = _Recording(replies)
+    _deliberate(conn, cell, provider)
+
+    rounds = deliberation.MAX_CRITIQUE_REVISIONS
+    assert rounds == 2
+    assert provider.calls == 1 + 2 * rounds
+    assert _keys(conn, cell) == ["deliberation:w1"] + [
+        f"deliberation:w1:workflow:{step}:{n}" for n in range(rounds) for step in ("critique", "revise")
+    ]
+    assert _recorded_summary(conn, cell) == f"revision {rounds - 1}"
+
+
+def test_a_verdict_that_does_not_validate_keeps_the_proposal_in_hand(conn):
+    cell = _make_cell(conn, structure="self_critique_loop")
+    provider = _Recording([_proposal("draft idea"), "looks good to me!"])
+    _deliberate(conn, cell, provider)
+
+    assert provider.calls == 2
+    assert _recorded_summary(conn, cell) == "draft idea"
+    (step,) = _metadata(conn)["workflow"]["steps"]
+    assert step["note"].startswith("did not validate") and step["model_call_id"] is not None
+
+
+def test_a_failed_second_revision_keeps_the_first(conn):
+    """The floor rises: the draft is the floor until a revision validates, then
+    that revision is."""
+    cell = _make_cell(conn, structure="self_critique_loop")
+    provider = _Recording([
+        _proposal("draft idea"),
+        _verdict("revise", "vague"), _proposal("first revision"),
+        _verdict("revise", "still vague"), "garbage",
+    ])
+    _deliberate(conn, cell, provider)
+
+    assert provider.calls == 5
+    assert _recorded_summary(conn, cell) == "first revision"
+    workflow = _metadata(conn)["workflow"]
+    assert workflow["recorded"] == "final"
+    assert workflow["steps"][-1]["step"] == "revise:1"
+    assert workflow["steps"][-1]["note"].startswith("did not validate")
+
+
+def test_a_self_critique_wake_that_crashed_replays_its_path_without_paying_again(conn, monkeypatch):
+    """Why the graph has no checkpointer (ADR-103): the gateway's idempotency
+    keys already are one. A redelivered wake replays each billed step's reply
+    and so walks the same path to the same proposal, buying nothing."""
+    cell = _make_cell(conn, structure="self_critique_loop")
+    provider = _Recording([
+        _proposal("draft idea"), _verdict("revise", "vague"), _proposal("revised idea"), _verdict("keep"),
+    ])
+    real_record = deliberation._record_proposal
+
+    def crash(*args, **kwargs):
+        raise RuntimeError("crash before the proposal was recorded")
+
+    monkeypatch.setattr(deliberation, "_record_proposal", crash)
+    with pytest.raises(RuntimeError):
+        _deliberate(conn, cell, provider)
+    monkeypatch.setattr(deliberation, "_record_proposal", real_record)
+
+    _deliberate(conn, cell, provider)
+    assert provider.calls == 4
+    assert _recorded_summary(conn, cell) == "revised idea"
+    assert [s["step"] for s in _metadata(conn)["workflow"]["steps"]] == [
+        "critique:0", "revise:0", "critique:1",
+    ]
+
+
+def test_an_unaffordable_critique_keeps_the_draft(conn, monkeypatch):
+    cell = _make_cell(conn, structure="self_critique_loop")
+    _refuse_workflow_steps(monkeypatch, gateway.GatewayError("cap reached"))
+    _deliberate(conn, cell, _Recording([_proposal("draft idea"), _verdict("keep")]))
+    assert _recorded_summary(conn, cell) == "draft idea"
+    (step,) = _metadata(conn)["workflow"]["steps"]
+    assert step["note"].startswith("not attempted") and step["model_call_id"] is None
+
+
+def test_a_genuine_fault_inside_a_graph_step_propagates_unchanged(conn, monkeypatch):
+    """LangGraph runs the step; it must not wrap, retry or swallow a kernel bug."""
+    cell = _make_cell(conn, structure="self_critique_loop")
+    _refuse_workflow_steps(monkeypatch, RuntimeError("a real bug"))
+    with pytest.raises(RuntimeError, match="a real bug"):
+        _deliberate(conn, cell, _Recording([_proposal("draft idea"), _verdict("keep")]))
+    assert deliberation.get_deliberation_by_wake_key(conn, "w1") is None
+
+
+def test_without_langgraph_the_draft_is_kept_and_every_wake_says_why(conn, monkeypatch):
+    monkeypatch.setitem(__import__("sys").modules, "langgraph.graph", None)
+    cell = _make_cell(conn, structure="self_critique_loop")
+    provider = _Recording([_proposal("draft idea"), _verdict("keep")])
+    result = _deliberate(conn, cell, provider)
+
+    assert result.status == deliberation.DeliberationStatus.PROPOSED
+    assert provider.calls == 1
+    assert _recorded_summary(conn, cell) == "draft idea"
+    (step,) = _metadata(conn)["workflow"]["steps"]
+    assert step["note"].startswith("not attempted") and "mitosis[langgraph]" in step["note"]
+
+
+def test_the_graph_module_imports_nothing_from_the_kernel():
+    """The framework owns control flow only. A module with no kernel import has
+    no path to a connection, a reservation or a provider (ADR-103)."""
+    import ast
+    import inspect
+
+    from mitosis import workflow_graph
+
+    tree = ast.parse(inspect.getsource(workflow_graph))
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            imported.add("." * node.level + (node.module or ""))
+        elif isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+    assert not {name for name in imported if name.startswith(".") or name.startswith("mitosis")}
+    assert imported <= {"__future__", "operator", "dataclasses", "typing", "langgraph.graph"}
+
+
+@pytest.mark.parametrize("reply", [
+    "not json",
+    json.dumps(["keep"]),
+    json.dumps({"verdict": "maybe"}),
+    json.dumps({"verdict": "revise"}),
+    json.dumps({"verdict": "revise", "issues": []}),
+    json.dumps({"verdict": "revise", "issues": ["  "]}),
+    json.dumps({"verdict": "revise", "issues": ["x"] * (deliberation.MAX_CRITIQUE_ISSUES + 1)}),
+    json.dumps({"verdict": "revise", "issues": ["x" * (deliberation.MAX_CRITIQUE_ISSUE_CHARS + 1)]}),
+    json.dumps({"verdict": "keep", "confidence": 0.9}),
+    _proposal("a proposal where a verdict belongs"),
+], ids=[
+    "not-json", "not-an-object", "unknown-verdict", "revise-without-issues", "revise-empty-issues",
+    "blank-issue", "too-many-issues", "issue-too-long", "unknown-key", "a-proposal-instead",
+])
+def test_a_verdict_is_validated_as_strictly_as_a_proposal(reply):
+    from mitosis import proposal
+
+    with pytest.raises(proposal.ProposalError):
+        deliberation._parse_verdict(reply)
+
+
+def test_a_fenced_verdict_parses_and_a_kept_one_carries_no_issues():
+    fenced = "```json\n" + _verdict("revise", " vague ") + "\n```"
+    assert deliberation._parse_verdict(fenced).issues == ("vague",)
+    assert deliberation._parse_verdict(json.dumps({"verdict": "keep", "issues": ["x"]})).issues == ()

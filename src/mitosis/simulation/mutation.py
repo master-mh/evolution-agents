@@ -68,7 +68,19 @@ _ACQUISITION_CHANNELS = (
 #: names no code read ("sequential" among them); now every value it draws is
 #: one `deliberation.deliberate` runs, and a value outside the set would fail
 #: genome validation at birth rather than breed a structure nothing honours.
-_WORKFLOW_STRUCTURES = tuple(genome_module.WORKFLOW_STRUCTURES)
+#:
+#: **One kernel structure is deliberately not bred (ADR-103).**
+#: `self_critique_loop` branches on a keep/revise verdict, and
+#: `SimulationPolicyProvider` only ever replies with a proposal — so in the
+#: simulator the critique never validates and the structure is a single pass
+#: plus one billed call, every time. Breeding it would let selection punish a
+#: surcharge the simulator invented, and would make seeded runs depend on
+#: whether the optional `langgraph` extra is installed. A founder genome may
+#: still declare it; evolution just cannot drift into it here.
+_NOT_BRED_STRUCTURES = frozenset({"self_critique_loop"})
+_WORKFLOW_STRUCTURES = tuple(
+    s for s in genome_module.WORKFLOW_STRUCTURES if s not in _NOT_BRED_STRUCTURES
+)
 
 _MIN_PRICE_MINOR_UNITS = 50
 _PRICE_MULTIPLIER_RANGE = (0.7, 1.3)

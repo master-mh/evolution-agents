@@ -15,6 +15,8 @@ dev = [
     "pytest>=8.0",
     "hypothesis>=6.100",
     "ruff>=0.16",
+    # So CI runs the self-critique loop and the tracing tests for real.
+    "langgraph>=1.2,<2",
 ]
 # The paid provider. Optional on purpose: the kernel, the full test suite, and
 # `mitosis verify-golden-run` all run without it — nothing in Phase 1–3 needs
@@ -22,6 +24,17 @@ dev = [
 # colony is meant to spend real money.
 anthropic = [
     "anthropic>=0.40",
+]
+# The `self_critique_loop` workflow structure's control flow (ADR-103). Optional
+# because §19.3 treats every third-party dependency as untrusted and this one
+# brings ~20 transitive packages; without it that structure keeps the draft.
+langgraph = [
+    "langgraph>=1.2,<2",
+]
+# Opt-in LangSmith traces (ADR-104). Off unless LANGSMITH_TRACING=true and
+# LANGSMITH_API_KEY are both set in the operator's own shell.
+tracing = [
+    "langsmith>=0.14,<1",
 ]
 
 [build-system]
