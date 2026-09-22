@@ -36,6 +36,13 @@ langgraph = [
 tracing = [
     "langsmith>=0.14,<1",
 ]
+# LangChain's agent harness (planning, file tools, subagents). No kernel code
+# uses it yet, and it stays out of `dev`. deepagents makes its own chat-model
+# calls, so any Cell-facing use must route them through `gateway.call_model` —
+# a call that bypasses the gateway has no reservation (Charter C4, ADR-103).
+deepagents = [
+    "deepagents>=0.7,<0.8",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -2053,3 +2053,15 @@ chargebacks". The owed live check from ADR-097 is discharged. Three findings cam
   leave is a §20 data-rights question, not a tracing flag.
 - **The LangSmith endpoint is not on any egress allowlist**, because there is no allowlist outside the
   sealed run. When §19.3's allowlist exists, tracing is its first non-provider entry.
+
+## From adding the `deepagents` extra (2026-09-22)
+
+- **`deepagents` is installed-but-unused — a socket with no consumer.** Added as an optional extra on
+  request (`deepagents>=0.7,<0.8`, ~14 packages beyond `langgraph`, including full `langchain`,
+  `langchain-anthropic` and `langchain-google-genai`), kept out of `dev` so CI does not grow for nothing.
+  **The constraint any use must meet:** deepagents drives its own LangChain chat models, which call
+  providers directly — no reservation, no metering, no spend cap (Charter C4; ADR-103 refused exactly this
+  for LangGraph). A Cell-facing use would need a LangChain `BaseChatModel` adapter whose `_generate` calls
+  `gateway.call_model` on a per-step idempotency key, and its filesystem/shell tools are §19's sandbox
+  question, not a Phase 4 one. An operator-side use (a dev tool reading the colony read-only) meets
+  neither constraint and could come first.
