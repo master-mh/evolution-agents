@@ -28,6 +28,7 @@ from . import (
     content_audit,
     context,
     counterparty,
+    dashboard,
     db,
     death,
     deliberation,
@@ -1294,6 +1295,17 @@ def cmd_set_tick_cadence(args: argparse.Namespace) -> None:
         print("`health` is back to the epoch-based default: overdue at "
               f"{scheduler.OVERDUE_SLACK} epochs behind.")
     conn.close()
+
+
+def cmd_dashboard(args: argparse.Namespace) -> None:
+    """A read-only web view of the colony, on 127.0.0.1 only."""
+    _require_existing_db(args.db)
+    try:
+        dashboard.serve(args.db, port=args.port, refresh=args.refresh)
+    except dashboard.DashboardError as exc:
+        raise CliError(str(exc)) from exc
+    except OSError as exc:
+        raise CliError(f"could not listen on 127.0.0.1:{args.port}: {exc}") from exc
 
 
 def cmd_health(args: argparse.Namespace) -> int:
@@ -3835,6 +3847,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="is anything still running the scheduler? exits 0/1/2 for a monitor (§23.3)",
     )
     health_parser.set_defaults(func=cmd_health)
+
+    dashboard_parser = subparsers.add_parser(
+        "dashboard",
+        help="serve a read-only web dashboard of the colony on 127.0.0.1",
+    )
+    dashboard_parser.add_argument("--port", type=int, default=dashboard.DEFAULT_PORT)
+    dashboard_parser.add_argument(
+        "--refresh", type=int, default=dashboard.DEFAULT_REFRESH_SECONDS,
+        help="seconds between automatic page reloads",
+    )
+    dashboard_parser.set_defaults(func=cmd_dashboard)
 
     tick_expect_parser = subparsers.add_parser(
         "set-tick-cadence",

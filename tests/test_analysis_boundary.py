@@ -76,7 +76,9 @@ def test_no_kernel_module_imports_an_analysis_script() -> None:
 #: measurement added tomorrow is a scorer by default and joining this list is a
 #: deliberate edit. `measure_parse_compliance` is here because it *drives* the
 #: loop in-process to produce an arm; it is a harness, not a scorer.
-KERNEL_DRIVING_SCRIPTS = {"measure_parse_compliance"}
+#: `demo_colony` builds a colony for `mitosis dashboard` through the kernel's own
+#: operations and scores nothing.
+KERNEL_DRIVING_SCRIPTS = {"measure_parse_compliance", "demo_colony"}
 
 
 def test_a_scorer_does_not_import_the_kernel() -> None:

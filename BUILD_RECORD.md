@@ -48,65 +48,46 @@ chargebacks naming the payment they reverse, and payment fees as a
 charge nobody chose, and §1.1's profit report with the shadow rate a
 person declares, and the trial's legal identity, and a failed model
 call becoming its own deliberation outcome, and a repair turn that names
-every required key, 2026-07-21 through 2026-09-17):
+every required key, and a self-critique loop on LangGraph with opt-in
+tracing, 2026-07-21 through 2026-09-22):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-22 — A self-critique loop on LangGraph, and tracing that is off until an operator says so (ADR-103, ADR-104)
+## 2026-09-22 — A read-only dashboard for watching the colony (ADR-105)
 
-ADR-093 made workflow structure a gene the kernel runs, and both multi-call structures it shipped are
-straight lines: two or three calls in a fixed order. Neither can *branch* on what a step said, or *loop*.
-`self_critique_loop` is the first that does, and it is the first place a graph framework earns its keep —
-so its control flow is a LangGraph `StateGraph`, and nothing else is.
+Watching a colony meant five terminal verbs, each a snapshot. `mitosis dashboard` is one page that
+refreshes itself — and, because an operator is looking at money, one that is structurally unable to
+change what it shows.
 
 ### What shipped
 
-- **`self_critique_loop`**, a fourth structure in `genome.WORKFLOW_STRUCTURES`: after a validated draft,
-  up to `MAX_CRITIQUE_REVISIONS` (2) rounds of *critique* (one call replying `{"verdict": "keep"}` or
-  `{"verdict": "revise", "issues": [...]}`) and, on revise, *revise* (one call shown the named issues).
-  At most five calls per wake. The last proposal that validated is recorded; a critique or revision that
-  fails keeps it.
-- **`workflow_graph.py`** — the graph: two nodes, two conditional edges, a reducer that appends each
-  step's record, and a `recursion_limit` set just above the designed bound as a backstop. It imports
-  nothing from the kernel (pinned by an AST test): it is handed two step functions and never sees a
-  connection, a provider or a reservation. Every step is still `deliberation._workflow_call` on its own
-  key (`…:workflow:critique:0`, `…:revise:0`, …), so C4, C6 and the draft-is-the-floor rule hold
-  exactly as ADR-093 wrote them. **No checkpointer**: the gateway's idempotency keys already replay a
-  crashed wake down the same path without paying twice, and a durable workflow engine is §17.5's
-  deferred hook.
-- **`_parse_verdict`** — strict like `proposal.parse`: only `verdict`/`issues`, a revise names at least
-  one issue, at most 5 of at most 300 characters. The verdict never leaves the wake.
-- **`tracing.py`** — opt-in LangSmith tracing. Off unless `LANGSMITH_TRACING=true` *and*
-  `LANGSMITH_API_KEY` are set; project `LANGSMITH_PROJECT`, default `my-first-agent`. Every span opens an
-  explicit `tracing_context(enabled=…)`, which overrides LangSmith's and LangChain's own environment
-  switches. Forced off inside `network_seal.sealed()` and inside `tracing.suppressed()` (the golden run).
-  One wake is one trace: `cell_wake` (in `deliberation.deliberate`) → `model_call` (an `llm` run in
-  `gateway.call_model`, carrying `model_call_id` and the idempotency key) and LangGraph's node runs.
-- Optional extras `langgraph` and `tracing`; `dev` includes `langgraph` so CI runs all of it. The
-  simulator does not breed `self_critique_loop` (`mutation._NOT_BRED_STRUCTURES`) — its policy provider
-  only ever replies with a proposal, so the loop would be a single pass plus one billed call every time.
+- **`src/mitosis/dashboard.py`**, standard library only, on 127.0.0.1:8765. Overview: scheduler health,
+  book conservation and hash chain, population against limits, real spend against the hour/day/month and
+  concurrent caps, the approval queue with overdue items flagged, model calls by provider and status, a
+  row per Cell (status, generation, workflow structure, cash in all three books, net revenue, spend,
+  Brier, wakes, any §10.5 death criterion met), and the last 25 wakes with each workflow's steps. A page
+  per Cell adds genome, wakes, predictions and every billed call labelled by step (`draft`,
+  `critique:0`, `revise:0`, …). `/api/overview` is the same data as JSON.
+- **Read-only by construction:** a `mode=ro` connection per request, never a migration. **No script:**
+  escaped values, `<meta>` refresh, a CSP of `default-src 'none'`. **Loopback only**, with no host flag.
+- **`scripts/demo_colony.py`** — a fresh, offline, zero-cost colony built through the kernel's own
+  operations (four founders across all four workflow structures, a provider outage, predictions, 11
+  queued approvals), so the dashboard can be seen without a live model. Added to
+  `KERNEL_DRIVING_SCRIPTS`: it is a harness, not a scorer.
 
 ### Found
 
-- **LangGraph's node runs nest under a hand-opened LangSmith span without any glue**, and an explicit
-  `tracing_context(enabled=False)` overrides `LANGCHAIN_TRACING_V2=true` for both libraries — each
-  checked against a collector on 127.0.0.1 before the design relied on it.
-- **The gateway opens its span after committing a reservation**, so a tracing library that raised there
-  would strand both reservations — the exact shape ADR-085's `NetworkSealed` comment warns about. Span
-  entry and exit swallow their own faults; the traced code's exceptions propagate unchanged.
-- **A test's flush constructed the uploader it was checking for.** The golden-run test called
-  `get_cached_client().flush()`, which creates a client when none exists; it now asserts that nothing
-  constructed one.
-- **Two teeth checks reported WRONG-FAILURE for a harmless reason**: pytest names string parameters by
-  their text, so `[reply8]` selected nothing (exit 4). The verdict cases now carry explicit ids.
+- **Every reader the page needed already existed and ran on a read-only connection** — probed one by one
+  before the design relied on it, so "cannot write" is SQLite's guarantee, not the module's promise.
+- **A failed wake was rendered as "single pass"**, run into the error text: a wake that never produced a
+  draft ran no workflow and now says only why it failed. Seen in the browser; no test would have shown it.
+- **The analysis-boundary test refused the demo script** for importing the kernel — correctly, since
+  scorers must not; the allowlist exists for harnesses.
 
 ### Verification
 
-1618 tests pass (28 new: 13 for the loop, 15 for tracing), golden run exact at version 42 — no snapshot
-field moved, since no golden genome declares the new structure — ruff and docs-facts clean. 16 guards
-teeth-checked, 16 CAUGHT. End to end through the CLI with tracing pointed at a local collector: three
-wakes arrived as three traces in `my-first-agent`, uploaded before the process exited. **The live-model
-smoke did not run**: the local Ollama's Metal backend failed every call (`XPC_ERROR_CONNECTION_INVALID`,
-the 2026-09-15 failure again), which ADR-101 recorded correctly as `call_failed` with no loop steps bought.
+1627 tests pass (9 new), golden run exact at version 42, ruff and docs-facts clean. 5 guards
+teeth-checked, 5 CAUGHT. Checked by eye against the demo colony at desktop and at 375px (no horizontal
+scroll).
 
-- Next: rerun the three-wake `qwen2.5` smoke once Ollama is restarted, then the twin FUTURE_BUILD_HOOKS
-  names — whether a revision *improves* a proposal, which neither this slice nor ADR-093 measured.
+- Next: the money path — see PRIORITIES. The dashboard shows revenue as 0.00 on every Cell because no
+  channel through which a customer can pay exists yet.

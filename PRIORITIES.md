@@ -200,6 +200,13 @@
   `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` are both set, forced off in sealed runs and the golden
   run, and never read back. 16 guards teeth-checked, 16 CAUGHT; golden unmoved at version 42.
 
+- [x] **A read-only colony dashboard — DONE** (2026-09-22), ADR-105. `mitosis dashboard` serves one
+  self-refreshing page on 127.0.0.1 — health, book integrity, real spend against every cap, the approval
+  queue, every Cell's record and each wake's workflow steps — plus a page per Cell. Read-only by
+  construction (`mode=ro`, never migrates), no JavaScript and a CSP of `default-src 'none'` because
+  proposal text is model-written, no host flag. `scripts/demo_colony.py` builds an offline demo colony.
+  5 guards teeth-checked, 5 CAUGHT.
+
 ## Next
 - [ ] **`self_critique_loop`'s live smoke is owed (ADR-103).** Ollama's Metal backend failed every call
   on 2026-09-22. Restart Ollama, health-check with a real generate, then three `qwen2.5` wakes: does the

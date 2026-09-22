@@ -6699,3 +6699,43 @@ FUTURE_BUILD_HOOKS and PRIORITIES rather than guessed at here.
   CAUGHT (context not entered; seal ignored; `suppressed()` ignored; the golden run not suppressed; a
   tracing fault escaping the gateway; the flag alone opting in). CLI end to end: three wakes, three traces
   in `my-first-agent`, flushed before exit.
+
+## ADR-105: The colony dashboard is read-only by construction, runs no script, and listens on loopback
+
+- **Status:** Accepted
+- **Spec ref:** §2.5 (balances derived, one answer per question), §19.3 (network off by default), §19.4
+  (no untrusted content treated as trusted), §23.3 (the operator must see what is waiting), §30.1 (avoid
+  unnecessary frameworks)
+
+- **Context:** An operator watching a live colony had `mitosis status`, `health`, `cell-fitness`,
+  `approvals` and `proposals` — five verbs, each a terminal snapshot. The request was one place to watch
+  Cells.
+
+- **Decision:** `mitosis dashboard` serves a server-rendered page (`src/mitosis/dashboard.py`, standard
+  library only) on 127.0.0.1: an overview (scheduler health, book integrity, population, real spend against
+  every cap, the approval queue, model calls, every Cell's record, recent wakes with their workflow steps),
+  a per-Cell page (genome, wakes, predictions, each billed call by step), and `/api/overview` as JSON.
+
+- **What it displaced, and why:**
+  - *Trusting the readers not to write.* Every request opens `file:…?mode=ro`, so SQLite refuses a write —
+    a lazy checkpoint, a future cache — rather than letting it mutate the books being watched. Every kernel
+    reader the page calls was first probed on a read-only connection. It never migrates: a database behind
+    the code is refused with the command that fixes it, because a monitor that silently migrated would be an
+    operator action nobody took.
+  - *Re-deriving numbers in SQL.* Figures come from `death.contribution`, `real_spend_breaker.snapshot`,
+    `approval.queue`, `ledger.get_balance` — so the page cannot disagree with `mitosis status` (§2.5).
+    Direct queries are listings no reader exists for (wakes, predictions, calls), read only; a test pins
+    the numbers to the readers.
+  - *A JavaScript frontend* (React, htmx, a chart library). Proposal text is model-written and a model reads
+    `UNTRUSTED_EXTERNAL` tool results, so an injected `<script>` is a realistic input. Every value is escaped,
+    refresh is a `<meta>` tag, and `Content-Security-Policy: default-src 'none'` forbids scripts — two layers,
+    each teeth-checked alone. It also keeps the repo's dependency list at pydantic (§30.1).
+  - *A `--host` flag.* The page shows balances, spend caps and model output, and has no authentication.
+    `serve`/`make_server` take no host parameter (pinned by a signature test); remote viewing is an SSH
+    tunnel's job.
+  - *Hosting it* (an Artifact, a cloud page). Colony data would leave the machine by default — §19.3 again.
+
+- **Verification:** 9 tests in `tests/test_dashboard.py`, including serving every page and checking the
+  database file is byte-identical afterwards. 5 teeth-checks CAUGHT (read-write connection, escaping
+  removed, CSP removed, a stale database served, every-interface bind). Checked in a browser against
+  `scripts/demo_colony.py`'s colony at desktop and phone width.

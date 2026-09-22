@@ -114,6 +114,10 @@ structure's control flow only — every call still goes through `_workflow_call`
 `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` are set**; `tests/conftest.py` strips them for every
 test, and the golden run and sealed simulator runs are never traced.
 
+**`dashboard.py` must stay read-only** (ADR-105): it opens `mode=ro`, never migrates, escapes every
+value and ships no JavaScript. A new panel reads through an existing kernel reader, or a plain `SELECT`
+where none exists — never a write, and never `connect_and_migrate`.
+
 ---
 
 ## Architecture

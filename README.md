@@ -218,6 +218,22 @@ instead, tell it how often cron actually runs:
 .venv/bin/mitosis --db colony.db set-tick-cadence --seconds 60
 ```
 
+For a person rather than a monitor, `dashboard` serves one self-refreshing page on 127.0.0.1:8765:
+scheduler health, book integrity, real spend against every cap, the approval queue, every Cell's
+record, and each wake with its workflow steps. It opens the database **read-only** (SQLite refuses a
+write, rather than the code promising not to), never migrates, runs no JavaScript, and listens on
+loopback only — remote viewing is an SSH tunnel's job (ADR-105).
+
+```bash
+.venv/bin/mitosis --db colony.db dashboard
+```
+
+To see it without a live colony, `scripts/demo_colony.py` builds a small offline one at no cost:
+
+```bash
+.venv/bin/python scripts/demo_colony.py /tmp/demo.db
+```
+
 ---
 
 ## Distributing the source
