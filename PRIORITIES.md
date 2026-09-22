@@ -192,7 +192,25 @@
   `abstain`: there the rationale is the entire content, and §23.5 says a free zero-content outcome will
   be optimised against. 5 guards teeth-checked, 5 CAUGHT; golden unmoved at version 42.
 
+- [x] **A self-critique loop on LangGraph, and opt-in LangSmith tracing — DONE** (2026-09-22),
+  ADR-103/ADR-104, commit 5c54381. `self_critique_loop` is the first structure that branches and loops
+  (critique → revise, ≤2 revisions, ≤5 calls); LangGraph owns which step runs next and nothing else —
+  `workflow_graph.py` imports no kernel module, every call is `_workflow_call` on its own key, and the
+  checkpointer is refused because those keys already replay a crashed wake. Tracing is off unless
+  `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` are both set, forced off in sealed runs and the golden
+  run, and never read back. 16 guards teeth-checked, 16 CAUGHT; golden unmoved at version 42.
+
 ## Next
+- [ ] **`self_critique_loop`'s live smoke is owed (ADR-103).** Ollama's Metal backend failed every call
+  on 2026-09-22. Restart Ollama, health-check with a real generate, then three `qwen2.5` wakes: does the
+  first critique validate at all, keep/revise split, calls per wake. *Disproved by:* a dated live arm in
+  BUILD_RECORD naming those three numbers.
+- [ ] **Whether a revision improves a proposal is unmeasured** — for this structure and ADR-093's.
+  LangSmith traces → dataset of draft/final pairs → judge on a different family; scores never flow into
+  fitness. *Disproved by:* an ADR reporting a paired comparison.
+- [ ] **The new extras' dependency tree is unpinned (§19.3: lockfiles, package hashes).**
+  `langgraph>=1.2,<2` brings ~20 transitive packages. *Disproved by:* a lockfile or hash-pinned
+  constraints file covering the `langgraph`/`tracing` extras.
 - [x] **The repaired repair turn confirmed live — DONE** (2026-09-17), one operator-approved paid call
   on `claude-haiku-4-5`. The observed conversation replayed through `_attempt_parse_repair`, the real
   gateway and the real provider, reply 1 and its error verbatim: the model **kept the `summary`
