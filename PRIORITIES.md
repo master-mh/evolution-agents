@@ -1299,6 +1299,17 @@
   - **Line added 2026-09-24 (golden 43 → 44); not yet shown to work.** The verification wake (2 calls,
     4,840 micro-USD) abstained again — but it is confounded: its rationale opens "My previous proposal was
     also abstain", §15.1's recent-proposals anchoring. A clean test needs a fresh Cell with the same genome.
+  - **Clean test done — the line is not enough.** A fresh Cell, same genome, no earlier proposal in
+    context (recent proposals are per Cell): abstained (2 calls, 6,138 micro-USD). Its rationale weighs
+    production against the prompt's own "inventing work is not" and still reasons "I cannot reach
+    customers" — nothing tells it that in Phase 8/9 the **operator** takes approved deliverables to market
+    by hand, so it sees no path from a playbook to a buyer. That is the next factual gap to test, or the
+    operator directs production outright.
+- [ ] **A Cell reads its minor units as dollars (live, 2026-09-24).** The fresh Cell's rationale says "$100
+  in available cash"; it has $1.00. `context._record_section` prints `cash available: 100 minor units` under
+  `book: USD_REAL` and nothing says a USD minor unit is a cent, so every price and cost a Cell reasons about
+  is off by 100×. Render the book's own major unit beside it for USD books (not a bridge: same book, same
+  currency). *Disproved by:* the record section printing a dollar figure for a USD_REAL Cell.
 - [ ] **Processor fees can lock a small-cap colony out of thinking (found 2026-09-24, step-5 dry run).**
   ADR-098 counts every fee against the real-spend caps on purpose, so at the operator's $10/month cap the
   fees on roughly four $19 sales exhaust the month and every model call is refused; one $2.40 fee already
