@@ -1287,6 +1287,15 @@
   - Golden run unmoved: holds are USD_REAL only, and a replay never moves USD_REAL.
   *Disproved by:* `"liability_reserve"` in `accounts.SPEND_DESTINATIONS`, or a `liability_hold` row with a
   NULL `provisions_for_transaction_id` (migration 0042's CHECK refuses one).
+- [ ] **A real Cell does not know that producing a product needs no capability (live, 2026-09-24).** One
+  paid `claude-haiku-4-5` wake (2 calls, 5,920 micro-USD, recorded 2¢) on a Cell whose genome names a
+  market, a problem and "a digital playbook sold as a one-off download" **abstained**: every first move it
+  could think of needed `http_get` or an outbound channel, both off. Writing the playbook itself never
+  came up. §28 Phase 8 leaves production ungated (only external use is), but the prompt says "You cannot
+  take any action" and "Most wakes produce nothing", and never says a deliverable is within reach. A
+  factual line in `_system_prompt` would correct the Cell's model of its own capabilities without telling
+  it what to decide. Verify on a live model, not the mock. *Disproved by:* a live wake on the same genome
+  recording an artifact.
 - [ ] **Processor fees can lock a small-cap colony out of thinking (found 2026-09-24, step-5 dry run).**
   ADR-098 counts every fee against the real-spend caps on purpose, so at the operator's $10/month cap the
   fees on roughly four $19 sales exhaust the month and every model call is refused; one $2.40 fee already
