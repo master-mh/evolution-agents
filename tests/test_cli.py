@@ -1124,3 +1124,41 @@ def test_predict_refuses_certainty_through_the_cli(tmp_path, capsys):
         "--claim", "certain", "--probability", "1.0",
     ]) == 1
     assert "strictly between 0 and 1" in capsys.readouterr().err
+
+
+def test_export_artifact_prints_the_rights_position_the_gate_read(tmp_path, capsys):
+    """Found by step-5's end-to-end dry run (2026-09-24): `export-artifact
+    --commercial` passed §20.2's gate on the colony's attested position and then
+    printed `commercial_use: unknown` — the value the artifact was born with, not
+    the one in force (ADR-041). An operator about to list a product read the
+    opposite of what the gate had decided."""
+    from mitosis import artifacts, db, lifecycle
+    from mitosis.models import Book, CellType
+
+    db_path = tmp_path / "colony.db"
+    cli.main(["--db", str(db_path), "init"])
+    conn = db.connect_and_migrate(str(db_path))
+    cell = lifecycle.create_cell(
+        conn, cell_type=CellType.COMMERCIAL, budget_minor_units=100, book=Book.USD_SIM,
+        idempotency_key="export-cli-cell",
+    )
+    artifact = artifacts.create(
+        conn, cell_id=cell.cell_id, kind="fulfilment_artifact", title="A playbook",
+        content="step one",
+    )
+    conn.close()
+    assert cli.main([
+        "--db", str(db_path), "set-rights", "--colony", "--licence", "proprietary",
+        "--permitted-uses", "sell", "--commercial-use", "permitted",
+        "--basis", "the colony's own output", "--by", "operator",
+    ]) == 0
+    capsys.readouterr()
+
+    assert cli.main([
+        "--db", str(db_path), "export-artifact", artifact.artifact_id,
+        "--by", "operator", "--reason", "list it", "--commercial",
+    ]) == 0
+
+    out = capsys.readouterr().out
+    assert "commercial_use: permitted" in out
+    assert f"mitosis artifact {artifact.artifact_id} --content" in out

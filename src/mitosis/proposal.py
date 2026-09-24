@@ -42,6 +42,8 @@ from pydantic import (
     model_validator,
 )
 
+from .models import ARTIFACT_KINDS
+
 #: Upper bounds on free text. A proposal is a summary the operator will read,
 #: not a place to park an essay — and §15's context budget means today's
 #: proposal is tomorrow's context, so unbounded text here inflates every later
@@ -299,9 +301,13 @@ class ArtifactSpec(BaseModel):
     derives fitness from its content, nothing counts artifacts, and §11.2 makes
     usefulness strictly downstream — another Cell has to adopt it.
 
-    `kind` is validated against `artifacts.ARTIFACT_KINDS` at record time rather
-    than here, for the same layering reason `tool_request.tool` is: `artifacts`
-    sits above this module and a back-edge would invert the dependency order.
+    `kind` is validated **here**, against `models.ARTIFACT_KINDS`. It used to
+    say "at record time", and that was false: the wake path records through
+    `artifacts._create_locked`, which never ran `_validate`, so a Cell's guessed
+    kind ("guide") was stored as-is — found by an end-to-end dry run on
+    2026-09-24. At parse time the refusal is an ordinary invalid reply, which
+    ADR-069's single repair turn can correct, and it covers every parse path
+    (a single reply, candidates, workflow steps) in one place.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -321,6 +327,15 @@ class ArtifactSpec(BaseModel):
         if not value.strip():
             raise ValueError("must not be blank")
         return value.strip()
+
+    @field_validator("kind")
+    @classmethod
+    def _known_kind(cls, value: str) -> str:
+        if value not in ARTIFACT_KINDS:
+            raise ValueError(
+                f"unknown artifact kind {value!r}; use one of: {', '.join(sorted(ARTIFACT_KINDS))}"
+            )
+        return value
 
 
 class Proposal(BaseModel):
@@ -833,7 +848,7 @@ def _payload_rule() -> str:
         " — only if you are actually forecasting something; each claim distinct"
     )
     lines.append(
-        '  "artifact": {"kind": "<an artifact kind from your context>", "title": '
+        '  "artifact": {"kind": "<one of: ' + ", ".join(sorted(ARTIFACT_KINDS)) + '>", "title": '
         '"<title>", "content": "<the deliverable itself>", "source_tool_call_ids": '
         '["<ids of tool results you drew on>"]}'
         ' — only if you actually produced a deliverable this wake, and never with '

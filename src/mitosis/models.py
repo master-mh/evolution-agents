@@ -11,6 +11,23 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+#: What a Cell may produce (§28 Phase 8 names these). Free text would make the
+#: artifact index unreadable and §12's behavioural descriptors ungroupable.
+#: Here rather than in `artifacts` so `proposal` can refuse an unknown kind at
+#: parse time — the one check every parse path passes through — without the
+#: back-edge that importing `artifacts` would be (`artifacts` re-exports it).
+ARTIFACT_KINDS: frozenset[str] = frozenset(
+    {
+        "prototype",
+        "landing_page_draft",
+        "pricing_recommendation",
+        "fulfilment_artifact",
+        "outreach_draft",
+        "report",
+        "negative_finding",
+    }
+)
+
 
 class Book(StrEnum):
     USD_REAL = "USD_REAL"

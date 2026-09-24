@@ -1287,6 +1287,19 @@
   - Golden run unmoved: holds are USD_REAL only, and a replay never moves USD_REAL.
   *Disproved by:* `"liability_reserve"` in `accounts.SPEND_DESTINATIONS`, or a `liability_hold` row with a
   NULL `provisions_for_transaction_id` (migration 0042's CHECK refuses one).
+- [ ] **Processor fees can lock a small-cap colony out of thinking (found 2026-09-24, step-5 dry run).**
+  ADR-098 counts every fee against the real-spend caps on purpose, so at the operator's $10/month cap the
+  fees on roughly four $19 sales exhaust the month and every model call is refused; one $2.40 fee already
+  fills the default $1 hour window. Needs an operator decision: raise the caps to cover expected fees, or
+  argue a separate fee allowance (a change to ADR-098). *Disproved by:* a wake succeeding after fees equal
+  to the month cap have been recorded.
+- [ ] **A fully held seller cannot pay for its own next wake.** With a 100% hold the sale never reaches
+  cash, and the fee (charged on the gross) takes cash below zero — correct accounting, since the refund
+  liability is the gross, but the colony's first seller then sits idle for the whole window unless an
+  operator `fund-cell`s it. *Disproved by:* a policy or funding path that lets a held seller wake.
+- [ ] **Human review time on the manual sale path is unmetered** (Phase 9: "complete human-time
+  accounting"). `set-rights`, `export-artifact` and the listing itself record no minutes. *Disproved by:*
+  `profit`'s human-minutes line moving after a manual export.
 - [ ] **Phase 9's channel gate: no real-commerce claim without an identity *and* a reserve policy in force.**
   The last Phase 9 precondition recorded but not enforced (ADR-100, ADR-106). A §21 refusal-path change.
   *Disproved by:* a `marketplace_listing` claim refused by `channel_registry` when `trial_identity.in_force`

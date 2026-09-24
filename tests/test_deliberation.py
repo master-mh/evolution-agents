@@ -1469,3 +1469,47 @@ def test_the_repair_request_still_shows_the_model_its_own_failed_reply(conn):
     assert repair_messages[1]["content"] == "not json", (
         "the reply being repaired is not in the repair request"
     )
+
+
+# --- the artifact kind a Cell may produce (found 2026-09-24) -------------------
+
+
+def _artifact_reply(kind: str) -> str:
+    return _valid_reply(
+        kind="strategy",
+        summary="sell a month-end close playbook",
+        artifact={"kind": kind, "title": "Month-end close in 5 days", "content": "Day 1: ..."},
+    )
+
+
+def test_every_artifact_kind_is_named_in_the_prompt():
+    """The schema used to say "an artifact kind from your context", and a new
+    Cell's context names none: a real model had to guess. Every kind the parser
+    accepts must be one the prompt names, or producing a product is luck."""
+    from mitosis.models import ARTIFACT_KINDS
+
+    prompt = deliberation._system_prompt()
+    assert all(kind in prompt for kind in ARTIFACT_KINDS)
+
+
+def test_a_guessed_artifact_kind_is_an_invalid_reply_not_a_stored_artifact(conn):
+    """Found by step 5's end-to-end dry run: the wake path records through
+    `artifacts._create_locked`, which never ran `_validate`, so a reply with kind
+    "guide" was stored as-is despite `proposal.py` promising a record-time check.
+    Refused at parse time, it is an ordinary invalid reply — nothing is stored."""
+    cell = _make_cell(conn)
+
+    result = _deliberate(conn, cell, reply=_artifact_reply("guide"))
+
+    assert result.status == "unparseable"
+    assert "unknown artifact kind 'guide'" in (result.failure_reason or "")
+    assert conn.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 0
+
+
+def test_a_known_artifact_kind_is_recorded_with_its_proposal(conn):
+    cell = _make_cell(conn)
+
+    result = _deliberate(conn, cell, reply=_artifact_reply("fulfilment_artifact"))
+
+    assert result.status == "proposed"
+    assert conn.execute("SELECT kind FROM artifacts").fetchone()[0] == "fulfilment_artifact"

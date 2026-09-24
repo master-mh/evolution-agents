@@ -1827,8 +1827,13 @@ def cmd_export_artifact(args: argparse.Namespace) -> None:
     print(f"Exported {artifact.artifact_id}")
     print(f"  {artifact.kind}: {artifact.title}")
     print(f"  commercial:     {'yes' if artifact.export_is_commercial else 'no'}")
-    print(f"  commercial_use: {artifact.commercial_use}")
+    # The position in force, which is what the gate just read — not the one the
+    # artifact was born with. Printing the stored field told an operator
+    # "unknown" on a commercial export that had passed as "permitted" (ADR-041).
+    print(f"  commercial_use: "
+          f"{artifacts_module.effective_provenance(conn, artifact.artifact_id).commercial_use}")
     print("  Recorded. Nothing was delivered — §28 Phase 8 keeps external action manual.")
+    print(f"  To list it by hand: `mitosis artifact {artifact.artifact_id} --content`.")
     conn.close()
 
 

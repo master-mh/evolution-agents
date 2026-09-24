@@ -66,7 +66,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
-from . import audit, ids, lifecycle, rights
+from . import audit, ids, lifecycle, models, rights
 
 #: §18.1's provenance labels, verbatim.
 TAINT_PUBLIC_SAFE = "PUBLIC_SAFE"
@@ -109,19 +109,9 @@ COMMERCIAL_USE_PRECEDENCE: tuple[str, ...] = ("prohibited", "unknown", "permitte
 #: claimed for an artifact that has any unclassified contribution.
 PERSONAL_DATA_PRECEDENCE: tuple[str, ...] = ("yes", "unknown", "no")
 
-#: What a Cell may produce. Free text would make the artifact index unreadable
-#: and §12's behavioural descriptors ungroupable; §28's Phase 8 names these.
-ARTIFACT_KINDS: frozenset[str] = frozenset(
-    {
-        "prototype",
-        "landing_page_draft",
-        "pricing_recommendation",
-        "fulfilment_artifact",
-        "outreach_draft",
-        "report",
-        "negative_finding",
-    }
-)
+#: What a Cell may produce — defined in `models` so `proposal` can refuse an
+#: unknown kind at parse time; re-exported here, where every reader expects it.
+ARTIFACT_KINDS = models.ARTIFACT_KINDS
 
 #: Upper bound on content. Generous relative to a proposal (§15's caps exist so
 #: that today's proposal is not tomorrow's context) because an artifact's

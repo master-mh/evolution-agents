@@ -1309,7 +1309,24 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #                 scenario that tried would fail to insert rather than pass.
 #             Every other section is byte-identical: no balance, transaction
 #             type, reservation, resource_usage row, prompt or token count moved.
-EXPECTATION_VERSION = 42
+#
+#   42 -> 43 (the artifact kinds named in the prompt; found by step 5's
+#             end-to-end dry run, 2026-09-24). `proposal.response_schema_hint()`
+#             said "<an artifact kind from your context>", and a new Cell's
+#             context names none — a real model had to guess, and the wake path
+#             stored whatever it guessed. The hint now lists the seven kinds, and
+#             `ArtifactSpec` refuses any other at parse time. Confirmed by a
+#             field-by-field diff of the semantic snapshot against HEAD:
+#             (a) `model_calls`: every one of the scenario's 12 calls carries
+#                 **+45 `input_tokens`** — the kind list, in every system prompt.
+#             (b) `resource_usage`: the 12 matching metering rows, `quantity`
+#                 +45 each. Their `minor_units` did not move: each of these rows
+#                 is charged 1 RESOURCE minor unit before and after (e.g. 2829 ->
+#                 2874 tokens), ADR-020's ceiling rounding both up to the same unit.
+#             Nothing else moved: no balance, transaction type, artifact (the
+#             scenario's artifacts already use listed kinds), proposal, audit
+#             event or USD_REAL figure.
+EXPECTATION_VERSION = 43
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

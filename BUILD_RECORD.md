@@ -82,3 +82,30 @@ nothing had ever posted to `liability_reserve`. The operator chose 100% held unt
 **Still between the colony and its first real sale:** the operator's merchant account and trial identity
 (`set-trial-identity`), the reserve policy's window in days, and — for Phase 9 proper — the channel gate
 (PRIORITIES). Selling by hand, recording with `record-revenue`/`record-fee`, is already fully supported.
+
+### Same day — step 5 run end to end: a Cell writes a product, an operator clears it for sale
+
+Dry run on the mock provider (Ollama's Metal backend failing again): create a Cell → wake → proposal
+plus `fulfilment_artifact` → `export-artifact --commercial` refused while rights are `unknown` →
+`set-rights --colony` → export passes → trial identity + reserve policy → `record-revenue --artifact`
+→ `record-fee` → `profit`/`reserves`. Conservation green in all three books, hash chain valid. Three
+defects found, two fixed here:
+
+- **A new Cell was never told which artifact kinds exist.** The schema said "an artifact kind from your
+  context", and nothing in a new Cell's context names one — a real model had to guess. **And the guess
+  was stored**: the wake path records through `artifacts._create_locked`, which never ran `_validate`, so
+  `proposal.py`'s "validated at record time" was a stale claim. `ARTIFACT_KINDS` moved to `models`, the
+  hint lists all seven, and `ArtifactSpec` refuses any other at parse time — an ordinary invalid reply
+  that ADR-069's repair turn can correct. Golden 42 → 43 (+45 input tokens on each of 12 calls, nothing
+  else).
+- **`export-artifact` printed `commercial_use: unknown` on a commercial export that had just passed as
+  `permitted`** — the stored field, not the position in force (ADR-041). It now prints what the gate read,
+  and says how to get the content out (`artifact <id> --content`). The verb had no CLI test at all.
+- **Not fixed — the operator's call:** processor fees count against the real-spend caps (ADR-098, by
+  design), so at a $10/month cap the fees on ~4 sales of $19 would lock the colony out of model calls
+  for the month; and a Cell whose sale is fully held and whose fee took its cash negative cannot pay
+  for its own next wake until the hold releases. Both in PRIORITIES.
+- Review time was recorded as 0 minutes: Phase 9's "complete human-time accounting" is not met by the
+  manual path yet.
+
+3 more guards teeth-checked, 3 CAUGHT.
