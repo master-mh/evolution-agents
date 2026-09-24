@@ -1271,6 +1271,27 @@
   *Disproved by:* a row in `trial_identity_attestations` whose `payment_account_label` holds eight
   consecutive digits, or `legal_identity` appearing in `genome.GENOME_FIELDS`.
 
+- [x] **Full liability reserves — DONE 2026-09-24 (ADR-106); §28 Phase 9's reserve requirement.** A real sale
+  was spendable the minute it arrived while the buyer could still take it back. `liability.py`, migration
+  0042 and `mitosis set-reserve-policy` / `reserves` / `release-reserves`: with a policy in force a USD_REAL
+  sale is held in `liability_reserve` in its own transaction, a refund or chargeback is paid from the hold
+  first, and `release-reserves` returns what a closed window leaves. The window is derived from the sale's
+  hash-chained timestamp and the policy in force when it was held, so a later policy cannot shorten it.
+  - **`liability_reserve` moved from spend to capital** before anything posted to it: §2.3 lists reserves
+    beside cash, and §10.2 keeps "unsettled liability exposure" its own dimension — counting a hold as spend
+    would have told a Cell it consumed a sale it was only asked to wait for.
+  - The operator's policy (2026-09-24): **100% held until the refund window closes.** The window in days is
+    set at `set-reserve-policy` time from the chosen merchant's refund terms and the card chargeback window.
+  - **Found by hand-verification:** `reap` would have killed a seller whose sale was fully held (zero cash,
+    nothing committed). Held money now counts as in flight to §10.5's `budget_exhausted`.
+  - Golden run unmoved: holds are USD_REAL only, and a replay never moves USD_REAL.
+  *Disproved by:* `"liability_reserve"` in `accounts.SPEND_DESTINATIONS`, or a `liability_hold` row with a
+  NULL `provisions_for_transaction_id` (migration 0042's CHECK refuses one).
+- [ ] **Phase 9's channel gate: no real-commerce claim without an identity *and* a reserve policy in force.**
+  The last Phase 9 precondition recorded but not enforced (ADR-100, ADR-106). A §21 refusal-path change.
+  *Disproved by:* a `marketplace_listing` claim refused by `channel_registry` when `trial_identity.in_force`
+  or `liability.current_policy` is `None`.
+
 ## Later
 - [ ] Phase 2 flight simulator → Phase 3 evolutionary validation (pre-registered) → Phases 4–10 per
   directive §28. **Phase 2 seam proven** (ADR-072 through ADR-076): two independently-shaped

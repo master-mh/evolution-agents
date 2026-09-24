@@ -42,6 +42,7 @@ from . import (
     golden,
     ids,
     ledger,
+    liability,
     lifecycle,
     lineage,
     money,
@@ -865,6 +866,8 @@ def cmd_profit(args: argparse.Namespace) -> None:
     print(f"  - API and cloud spend:  {report.model_and_cloud_spend_minor_units}")
     print(f"  REAL_SETTLED_NET_PROFIT: {report.real_settled_net_profit_minor_units} "
           f"minor units {book.value}")
+    print(f"  of which still held against refunds: {report.liability_reserve_held_minor_units} "
+          "(`mitosis reserves`)")
     print()
     subsidised = (f", {report.human_minutes_subsidised} of them subsidised"
                   if report.human_minutes_subsidised else "")
@@ -883,6 +886,73 @@ def cmd_profit(args: argparse.Namespace) -> None:
     print("  not measured (§1.1 names it; this kernel cannot):")
     for item in report.unmeasured:
         print(f"    - {item}")
+    conn.close()
+
+
+def cmd_set_reserve_policy(args: argparse.Namespace) -> None:
+    """Declare how much of each real sale to hold against refunds, and for how
+    long (§28 Phase 9's "full liability reserves"; ADR-106). Applies to sales
+    recorded from now on, never to one already posted."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        policy = liability.declare_policy(
+            conn,
+            hold_basis_points=round(args.hold_percent * 100),
+            window_days=args.window_days,
+            declared_by=args.by,
+            note=args.note,
+        )
+    except liability.LiabilityError as exc:
+        raise CliError(str(exc)) from exc
+    print("Declared the liability reserve policy (SPEC.md §28 Phase 9; ADR-106)")
+    print(f"  hold:        {policy.hold_basis_points / 100:g}% of each USD_REAL sale")
+    print(f"  window:      {policy.window_days} days from the sale")
+    print(f"  declared by: {policy.declared_by}")
+    if policy.note:
+        print(f"  note:        {policy.note}")
+    print("  Held money returns to its Cell with `mitosis release-reserves` once the window")
+    print("  closes; a refund or chargeback inside the window is paid from the hold.")
+    conn.close()
+
+
+def cmd_reserves(args: argparse.Namespace) -> None:
+    """What the colony holds against refunds, sale by sale (ADR-106)."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    policy = liability.current_policy(conn)
+    print("MITOSIS liability reserve (SPEC.md §28 Phase 9; ADR-106)")
+    if policy is None:
+        print("  policy: none declared — real sales are not held (`mitosis set-reserve-policy`)")
+    else:
+        print(f"  policy: hold {policy.hold_basis_points / 100:g}% for {policy.window_days} days "
+              f"(declared by {policy.declared_by})")
+    print(f"  held now: {liability.colony_held(conn, Book.USD_REAL)} minor units USD_REAL")
+    now = datetime.now(timezone.utc)
+    rows = liability.holds(conn)
+    if not rows:
+        print("  no sale has been held")
+    for hold in rows:
+        state = (
+            "released" if hold.remaining_minor_units == 0
+            else "due for release" if hold.held_until_utc <= now
+            else f"until {hold.held_until_utc.date().isoformat()}"
+        )
+        print(f"  - payment {hold.payment_transaction_id}  cell {hold.cell_id}  "
+              f"held {hold.held_minor_units}, remaining {hold.remaining_minor_units}  {state}")
+    conn.close()
+
+
+def cmd_release_reserves(args: argparse.Namespace) -> None:
+    """Return every hold whose refund window has closed to its Cell (ADR-106).
+    Idempotent: safe to run on a schedule or twice."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    released = liability.release_due(conn)
+    if not released:
+        print("No hold is due for release.")
+    for transaction in released:
+        print(f"Released {transaction.description}")
     conn.close()
 
 
@@ -3544,6 +3614,36 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[Book.USD_REAL.value, Book.USD_SIM.value],
     )
     profit_parser.set_defaults(func=cmd_profit)
+
+    reserve_policy_parser = subparsers.add_parser(
+        "set-reserve-policy",
+        help="declare how much of each real sale to hold against refunds, and for how "
+             "long (operator-only; §28 Phase 9, ADR-106)",
+    )
+    reserve_policy_parser.add_argument(
+        "--hold-percent", type=float, required=True, dest="hold_percent",
+        help="share of each USD_REAL sale to hold, 0.01-100. §28 Phase 9 says full "
+             "reserves, which is 100.",
+    )
+    reserve_policy_parser.add_argument(
+        "--window-days", type=int, required=True, dest="window_days",
+        help="days from a sale until it can no longer be refunded or charged back — the "
+             "longer of the merchant's refund terms and the card chargeback window",
+    )
+    reserve_policy_parser.add_argument("--by", required=True, help="who is declaring it")
+    reserve_policy_parser.add_argument("--note", default="")
+    reserve_policy_parser.set_defaults(func=cmd_set_reserve_policy)
+
+    reserves_parser = subparsers.add_parser(
+        "reserves", help="what the colony holds against refunds, sale by sale (ADR-106)",
+    )
+    reserves_parser.set_defaults(func=cmd_reserves)
+
+    release_parser = subparsers.add_parser(
+        "release-reserves",
+        help="return every hold whose refund window has closed to its Cell (ADR-106)",
+    )
+    release_parser.set_defaults(func=cmd_release_reserves)
 
     shadow_parser = subparsers.add_parser(
         "set-shadow-rate",

@@ -40,7 +40,6 @@ SPEND_DESTINATIONS: dict[str, str] = {
         "metered compute/infrastructure the Cell consumed and paid the colony "
         "for; internal to the colony but genuine cost to the Cell"
     ),
-    "liability_reserve": "a provision the Cell's activity incurred — cost, not transfer",
 }
 
 CAPITAL_ACCOUNTS: dict[str, str] = {
@@ -49,6 +48,18 @@ CAPITAL_ACCOUNTS: dict[str, str] = {
     "seed_bank": "capital staged for allocation to Cells",
     "promotion_pool": "capital held for §25 promotion — redistributed, never consumed",
     "revenue": "money earned; a Cell posting here would be un-earning, not spending",
+    # Moved here from SPEND_DESTINATIONS by ADR-106, before anything had posted
+    # to it. The old reason ("a provision ... cost, not transfer") was written
+    # before any policy existed; the first one holds a sale's own money until
+    # its refund window closes, which is restricted cash, not consumption. §2.3
+    # lists "real reserves" beside cash balances on the balance-sheet side, and
+    # §10.2 names "unsettled liability exposure" as its own fitness dimension —
+    # counting a hold as spend would fold it into net contribution, the scalar
+    # collapse §10.2 forbids. `liability.cell_held` reports it on its own.
+    "liability_reserve": (
+        "a sale's money held against its refunds until their window closes — "
+        "restricted cash the Cell cannot spend, returned or refunded, never consumed"
+    ),
 }
 
 

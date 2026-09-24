@@ -6739,3 +6739,67 @@ FUTURE_BUILD_HOOKS and PRIORITIES rather than guessed at here.
   database file is byte-identical afterwards. 5 teeth-checks CAUGHT (read-write connection, escaping
   removed, CSP removed, a stale database served, every-interface bind). Checked in a browser against
   `scripts/demo_colony.py`'s colony at desktop and phone width.
+
+## ADR-106: A real sale is held against its refunds in its own transaction — as restricted cash, not as spend
+
+- **Status:** Accepted
+- **Spec ref:** §2.3 ("real reserves" beside cash balances), §2.5 (balances are derived), §3.6, §10.2
+  ("unsettled liability exposure" as its own dimension; no scalar collapse), §16.3 (liability-linked
+  assets), §28 Phase 9 ("full liability reserves")
+
+- **Context:** The operator asked (2026-09-24) to get the colony to real revenue as fast as possible, and
+  chose "100% held until the refund window closes" for the reserve. `liability_reserve` had been a §31
+  Phase-1 account since migration 0001 with nothing posting to it, so a real sale landed in its Cell's
+  cash and was spendable at once while the buyer could still take it back; a refund after the Cell spent
+  it drove cash negative with nothing set aside.
+
+- **Decision:**
+  1. **Operator policy, append-only, latest wins by rowid** (`liability.declare_policy`,
+     `mitosis set-reserve-policy`): a share in basis points (1–10000) and a window in days (1–730). There is
+     no zero or withdrawn policy — Phase 9 has no reserve-free mode. No policy means nothing is held and
+     `profit.report` names the abstention (ADR-042); a real sale is never refused, because it already
+     happened.
+  2. **The hold is posted by `record_revenue` in the sale's own transaction**, USD_REAL only, and only for
+     a payment posted *now* — a replay of a sale recorded before the policy is never held retroactively.
+  3. **A refund or chargeback is paid from the hold first** (`record_reversal` releases up to the reversed
+     amount before posting the reversal); the Cell's other cash meets only what the hold did not cover.
+  4. **The window's close is derived, never stored** (§2.5): the sale's hash-chained `created_at_utc` plus
+     the window of the policy in force at the hold's instant. A later, shorter policy cannot release an old
+     hold early. `mitosis release-reserves` returns what is due; it is idempotent.
+  5. **`liability_reserve` moves from `SPEND_DESTINATIONS` to `CAPITAL_ACCOUNTS`.** Migration 0042 links
+     hold and release to their payment (`provisions_for_transaction_id`, hash-chained when set, a CHECK
+     tying it to exactly the two types).
+  6. **Held money is money in flight to §10.5's `budget_exhausted`.** Found by hand-verification on a live
+     CLI colony: a Cell that spent its budget and then sold under a full hold sits at zero cash — at −40 once
+     a processor fee comes out of cash while the gross is held — and `reap` would have killed the colony's
+     first successful seller. It is now protected exactly as `committed != 0` already protects a Cell mid-call.
+
+- **What it displaced, and why:**
+  - *Keeping the account's old classification* ("a provision the Cell's activity incurred — cost, not
+    transfer"). It was written before any policy existed, and the first policy is a hold of the sale's own
+    money, not an expected cost. Counted as spend, a 100% hold would tell a Cell through `context` that it
+    had consumed a sale it was only asked to wait for, freeze a false spend figure into any coroner report
+    written while held, and fold §10.2's "unsettled liability exposure" into net contribution — the scalar
+    collapse §10.2 forbids. §2.3 already lists reserves on the balance-sheet side. Nothing had posted to the
+    account, so the move changed no existing number. `liability.cell_held` reports the exposure beside
+    net contribution instead.
+  - *Subtracting held money in §1.1's formula.* §1.1 subtracts refunds, not the possibility of them; a
+    held sale that is never refunded was settled revenue all along. Printed beside the figure instead.
+  - *A `held_until` column or table.* A second answer that could disagree with the ledger. Transaction
+    metadata is outside the hash preimage, so storing it there would also be editable without trace.
+  - *Refusing a real sale when no policy is declared.* The money has arrived; refusing to record it only
+    makes the books wrong. The gate belongs on the *channel* (a real-commerce claim with no policy or no
+    identity in force), logged with that work.
+  - *Holding USD_SIM too.* A refund window is a fact about real card networks; tying the shadow economy to
+    a wall clock would leak calendar time into sealed runs. It also keeps the golden run's hash unmoved.
+
+- **Verification:** 14 guards teeth-checked, 14 CAUGHT (one after correcting an incomplete mutation): the
+  held seller surviving `reap`, the hold itself, Charter C4 refusing held money, the classification, the replay guard, reversals paid from the
+  hold and only up to the reversed amount, the window, the policy-at-hold-time derivation, rounding up, the
+  USD_REAL-only rule, the hash preimage, and the report's abstention. A zero-percent policy with the Python
+  guard removed is still refused by migration 0042's CHECK — two layers, by design.
+
+- **Consequences:** Phase 9 still needs the channel gate (no real-commerce claim without an identity *and*
+  a policy in force), a merchant channel, and §1.1's chosen operating costs. A hold released to a Cell that
+  has since died lands in a dead Cell's cash, as revenue to a dead Cell already does; §10.2's exposure is
+  reported but is not yet a domination axis. All logged in FUTURE_BUILD_HOOKS.

@@ -65,7 +65,7 @@ import sqlite3
 from dataclasses import dataclass
 from enum import StrEnum
 
-from . import audit, experiments, ledger, lifecycle, prediction, revenue
+from . import audit, experiments, ledger, liability, lifecycle, prediction, revenue
 from .accounts import cell_cash, cell_committed
 from .models import Book, Cell, CellStatus
 
@@ -171,10 +171,18 @@ def _budget_exhausted(conn: sqlite3.Connection, cell: Cell) -> Finding | None:
     `committed > 0` means an operation is still in flight, and killing then
     would strand its reservation — so a Cell mid-call is never exhausted, even
     at zero cash.
+
+    **Held sale money is in flight too (ADR-106).** A Cell that spent its budget
+    and then sold under a full reserve sits at zero cash with the sale coming
+    back when the refund window closes — and a processor fee taken from cash
+    while the gross is held can push it below zero. That is the colony's first
+    *successful* seller, not a Cell with no money; killing it would reap exactly
+    the Cell Phase 9 exists to find.
     """
     cash = ledger.get_balance(conn, cell_cash(cell.cell_id), cell.book)
     committed = ledger.get_balance(conn, cell_committed(cell.cell_id), cell.book)
-    if cash > 0 or committed != 0:
+    held = liability.cell_held(conn, cell.cell_id, cell.book)
+    if cash > 0 or committed != 0 or held > 0:
         return None
     return Finding(
         cell_id=cell.cell_id,

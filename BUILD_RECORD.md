@@ -49,45 +49,36 @@ charge nobody chose, and §1.1's profit report with the shadow rate a
 person declares, and the trial's legal identity, and a failed model
 call becoming its own deliberation outcome, and a repair turn that names
 every required key, and a self-critique loop on LangGraph with opt-in
-tracing, 2026-07-21 through 2026-09-22):
+tracing, and a read-only colony dashboard, 2026-07-21 through 2026-09-22):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-22 — A read-only dashboard for watching the colony (ADR-105)
+## 2026-09-24 — A real sale is held against its refunds until the window closes (ADR-106)
 
-Watching a colony meant five terminal verbs, each a snapshot. `mitosis dashboard` is one page that
-refreshes itself — and, because an operator is looking at money, one that is structurally unable to
-change what it shows.
+Asked to get the colony to real money as fast as possible. The kernel could already record, attribute and
+report a sale; what §28 Phase 9 still demanded before a live trial was **full liability reserves**, and
+nothing had ever posted to `liability_reserve`. The operator chose 100% held until the refund window closes.
 
-### What shipped
+- **`liability.py` + migration 0042.** An operator policy (append-only; share in basis points, window in
+  days). With one in force, `record_revenue` holds a USD_REAL sale in the sale's own transaction;
+  `record_reversal` pays a refund or chargeback from the hold first; `release_due` returns what a closed
+  window leaves. Hold and release name their payment through `provisions_for_transaction_id`, hash-chained.
+- **Reading the spec first changed the accounting.** `accounts.py` had classified the reserve as *spend*.
+  §2.3 lists reserves beside cash, and §10.2 names unsettled liability exposure as its own dimension — so a
+  hold is restricted cash, and the account moved to `CAPITAL_ACCOUNTS` before its first posting. Counted as
+  spend, a full hold would have told the Cell (via `context`) it had consumed its own sale.
+- **The window is derived, never stored** — the sale's `created_at_utc` plus the window of the policy in
+  force at the hold. Transaction metadata is outside the hash preimage, so a stored date would have been
+  editable without trace.
+- **A replayed sale is never held retroactively**: `record_revenue` asks whether the payment already
+  existed before posting, because the ledger answers a replay with the original.
+- CLI: `set-reserve-policy`, `reserves`, `release-reserves`; `profit` prints what is still held and names
+  the abstention when no policy is declared.
+- **Hand-verification found the one bug no test had asked about:** §10.5's `budget_exhausted` read a Cell
+  at zero cash with its sale held as "no money, nothing in flight" — `reap` would have killed the first
+  successful seller (at −40 once a fee came out of cash while the gross was held). Held money now counts as
+  in flight, like `committed`.
+- 26 new tests; 14 guards teeth-checked, 14 CAUGHT. Golden run unmoved (USD_REAL only).
 
-- **`src/mitosis/dashboard.py`**, standard library only, on 127.0.0.1:8765. Overview: scheduler health,
-  book conservation and hash chain, population against limits, real spend against the hour/day/month and
-  concurrent caps, the approval queue with overdue items flagged, model calls by provider and status, a
-  row per Cell (status, generation, workflow structure, cash in all three books, net revenue, spend,
-  Brier, wakes, any §10.5 death criterion met), and the last 25 wakes with each workflow's steps. A page
-  per Cell adds genome, wakes, predictions and every billed call labelled by step (`draft`,
-  `critique:0`, `revise:0`, …). `/api/overview` is the same data as JSON.
-- **Read-only by construction:** a `mode=ro` connection per request, never a migration. **No script:**
-  escaped values, `<meta>` refresh, a CSP of `default-src 'none'`. **Loopback only**, with no host flag.
-- **`scripts/demo_colony.py`** — a fresh, offline, zero-cost colony built through the kernel's own
-  operations (four founders across all four workflow structures, a provider outage, predictions, 11
-  queued approvals), so the dashboard can be seen without a live model. Added to
-  `KERNEL_DRIVING_SCRIPTS`: it is a harness, not a scorer.
-
-### Found
-
-- **Every reader the page needed already existed and ran on a read-only connection** — probed one by one
-  before the design relied on it, so "cannot write" is SQLite's guarantee, not the module's promise.
-- **A failed wake was rendered as "single pass"**, run into the error text: a wake that never produced a
-  draft ran no workflow and now says only why it failed. Seen in the browser; no test would have shown it.
-- **The analysis-boundary test refused the demo script** for importing the kernel — correctly, since
-  scorers must not; the allowlist exists for harnesses.
-
-### Verification
-
-1627 tests pass (9 new), golden run exact at version 42, ruff and docs-facts clean. 5 guards
-teeth-checked, 5 CAUGHT. Checked by eye against the demo colony at desktop and at 375px (no horizontal
-scroll).
-
-- Next: the money path — see PRIORITIES. The dashboard shows revenue as 0.00 on every Cell because no
-  channel through which a customer can pay exists yet.
+**Still between the colony and its first real sale:** the operator's merchant account and trial identity
+(`set-trial-identity`), the reserve policy's window in days, and — for Phase 9 proper — the channel gate
+(PRIORITIES). Selling by hand, recording with `record-revenue`/`record-fee`, is already fully supported.

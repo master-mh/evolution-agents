@@ -56,6 +56,10 @@ reader of it — §10.5's domination, §25.2's read-back, the Cell's own record,
 simulator's fitness axes — wanted net, so a reversal would have been invisible to
 all of them. Removing the name made each reader choose.
 
+**Liability holds (ADR-106).** With a reserve policy in force, a USD_REAL sale
+is held in `liability_reserve` in its own transaction, and a reversal is paid
+from that hold before the Cell's other cash — `liability.py` owns both.
+
 Deliberately out of scope: recurring or accrued revenue; a chargeback the
 colony later wins back; anything that fetches money from a real payment
 processor. The operator supplies the figure, exactly as with an invoice.
@@ -67,7 +71,7 @@ import sqlite3
 from datetime import datetime, timezone
 from enum import Enum
 
-from . import audit, ledger, lifecycle
+from . import audit, ledger, liability, lifecycle
 from .accounts import cell_cash
 from .counterparty import CounterpartyError
 from .counterparty import hash_of as counterparty_digest
@@ -225,6 +229,10 @@ def record_revenue(
             raise RevenueError(str(exc)) from exc
 
         key = idempotency_key or f"{REVENUE_TRANSACTION_TYPE}:{cell_id}:{source.strip()}"
+        # Asked before posting, because the ledger answers a replay with the
+        # original — and a hold must follow only a sale posted *now*, or a
+        # policy declared later would reach back and hold an old one (ADR-106).
+        replayed = ledger.get_transaction_by_idempotency_key(conn, key) is not None
         transaction = ledger._post_transaction_locked(
             conn,
             book=book,
@@ -253,6 +261,13 @@ def record_revenue(
                 ),
             ],
         )
+        # §28 Phase 9's reserve, in the sale's own transaction: a crash cannot
+        # leave a real sale spendable that the policy said to hold.
+        hold = (
+            None
+            if replayed
+            else liability._hold_locked(conn, payment=transaction, cash_leg=cell_leg(transaction))
+        )
         audit.record(
             conn,
             event_type="cell_revenue_recorded",
@@ -269,6 +284,7 @@ def record_revenue(
                 "note": note,
                 "cell_status": cell.status.value,
                 "transaction_id": transaction.transaction_id,
+                "liability_hold_transaction_id": hold.transaction_id if hold else None,
             },
         )
     except Exception:
@@ -353,6 +369,16 @@ def record_reversal(
                 f"{remaining} of its {cash_leg.amount_minor_units} is left after earlier "
                 "reversals. Money handed back beyond a sale is not a refund of it"
             )
+
+        # Paid from the sale's hold first, which is what the hold is for — the
+        # Cell's other cash meets only what the reserve did not cover (ADR-106).
+        liability._release_for_reversal_locked(
+            conn,
+            payment=payment,
+            cash_leg=cash_leg,
+            amount_minor_units=amount_minor_units,
+            reversal_key=key,
+        )
 
         posting = dict(
             payment=payment,

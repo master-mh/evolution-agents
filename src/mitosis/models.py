@@ -119,6 +119,9 @@ class Transaction(_Frozen):
     #: The revenue payment or chargeback a payment fee was taken on (migration
     #: 0038, ADR-098). NULL on every other transaction, and required on a fee.
     charged_on_transaction_id: str | None = None
+    #: The USD_REAL revenue payment a liability hold or release provisions for
+    #: (migration 0042, ADR-106). NULL on every other transaction.
+    provisions_for_transaction_id: str | None = None
     metadata: dict[str, Any] = {}
     entries: tuple[Entry, ...]
 

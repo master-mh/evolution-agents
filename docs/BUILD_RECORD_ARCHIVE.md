@@ -6,6 +6,46 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-22 — A read-only dashboard for watching the colony (ADR-105)
+
+Watching a colony meant five terminal verbs, each a snapshot. `mitosis dashboard` is one page that
+refreshes itself — and, because an operator is looking at money, one that is structurally unable to
+change what it shows.
+
+### What shipped
+
+- **`src/mitosis/dashboard.py`**, standard library only, on 127.0.0.1:8765. Overview: scheduler health,
+  book conservation and hash chain, population against limits, real spend against the hour/day/month and
+  concurrent caps, the approval queue with overdue items flagged, model calls by provider and status, a
+  row per Cell (status, generation, workflow structure, cash in all three books, net revenue, spend,
+  Brier, wakes, any §10.5 death criterion met), and the last 25 wakes with each workflow's steps. A page
+  per Cell adds genome, wakes, predictions and every billed call labelled by step (`draft`,
+  `critique:0`, `revise:0`, …). `/api/overview` is the same data as JSON.
+- **Read-only by construction:** a `mode=ro` connection per request, never a migration. **No script:**
+  escaped values, `<meta>` refresh, a CSP of `default-src 'none'`. **Loopback only**, with no host flag.
+- **`scripts/demo_colony.py`** — a fresh, offline, zero-cost colony built through the kernel's own
+  operations (four founders across all four workflow structures, a provider outage, predictions, 11
+  queued approvals), so the dashboard can be seen without a live model. Added to
+  `KERNEL_DRIVING_SCRIPTS`: it is a harness, not a scorer.
+
+### Found
+
+- **Every reader the page needed already existed and ran on a read-only connection** — probed one by one
+  before the design relied on it, so "cannot write" is SQLite's guarantee, not the module's promise.
+- **A failed wake was rendered as "single pass"**, run into the error text: a wake that never produced a
+  draft ran no workflow and now says only why it failed. Seen in the browser; no test would have shown it.
+- **The analysis-boundary test refused the demo script** for importing the kernel — correctly, since
+  scorers must not; the allowlist exists for harnesses.
+
+### Verification
+
+1627 tests pass (9 new), golden run exact at version 42, ruff and docs-facts clean. 5 guards
+teeth-checked, 5 CAUGHT. Checked by eye against the demo colony at desktop and at 375px (no horizontal
+scroll).
+
+- Next: the money path — see PRIORITIES. The dashboard shows revenue as 0.00 on every Cell because no
+  channel through which a customer can pay exists yet.
+
 ## 2026-09-22 — A self-critique loop on LangGraph, and tracing that is off until an operator says so (ADR-103, ADR-104)
 
 ADR-093 made workflow structure a gene the kernel runs, and both multi-call structures it shipped are

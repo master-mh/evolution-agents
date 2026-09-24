@@ -2065,3 +2065,24 @@ chargebacks". The owed live check from ADR-097 is discharged. Three findings cam
   `gateway.call_model` on a per-step idempotency key, and its filesystem/shell tools are §19's sandbox
   question, not a Phase 4 one. An operator-side use (a dev tool reading the colony read-only) meets
   neither constraint and could come first.
+
+## From the liability reserve (2026-09-24, ADR-106)
+
+- **The channel gate is now the one Phase 9 precondition not enforced.** A real-commerce claim
+  (`marketplace_listing`, behind §27.1's `real_commerce` flag) should refuse unless a trial identity
+  (ADR-100) *and* a reserve policy (ADR-106) are both in force. It changes a §21 refusal path, so it lands
+  with the channel work rather than here.
+- **A hold released to a dead Cell lands in dead cash.** `lifecycle._reclaim_locked` has already moved
+  the estate to the treasury; a later release (or a later sale) credits a Cell nothing can spend from.
+  Routing post-death receipts to `colony_treasury` would be one rule covering both, and is §16.3's
+  estate question rather than the reserve's.
+- **§10.2's "unsettled liability exposure" is reported, not selected on.** `liability.cell_held` is the
+  per-Cell figure; `death.Contribution` / `candidate.py` would take it as a Pareto axis (never folded into
+  net contribution — that is exactly what ADR-106 refused).
+- **Release is operator-run.** `mitosis release-reserves` is idempotent and could ride `sweep` or the
+  scheduled `tick`; left manual so the first live trial's releases are seen by a person.
+- **One window for every merchant.** The policy has no channel key. The operator's "try all merchants"
+  (2026-09-24) would want the longest window of any, or a per-channel policy keyed like
+  `rights_attestations`' subject — a migration, if multi-channel ever becomes the plan (§28 Phase 9 says one).
+- **The hold is on gross, before the fee.** A processor that pays out net leaves the Cell's cash short by
+  the fee while the whole gross is held; correct in aggregate, and settled when the window closes.

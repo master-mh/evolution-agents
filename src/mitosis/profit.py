@@ -44,7 +44,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import audit, ledger, payment_fees, pricing, providers, revenue
+from . import audit, ledger, liability, payment_fees, pricing, providers, revenue
 from .channel_registry import HUMAN_MINUTE_RESOURCE_COST
 from .models import Book, ResourceType
 
@@ -63,6 +63,10 @@ UNMEASURED_DONATED_INFRASTRUCTURE = (
 UNMEASURED_NO_SHADOW_RATE = (
     "autonomy-adjusted profit: no shadow rate declared (§2.4 forbids this module "
     "choosing one — `mitosis set-shadow-rate`)"
+)
+UNMEASURED_NO_RESERVE_POLICY = (
+    "liability reserve: no policy declared, so a real sale is spendable the moment it "
+    "arrives — §28 Phase 9 trades with full liability reserves (`mitosis set-reserve-policy`)"
 )
 UNMEASURED_SIM_AUTONOMY = (
     "autonomy-adjusted profit is defined for real profit (§1.1); a synthetic book "
@@ -98,6 +102,11 @@ class ProfitReport:
     payment_fees_minor_units: int
     model_and_cloud_spend_minor_units: int
     real_settled_net_profit_minor_units: int
+    #: Of the revenue above, what is still held against refunds (ADR-106). Not a
+    #: §1.1 term and not subtracted: a hold is the Cell's own money set aside,
+    #: and whatever the window closes on without a refund stays earned. Printed
+    #: beside the figure so a reader knows how much of it could still go back.
+    liability_reserve_held_minor_units: int
 
     # --- what the second figure subtracts ------------------------------------
     #: Minutes a person gave, and the part of them no Cell paid for (§1.1's
@@ -230,6 +239,8 @@ def report(conn: sqlite3.Connection, book: Book = Book.USD_REAL) -> ProfitReport
     local_calls, local_units = _local_compute(conn)
 
     unmeasured = (UNMEASURED_OPERATING_COSTS, UNMEASURED_DONATED_INFRASTRUCTURE)
+    if book is Book.USD_REAL and liability.current_policy(conn) is None:
+        unmeasured += (UNMEASURED_NO_RESERVE_POLICY,)
     rate = get_shadow_rate(conn)
     shadow_cost: int | None = None
     autonomy: int | None = None
@@ -251,6 +262,7 @@ def report(conn: sqlite3.Connection, book: Book = Book.USD_REAL) -> ProfitReport
         payment_fees_minor_units=fees,
         model_and_cloud_spend_minor_units=model_and_cloud,
         real_settled_net_profit_minor_units=net_profit,
+        liability_reserve_held_minor_units=liability.colony_held(conn, book),
         human_minutes=minutes,
         human_minutes_subsidised=subsidised,
         human_shadow_resource_units=human_units,

@@ -77,6 +77,15 @@ _EXEMPT_TRANSACTION_TYPES = {
         "accounts and the same bound as cell_refund; any fee the processor charges on top "
         "is an expense and would be its own type"
     ),
+    "liability_hold": (
+        "cell cash -> liability_reserve: a real sale's own money set aside against its "
+        "refunds (ADR-106). Restricted cash, a capital account — nothing leaves the colony "
+        "and it never touches external_expense"
+    ),
+    "liability_release": (
+        "liability_reserve -> cell cash: a hold returned when its window closes or freed to "
+        "meet a reversal (ADR-106) — money coming back, never spent"
+    ),
     "cell_funding": "seed_bank -> cell cash: internal transfer",
     "cell_birth_funding": "funding account -> cell cash: internal transfer",
     "cell_reproduction_funding": "parent cash -> child cash: internal transfer (ADR-019)",
