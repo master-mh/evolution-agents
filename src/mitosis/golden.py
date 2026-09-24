@@ -1326,7 +1326,18 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #             Nothing else moved: no balance, transaction type, artifact (the
 #             scenario's artifacts already use listed kinds), proposal, audit
 #             event or USD_REAL figure.
-EXPECTATION_VERSION = 43
+#
+#   43 -> 44 (production needs no capability; a live Haiku wake, 2026-09-24).
+#             One guidance line in `deliberation._system_prompt`: a deliverable
+#             needs no tool, channel or approval, and only its external use is
+#             gated (§28 Phase 8). A real Cell with every outward capability off
+#             had abstained, never considering writing the product. A fact about
+#             its reach, not advice on what to choose. Field-by-field diff:
+#             (a) `model_calls`: all 12 calls, **+99 `input_tokens`** each.
+#             (b) `resource_usage`: the 12 matching rows, `quantity` +99 each;
+#                 `minor_units` unchanged (the same ceiling as 42 -> 43).
+#             Nothing else moved.
+EXPECTATION_VERSION = 44
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

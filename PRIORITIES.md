@@ -1296,6 +1296,9 @@
   factual line in `_system_prompt` would correct the Cell's model of its own capabilities without telling
   it what to decide. Verify on a live model, not the mock. *Disproved by:* a live wake on the same genome
   recording an artifact.
+  - **Line added 2026-09-24 (golden 43 → 44); not yet shown to work.** The verification wake (2 calls,
+    4,840 micro-USD) abstained again — but it is confounded: its rationale opens "My previous proposal was
+    also abstain", §15.1's recent-proposals anchoring. A clean test needs a fresh Cell with the same genome.
 - [ ] **Processor fees can lock a small-cap colony out of thinking (found 2026-09-24, step-5 dry run).**
   ADR-098 counts every fee against the real-spend caps on purpose, so at the operator's $10/month cap the
   fees on roughly four $19 sales exhaust the month and every model call is refused; one $2.40 fee already

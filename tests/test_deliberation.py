@@ -1513,3 +1513,13 @@ def test_a_known_artifact_kind_is_recorded_with_its_proposal(conn):
 
     assert result.status == "proposed"
     assert conn.execute("SELECT kind FROM artifacts").fetchone()[0] == "fulfilment_artifact"
+
+
+def test_the_prompt_says_producing_a_deliverable_needs_no_capability():
+    """A live Haiku wake (2026-09-24) abstained with every outward capability
+    off, reasoning that each first move needed one — writing the product never
+    came up. §28 Phase 8 gates external use, not production, and a Cell that
+    does not know that cannot produce anything for an operator to sell."""
+    prompt = deliberation._system_prompt()
+    assert "needs no tool, channel or approval" in prompt
+    assert "only its external use is gated" in prompt

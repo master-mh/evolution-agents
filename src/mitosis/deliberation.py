@@ -241,6 +241,13 @@ def _system_prompt(candidates: int = 1) -> str:
         "afterwards. State claims that will be unambiguously true or false by "
         "their horizon.\n"
         "- Never state a probability of 0 or 1.\n"
+        # A fact about the Cell's reach, not advice on what to do: §28 Phase 8
+        # leaves production ungated and gates only external use. A live Haiku
+        # wake (2026-09-24) abstained because every move it could think of
+        # needed a capability that was off; writing the product never came up.
+        "- Producing a deliverable (a guide, a draft, a prototype, a report) needs "
+        "no tool, channel or approval: it is recorded as an artifact for the "
+        "operator to review, and only its external use is gated.\n"
         "- Send only the keys your chosen kind needs. A key you have nothing to "
         "put in is left out entirely, never sent empty."
     )
