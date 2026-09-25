@@ -1344,7 +1344,8 @@
   for it with the first call. (The lost reply is still in `model_calls.response_text` — ADR-102 forbids
   the kernel completing it on the Cell's behalf.) *Disproved by:* a repair that succeeds on a Cell holding
   only its first call's reservation.
-- [ ] **Revisions regress: each rewrite loses what the brief did not mention.** v2 → v3 fixed every named
+- [x] **Revisions regress — FIXED 2026-09-25 (ADR-108): the rejected draft is now in the revision wake's
+  context in full.** Was: v2 → v3 fixed every named
   point and halved the document. The revision brief is the only memory a Cell has of its last draft (its
   context shows proposals, not artifact bodies). Showing the Cell its own previous artifact when a
   deliverable is sent back would let it edit instead of regenerate. *Disproved by:* a revision wake whose

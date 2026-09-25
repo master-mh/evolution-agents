@@ -429,6 +429,89 @@ def _amount(minor_units: int, book: Book) -> str:
     return f"{minor_units} minor units"
 
 
+REVISION_SECTION_NAME = "The draft the operator sent back (yours, in full)"
+
+
+def _draft_under_revision(conn: sqlite3.Connection, cell: Cell):
+    """The artifact this Cell is being asked to revise, or `None`.
+
+    Derived, never stored (§2.5): the Cell's most recent proposal, if a person
+    rejected it and it carried an artifact. A later proposal of any kind ends
+    it — the Cell has answered, and showing the old draft beside a new one
+    would ask it to revise twice.
+    """
+    row = conn.execute(
+        """
+        SELECT p.deliberation_id AS deliberation_id, r.status AS status
+        FROM proposals p
+        LEFT JOIN approval_requests r ON r.proposal_id = p.proposal_id
+        WHERE p.cell_id = ?
+        ORDER BY p.rowid DESC
+        LIMIT 1
+        """,
+        (cell.cell_id,),
+    ).fetchone()
+    if row is None or row["status"] != "rejected":
+        return None
+    artifact = conn.execute(
+        "SELECT artifact_id FROM artifacts WHERE created_by_deliberation_id = ?",
+        (row["deliberation_id"],),
+    ).fetchone()
+    return artifacts.get(conn, artifact["artifact_id"]) if artifact is not None else None
+
+
+def _revision_section(conn: sqlite3.Connection, cell: Cell) -> Section | None:
+    """§15.1's "relevant" state for a revision: the draft itself (ADR-108).
+
+    Found live (2026-09-25): sent back with five named corrections, a Cell fixed
+    all five and halved the document — two email templates, troubleshooting and
+    scope creep gone. Its context showed proposals and an artifact *index*, never
+    a body, so the rejection note was its only memory of its own draft and every
+    revision was a rewrite from recall. Shown in full because an edit needs the
+    whole text; bounded because an artifact is (`artifacts.MAX_CONTENT_CHARS`),
+    and only this one draft is loaded — never the Cell's history (§15.1).
+    """
+    draft = _draft_under_revision(conn, cell)
+    if draft is None:
+        return None
+    return Section(
+        name=REVISION_SECTION_NAME,
+        body=(
+            f"Artifact {draft.artifact_id} ({draft.kind}): {draft.title}\n"
+            "The operator rejected the proposal that carried this draft; the "
+            "decision note in your recent proposals says what to change. It is "
+            "shown in full so a revision can edit it rather than rewrite it.\n\n"
+            f"{draft.content}"
+        ),
+        # A draft built from an untrusted source is still that source's content
+        # (§18.1); the flag travels with it into the wake it appears in.
+        taint_label=(
+            tool_registry.TAINT_UNTRUSTED_EXTERNAL
+            if tool_registry.TAINT_UNTRUSTED_EXTERNAL in draft.taint_labels
+            else None
+        ),
+    )
+
+
+def _revision_unshown_section(draft_section: Section, budget_tokens: int) -> Section:
+    """What replaces the draft when it does not fit this wake's budget.
+
+    Required, and small: a Cell that silently lost its draft would regenerate
+    from memory — the defect the draft section exists to fix — while one told
+    the draft exists and did not fit can say so, and the operator can raise the
+    budget (`--context-budget`).
+    """
+    return Section(
+        name="The draft the operator sent back (not shown)",
+        body=(
+            f"You are being asked to revise a draft of about {draft_section.tokens} "
+            f"tokens, and this wake's context budget ({budget_tokens}) could not "
+            "show it. You cannot see its text this wake."
+        ),
+        required=True,
+    )
+
+
 def _current_experiment_section(conn: sqlite3.Connection, cell: Cell) -> Section | None:
     """§15.1's "current experiment" — the second thing it names, after the
     genome, and singular (ADR-043).
@@ -730,6 +813,11 @@ def assemble(
         _realised_record_section(conn, cell),
         _colony_section(conn, cell),
     ]
+    # Ahead of every other optional section: a Cell asked to revise a draft it
+    # cannot see can only rewrite it from memory (ADR-108).
+    revision = _revision_section(conn, cell)
+    if revision is not None:
+        candidates.append(revision)
     for optional in (
         # First in the optional list because §15.1 names it second overall,
         # right after the genome — dropping happens from the back, so this is
@@ -750,6 +838,15 @@ def assemble(
     ):
         if optional is not None:
             candidates.append(optional)
+
+    # A draft too large for this budget is replaced, not silently dropped: the
+    # Cell is told it exists and did not fit (ADR-108).
+    if revision is not None:
+        required_before = sum(s.tokens for s in candidates if s.required)
+        if required_before + revision.tokens > budget_tokens:
+            candidates[candidates.index(revision)] = _revision_unshown_section(
+                revision, budget_tokens
+            )
 
     required_tokens = sum(s.tokens for s in candidates if s.required)
     if required_tokens > budget_tokens:

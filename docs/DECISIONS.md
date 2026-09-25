@@ -6839,3 +6839,34 @@ FUTURE_BUILD_HOOKS and PRIORITIES rather than guessed at here.
   input tokens per call, nothing else. Live verification follows in the operator's colony.
 - **Consequences:** ADR-046's "the only kind with no consumer" is no longer true of `strategy` alone; both
   statement kinds are listed in `STATEMENT_KINDS`, which is what the regeneration and expiry paths read.
+
+## ADR-108: A Cell revising a rejected draft is shown that draft in full
+
+- **Status:** Accepted
+- **Spec ref:** §15.1 (select what is relevant; never the whole history), §15.2 (the artifact index is a
+  tier, not the only one), §15.5 (unbounded context), §18.1 (taint travels with content); ADR-107
+- **Context:** Live, 2026-09-25. Sent back with five named corrections, a Cell fixed all five and cut its
+  playbook from 17,702 to 8,278 bytes — two email templates, troubleshooting and scope creep gone. Its
+  context held the rejection note and an artifact *index* (titles, never bodies), so every revision was a
+  rewrite from recall that kept only what the note named.
+- **Decision:** `context._revision_section` shows the draft in full when the Cell's most recent proposal
+  was rejected and carried an artifact — derived on every wake, stored nowhere; a later proposal ends it.
+  It is the first optional section, so nothing else can crowd it out. If it cannot fit beside the required
+  sections, a small **required** note replaces it saying a draft of about N tokens exists and this budget
+  could not show it — never a silent drop, which would reproduce the defect. The artifact's
+  `UNTRUSTED_EXTERNAL` taint, if any, carries into the section.
+- **What it displaced, and why:**
+  - *Required section.* A draft can be ~5,000 tokens against a 1,200-token default; a required section
+    that cannot fit makes assembly raise, so every scheduled revision wake would fail outright.
+  - *Truncating the draft to fit.* An edit of a truncated draft drops its tail — the regression again,
+    now invisible.
+  - *Showing every artifact body (widening the index).* §15.1 forbids loading the history; only the one
+    draft under revision is relevant.
+  - *Quoting v2 automatically when v3 regressed.* The draft shown is the one rejected — the operator's
+    note says what to restore, and the kernel does not choose between a Cell's versions for it.
+- **Verification:** 4 guards teeth-checked, 4 CAUGHT (rejected-only, latest proposal only, the section
+  present, and the oversized draft named rather than dropped). The golden run is unmoved and does not
+  cover this path — no scenario proposal is rejected while carrying an artifact — so the tests are its
+  only defence. Live verification follows in the operator's colony.
+- **Consequences:** A revision wake needs a context budget big enough for its draft (`--context-budget`);
+  at the 1,200 default the Cell is told the draft did not fit.

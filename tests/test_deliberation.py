@@ -1604,3 +1604,64 @@ def test_rejecting_a_deliverable_wakes_the_cell_with_the_revision_request(conn):
         "SELECT payload_json FROM event_inbox WHERE event_type = 'cell_wake' AND status = 'pending'"
     ).fetchall()
     assert [json.loads(w[0])["wake_reason"] for w in wakes] == [deliberation.WAKE_HUMAN_DECISION]
+
+
+# --- the draft under revision (ADR-108) -------------------------------------------
+
+
+def _handed_over_and_rejected(conn, cell, *, content="Part 1: the tracker ...\nPart 2: templates ..."):
+    reply = json.loads(_deliverable_reply())
+    reply["artifact"]["content"] = content
+    _deliberate(conn, cell, reply=json.dumps(reply), proposal_sink=approval.QueueSink())
+    request_id = conn.execute("SELECT request_id FROM approval_requests").fetchone()[0]
+    approval.reject(conn, request_id=request_id, decided_by="operator", reason="fix the lock date")
+
+
+def _context(conn, cell, budget=context.DEFAULT_CONTEXT_TOKEN_BUDGET):
+    return context.assemble(
+        conn, cell=lifecycle.get_cell(conn, cell.cell_id), canonical_genome=GENOME,
+        wake_reason=deliberation.WAKE_HUMAN_DECISION, budget_tokens=budget,
+    )
+
+
+def test_a_rejected_draft_is_shown_to_the_cell_in_full(conn):
+    """Found live (2026-09-25): sent back with five corrections, a Cell fixed all
+    five and halved the document, because its context held an artifact index
+    and never a body. A revision can only edit what it can see."""
+    cell = _make_cell(conn)
+    _handed_over_and_rejected(conn, cell, content="Part 1: the tracker\nPart 2: four templates")
+
+    assembled = _context(conn, cell, budget=4_000)
+
+    rendered = assembled.render()
+    assert context.REVISION_SECTION_NAME in rendered
+    assert "Part 1: the tracker\nPart 2: four templates" in rendered
+
+
+def test_no_draft_is_shown_unless_the_latest_proposal_was_rejected(conn):
+    """Pending is not a revision request, and a later proposal is the Cell's
+    answer — showing the old draft then would ask it to revise twice."""
+    cell = _make_cell(conn)
+    _deliberate(conn, cell, reply=_deliverable_reply(), proposal_sink=approval.QueueSink())
+    assert context.REVISION_SECTION_NAME not in _context(conn, cell, budget=4_000).render()
+
+    request_id = conn.execute("SELECT request_id FROM approval_requests").fetchone()[0]
+    approval.reject(conn, request_id=request_id, decided_by="operator", reason="again")
+    assert context.REVISION_SECTION_NAME in _context(conn, cell, budget=4_000).render()
+
+    _deliberate(conn, cell, reply=_valid_reply(), wake_key="w2")
+    assert context.REVISION_SECTION_NAME not in _context(conn, cell, budget=4_000).render()
+
+
+def test_a_draft_too_large_for_the_budget_is_named_not_silently_dropped(conn):
+    """Dropped silently, the Cell would rewrite from memory — the defect this
+    exists to fix. Told it exists and did not fit, it can say so."""
+    cell = _make_cell(conn)
+    _handed_over_and_rejected(conn, cell, content="x" * 12_000)
+
+    assembled = _context(conn, cell)  # the default budget cannot hold 3,000 tokens
+
+    rendered = assembled.render()
+    assert context.REVISION_SECTION_NAME not in rendered
+    assert "could not show it" in rendered
+    assert "x" * 100 not in rendered
