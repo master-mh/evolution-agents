@@ -1317,6 +1317,20 @@
   `book: USD_REAL` and nothing says a USD minor unit is a cent, so every price and cost a Cell reasons about
   is off by 100×. Render the book's own major unit beside it for USD books (not a bridge: same book, same
   currency). *Disproved by:* the record section printing a dollar figure for a USD_REAL Cell.
+- [ ] **Operator decisions from a browser — asked for 2026-09-25, and it is not the dashboard.** The operator
+  wants to approve/reject (with a reason) from the web UI rather than the CLI. ADR-105 makes `dashboard.py`
+  read-only *by construction* (`mode=ro`, no JavaScript, loopback, never migrates), so this is a separate
+  write-capable operator console with its own ADR, not an exception in the dashboard: a POST-only form per
+  decision, a per-session CSRF token, loopback-only, `--by` taken from a configured operator name, every
+  write through the same `approval.approve`/`reject` the CLI calls (never a raw UPDATE), and the dashboard
+  linking to it rather than importing it. The reject-with-reason path is the one that matters: it is how
+  the operator talks to a Cell (see the next note). *Disproved by:* a `dashboard.py` that opens a
+  writable connection, or a console route that writes without a CSRF check.
+- **The reject reason is the operator's voice to a Cell, and it works (live, 2026-09-25).** A Cell asked to
+  write the playbook in its wake reason proposed validation instead; rejected with "Listing on Gumroad
+  costs nothing and a sale is the validation. Write the complete playbook now", the `human decision` wake
+  produced the artifact (5,480 bytes, 1 call, 11,605 micro-USD). No new mechanism was needed: §23's
+  decision note already carries the reason into context.
 - [ ] **Processor fees can lock a small-cap colony out of thinking (found 2026-09-24, step-5 dry run).**
   ADR-098 counts every fee against the real-spend caps on purpose, so at the operator's $10/month cap the
   fees on roughly four $19 sales exhaust the month and every model call is refused; one $2.40 fee already
