@@ -1523,3 +1523,28 @@ def test_the_prompt_says_producing_a_deliverable_needs_no_capability():
     prompt = deliberation._system_prompt()
     assert "needs no tool, channel or approval" in prompt
     assert "only its external use is gated" in prompt
+
+
+def test_the_prompt_names_the_operator_as_the_route_to_market():
+    """A clean fresh-Cell wake (2026-09-24), already told production needs no
+    capability, still abstained reasoning "I cannot reach customers" — every
+    channel was OFF and nothing said that in §28 Phases 8-9 a person takes a
+    reviewed deliverable to buyers by hand."""
+    prompt = deliberation._system_prompt()
+    assert "the operator is your route to market" in prompt
+
+
+def test_a_real_cells_record_shows_its_cash_in_dollars(conn):
+    """Found live (2026-09-24): a USD_REAL Cell shown `100 minor units` reasoned
+    from "$100 in available cash" — it had $1.00, so every cost and price it
+    weighed was off by 100x. The record states the dollar figure beside it."""
+    cell = lifecycle.create_cell(
+        conn, cell_type=CellType.COMMERCIAL, budget_minor_units=100, book=Book.USD_REAL,
+        idempotency_key="dollars",
+    )
+    rendered = context.assemble(
+        conn, cell=cell, canonical_genome=GENOME, wake_reason="scheduled research cycle",
+    ).render()
+
+    assert "cash available: 100 minor units (= $1.00)" in rendered
+    assert "$100" not in rendered

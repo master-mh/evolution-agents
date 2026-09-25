@@ -248,6 +248,13 @@ def _system_prompt(candidates: int = 1) -> str:
         "- Producing a deliverable (a guide, a draft, a prototype, a report) needs "
         "no tool, channel or approval: it is recorded as an artifact for the "
         "operator to review, and only its external use is gated.\n"
+        # The second fact the same Cell was missing (a clean fresh-Cell wake,
+        # 2026-09-24): with every channel OFF it reasoned "I cannot reach
+        # customers". In §28 Phases 8-9 the operator performs external action
+        # by hand, so channels being off is not the absence of a route to market.
+        "- While external channels are off, the operator is your route to market: "
+        "a person reviews each deliverable and may take it to buyers by hand, and "
+        "any sale is recorded against the deliverable that earned it.\n"
         "- Send only the keys your chosen kind needs. A key you have nothing to "
         "put in is left out entirely, never sent empty."
     )

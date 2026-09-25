@@ -57,12 +57,13 @@ from . import (
     experiments,
     ledger,
     lineage,
+    money,
     prediction,
     revenue,
     tool_registry,
 )
 from .accounts import cell_cash, cell_committed
-from .models import Cell
+from .models import Book, Cell
 from .proposal import ProposalKind
 
 #: Default per-wake context budget (§15.1). Small on purpose: the failure mode
@@ -229,9 +230,9 @@ def _realised_record_section(conn: sqlite3.Connection, cell: Cell) -> Section:
     brier = scores["mean_brier"]
     lines = [
         f"book: {cell.book.value}",
-        f"cash available: {cash} minor units",
-        f"committed (in flight): {committed} minor units",
-        f"revenue earned to date: {earned} minor units",
+        f"cash available: {_amount(cash, cell.book)}",
+        f"committed (in flight): {_amount(committed, cell.book)}",
+        f"revenue earned to date: {_amount(earned, cell.book)}",
         # Each kind on its own line, and only when it happened — a Cell that was
         # never reversed reads exactly as it did before ADR-097. Net above, and
         # the reversal named here, because a Cell that sees only a smaller number
@@ -244,19 +245,19 @@ def _realised_record_section(conn: sqlite3.Connection, cell: Cell) -> Section:
         # subtracts the two as separate terms and §10.2 asks for their rates
         # separately, so the record draws it.
         *(
-            [f"refunded to customers (already subtracted above): {refunded} minor units"]
+            [f"refunded to customers (already subtracted above): {_amount(refunded, cell.book)}"]
             if refunded
             else []
         ),
         *(
             [
                 "charged back by a payer's bank (already subtracted above): "
-                f"{charged_back} minor units"
+                f"{_amount(charged_back, cell.book)}"
             ]
             if charged_back
             else []
         ),
-        f"spend to date: {spent} minor units",
+        f"spend to date: {_amount(spent, cell.book)}",
         f"predictions resolved: {scores['resolved']}, unresolved: {scores['unresolved']}",
         (
             f"mean Brier score: {brier:.4f} (lower is better)"
@@ -407,6 +408,25 @@ def _decision_note(row: sqlite3.Row) -> str:
     reason = row["decision_reason"]
     verdict = "APPROVED" if status == "approved" else "REJECTED"
     return f"-> {verdict}" + (f", saying: {reason}" if reason else "")
+
+
+def _amount(minor_units: int, book: Book) -> str:
+    """A balance in the book's own units, with its major-unit value beside it.
+
+    Found live (2026-09-24): a USD_REAL Cell shown `cash available: 100 minor
+    units` reasoned from "$100 in available cash" — it had $1.00. Nothing said a
+    USD minor unit is a cent, so every cost and price a Cell weighed was off by
+    100x. The dollar figure is the same book in its own currency, not §2.4's
+    forbidden bridge; RESOURCE has no major unit and is left as it was.
+    """
+    if book is Book.USD_REAL:
+        sign = "-" if minor_units < 0 else ""
+        dollars = money.format_minor_units(abs(minor_units), book.value)
+        return f"{minor_units} minor units (= {sign}${dollars})"
+    if book is Book.USD_SIM:
+        return (f"{minor_units} minor units "
+                f"(= {money.format_minor_units(minor_units, book.value)} simulated USD)")
+    return f"{minor_units} minor units"
 
 
 def _current_experiment_section(conn: sqlite3.Connection, cell: Cell) -> Section | None:

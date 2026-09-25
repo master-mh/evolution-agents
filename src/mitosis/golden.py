@@ -1337,7 +1337,26 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #             (b) `resource_usage`: the 12 matching rows, `quantity` +99 each;
 #                 `minor_units` unchanged (the same ceiling as 42 -> 43).
 #             Nothing else moved.
-EXPECTATION_VERSION = 44
+#
+#   44 -> 45 (the Cell's money in dollars, and the operator as its route to
+#             market; two live Haiku wakes, 2026-09-24). A fresh Cell read "100
+#             minor units" as "$100 in available cash", and reasoned "I cannot
+#             reach customers" with every channel OFF. `context._amount` now
+#             prints the major unit beside each record balance (`(= 1.00
+#             simulated USD)` here, since the scenario's Cells are USD_SIM), and
+#             one guidance line names the operator as the route to market while
+#             channels are off (§28 Phases 8-9). Field-by-field diff:
+#             (a) `deliberations.context_tokens`: +23 on 9 wakes, +10 on 3 — the
+#                 dollar figures, fewer on records that print fewer money lines.
+#             (b) `model_calls.input_tokens`: +149 on 8 calls and +150 on 1, +123
+#                 on 2 and +124 on 1 — the prompt line's fixed +103 plus twice the
+#                 context growth (the mock counts 2 chars/token, the context 4);
+#                 the odd +1s are floor division — the mock floors `len // 2`
+#                 over the whole request, the context floors each section.
+#             (c) `resource_usage.quantity`: the same deltas on the 12 matching
+#                 rows; `minor_units` unchanged.
+#             Nothing else moved: no balance, proposal, artifact or USD_REAL figure.
+EXPECTATION_VERSION = 45
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

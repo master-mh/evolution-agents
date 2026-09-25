@@ -1305,7 +1305,14 @@
     customers" — nothing tells it that in Phase 8/9 the **operator** takes approved deliverables to market
     by hand, so it sees no path from a playbook to a buyer. That is the next factual gap to test, or the
     operator directs production outright.
-- [ ] **A Cell reads its minor units as dollars (live, 2026-09-24).** The fresh Cell's rationale says "$100
+  - **Route-to-market line added too (golden 44 → 45) — still not enough.** A second fresh Cell (2 calls,
+    4,698 micro-USD) carried both lines (+72 input tokens) and abstained: "Without ability to reach
+    customers… wait for channels to open". Two factual corrections do not move `claude-haiku-4-5` off
+    abstaining while every channel reads OFF and the prompt says inventing work is not legitimate. Left
+    in: both are true. The first product will need operator direction (a genome or approved strategy
+    naming production), which trades away measuring the Cell's own initiative — the operator's call.
+- [x] **A Cell reads its minor units as dollars — FIXED 2026-09-25 (golden 44 → 45).** Confirmed live: the
+  next fresh Cell reasoned from "$1.00 cash". The fresh Cell's rationale says "$100
   in available cash"; it has $1.00. `context._record_section` prints `cash available: 100 minor units` under
   `book: USD_REAL` and nothing says a USD minor unit is a cent, so every price and cost a Cell reasons about
   is off by 100×. Render the book's own major unit beside it for USD books (not a bridge: same book, same
