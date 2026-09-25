@@ -1326,6 +1326,12 @@
   linking to it rather than importing it. The reject-with-reason path is the one that matters: it is how
   the operator talks to a Cell (see the next note). *Disproved by:* a `dashboard.py` that opens a
   writable connection, or a console route that writes without a CSRF check.
+- [x] **A Cell can hand over a revision on its own — the `deliverable` kind, ADR-107 (2026-09-25).** A revision
+  wake abstained ("the rewrite is in progress") because abstain may carry no artifact and every other kind
+  names an action; told to wrap the rewrite in an experiment, the Cell delivered 17,702 bytes at once.
+  `deliverable` requires an artifact, is a statement kind (approval = acceptance), and is queued so a
+  rejection's reason can ask for another revision. Migration 0043, golden 45 → 46, 5 guards CAUGHT.
+  *Disproved by:* a `deliverable` proposal row with no artifact on its deliberation.
 - **The reject reason is the operator's voice to a Cell, and it works (live, 2026-09-25).** A Cell asked to
   write the playbook in its wake reason proposed validation instead; rejected with "Listing on Gumroad
   costs nothing and a sale is the validation. Write the complete playbook now", the `human decision` wake

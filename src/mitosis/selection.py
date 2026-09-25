@@ -114,6 +114,10 @@ NON_CANDIDATE_SENSE: dict[ProposalKind, str] = {
         "asks to *act* on what is already believed. §13 evaluates ideas before "
         "they are tested, and this is the other end of that"
     ),
+    ProposalKind.DELIVERABLE: (
+        "hands over finished work and asks for nothing — like a strategy, approving "
+        "it is the act (ADR-107), so there is no scarce resource for it to compete for"
+    ),
     ProposalKind.ABSTAIN: "declines to act, so there is nothing to select",
 }
 

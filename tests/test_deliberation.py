@@ -1548,3 +1548,59 @@ def test_a_real_cells_record_shows_its_cash_in_dollars(conn):
 
     assert "cash available: 100 minor units (= $1.00)" in rendered
     assert "$100" not in rendered
+
+
+# --- the deliverable kind (ADR-107) ---------------------------------------------
+
+
+def _deliverable_reply(**overrides) -> str:
+    return _valid_reply(
+        kind="deliverable",
+        summary="the rewritten playbook, for review",
+        artifact={"kind": "fulfilment_artifact", "title": "Playbook v2", "content": "Part 1 ..."},
+        **overrides,
+    )
+
+
+def test_a_deliverable_without_an_artifact_is_an_invalid_reply(conn):
+    """A deliverable that delivers nothing would reach the queue asking a person
+    to accept work that does not exist."""
+    cell = _make_cell(conn)
+    reply = json.loads(_deliverable_reply())
+    del reply["artifact"]
+
+    result = _deliberate(conn, cell, reply=json.dumps(reply))
+
+    assert result.status == "unparseable"
+    assert 'must carry an "artifact"' in (result.failure_reason or "")
+
+
+def test_a_deliverable_reaches_the_operators_queue_with_its_artifact(conn):
+    """Found live (2026-09-25): asked to revise, a Cell could only abstain —
+    which carries no artifact and is never queued — and handed over nothing.
+    A deliverable is queued so the operator can accept it or send it back."""
+    cell = _make_cell(conn)
+
+    result = _deliberate(conn, cell, reply=_deliverable_reply(), proposal_sink=approval.QueueSink())
+
+    assert result.status == "proposed"
+    assert conn.execute("SELECT kind FROM proposals").fetchone()[0] == "deliverable"
+    assert conn.execute("SELECT title FROM artifacts").fetchone()[0] == "Playbook v2"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM approval_requests WHERE status = 'pending'"
+    ).fetchone()[0] == 1
+
+
+def test_rejecting_a_deliverable_wakes_the_cell_with_the_revision_request(conn):
+    """The rejection's reason is the operator's revision request; it reaches the
+    Cell through the decision note, and the decision wakes it (ADR-107)."""
+    cell = _make_cell(conn)
+    _deliberate(conn, cell, reply=_deliverable_reply(), proposal_sink=approval.QueueSink())
+    request_id = conn.execute("SELECT request_id FROM approval_requests").fetchone()[0]
+
+    approval.reject(conn, request_id=request_id, decided_by="operator", reason="fix the lock date")
+
+    wakes = conn.execute(
+        "SELECT payload_json FROM event_inbox WHERE event_type = 'cell_wake' AND status = 'pending'"
+    ).fetchall()
+    assert [json.loads(w[0])["wake_reason"] for w in wakes] == [deliberation.WAKE_HUMAN_DECISION]

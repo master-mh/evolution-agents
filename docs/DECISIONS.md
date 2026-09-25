@@ -6803,3 +6803,39 @@ FUTURE_BUILD_HOOKS and PRIORITIES rather than guessed at here.
   a policy in force), a merchant channel, and §1.1's chosen operating costs. A hold released to a Cell that
   has since died lands in a dead Cell's cash, as revenue to a dead Cell already does; §10.2's exposure is
   reported but is not yet a domination axis. All logged in FUTURE_BUILD_HOOKS.
+
+## ADR-107: A Cell may hand over a deliverable and propose nothing else — the `deliverable` kind
+
+- **Status:** Accepted
+- **Spec ref:** §0.3, §23 (the queue; §23.3's regeneration of *actions*), §25.2 (a decision carries its
+  reason), §28 Phase 8 (production ungated, external use reviewed); ADR-046 (statement kinds), ADR-068
+- **Context:** Live, 2026-09-25, in the operator's own colony. A Cell wrote a playbook; the operator
+  rejected its next proposal with a revision brief. The revision wake abstained — "the rewrite is in
+  progress" — and delivered nothing. Every kind but `abstain` names something to do, and `abstain` may not
+  carry an artifact (`_abstaining_produces_nothing`), so "here is the revised work, nothing else to
+  propose" had no valid shape. Told explicitly to wrap the rewrite in an experiment proposal, the same
+  Cell delivered 17,702 bytes at once.
+- **Decision:** A seventh kind, `deliverable` (migration 0043 rebuilds the kind CHECK as 0032 did).
+  1. **It requires `artifact`** (`_deliverable_carries_an_artifact`); the schema cannot say so because the
+     artifact is linked through the deliberation, not the proposal row.
+  2. **It is a statement** (`STATEMENT_KINDS`, beside `strategy`): it asks for nothing, so approval is
+     acceptance and nothing consumes its grant; §23.3's regeneration does not reach it.
+  3. **It is queued.** Export is already gated (§28 Phase 8 needs nothing more for safety), but the queue
+     is the only way an operator can *answer* a Cell: a rejection's reason reaches it through the decision
+     note, and every decision — this kind included — wakes it (`WAKE_HUMAN_DECISION`).
+  4. The payload rule and the guidance line name it, so a Cell can find it.
+- **What it displaced, and why:**
+  - *Letting `abstain` carry an artifact.* Abstentions are never queued, so the operator could not reply
+    to the one wake that most needs a reply; and "I decline to work" carrying work makes both meanings
+    unreadable.
+  - *Telling Cells to wrap deliverables in an experiment.* It worked once and makes every hand-over a
+    request for an experiment slot the operator must refuse, then selection (§13) scores it as a
+    candidate it is not.
+  - *`strategy` + artifact.* Already legal, but approving a strategy changes what the Cell is shown from
+    then on (ADR-046); accepting a document is not endorsing an operating approach.
+- **Verification:** 5 guards teeth-checked, 5 CAUGHT (the artifact requirement, statement status, the
+  prompt naming the requirement, the schema CHECK, and selection's forced classification). Three tests
+  pinning the old six-kind world were updated deliberately, each naming this ADR. Golden 45 → 46: +103
+  input tokens per call, nothing else. Live verification follows in the operator's colony.
+- **Consequences:** ADR-046's "the only kind with no consumer" is no longer true of `strategy` alone; both
+  statement kinds are listed in `STATEMENT_KINDS`, which is what the regeneration and expiry paths read.

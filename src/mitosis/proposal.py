@@ -95,11 +95,11 @@ class ProposalKind(StrEnum):
     #: and the *rung* (§25.1), neither of which the Cell owns. Like the
     #: requests below, an approved grant is what starts one.
     EXPERIMENT = "experiment"
-    #: How the Cell intends to operate (§0.2, §15.1). **The only kind with no
-    #: consumer, and that is the decision rather than an unfinished corner
-    #: (ADR-046).** Every other kind names something to do and an approved grant
-    #: is permission to do it; a strategy names nothing, so approving one *is*
-    #: the act. What changes is what the Cell is shown from then on — §15.1's
+    #: How the Cell intends to operate (§0.2, §15.1). **It has no consumer, and
+    #: that is the decision rather than an unfinished corner (ADR-046)** — since
+    #: ADR-107 shared with DELIVERABLE, the other statement kind. The request
+    #: kinds name something to do and an approved grant is permission to do it;
+    #: a strategy names nothing, so approving one *is* the act. What changes is what the Cell is shown from then on — §15.1's
     #: "relevant epigenetic state", which `context` derives from the most
     #: recently approved one rather than storing anywhere.
     STRATEGY = "strategy"
@@ -119,6 +119,15 @@ class ProposalKind(StrEnum):
     #: The channel id is validated by `channel_registry.validate_request` at
     #: record time for the same layering reason `tool_request.tool` is.
     EXTERNAL_ACTION = "external_action"
+    #: Hand over a deliverable and propose nothing else (§28 Phase 8; ADR-107).
+    #: Requires `artifact`. A *statement*, like STRATEGY: it asks for nothing,
+    #: so approving it is acceptance, not permission, and nothing consumes the
+    #: grant. It is queued anyway because the §23 queue is how an operator
+    #: answers a Cell — a rejection's reason is a revision request, and the
+    #: decision wakes the Cell. Added after a live Cell, asked to revise its
+    #: product, could only abstain (which may carry no artifact) and produced
+    #: nothing; told to wrap the rewrite in an experiment, it delivered at once.
+    DELIVERABLE = "deliverable"
     #: A first-class outcome, not a failure. A Cell with nothing worth doing
     #: should say so; the alternative is a Cell that invents work because the
     #: schema gave it no way to decline. (Abstaining is still not free — §10.5
@@ -136,7 +145,9 @@ class ProposalKind(StrEnum):
 #: ABSTAIN is deliberately absent. It is a statement too, but `approval.enqueue`
 #: never queues one, so it can never reach a grant — listing it here would be a
 #: rule about a state that cannot occur.
-STATEMENT_KINDS: frozenset["ProposalKind"] = frozenset({ProposalKind.STRATEGY})
+STATEMENT_KINDS: frozenset["ProposalKind"] = frozenset(
+    {ProposalKind.STRATEGY, ProposalKind.DELIVERABLE}
+)
 
 #: The payload object each kind must carry, and which no other kind may.
 #:
@@ -369,6 +380,7 @@ class Proposal(BaseModel):
     #: What the Cell made this wake, if anything. Allowed alongside any kind
     #: except ABSTAIN: production is not gated (§28 Phase 8 gates *external
     #: use*), so a Cell may hand over a draft while proposing what to do next.
+    #: Required for DELIVERABLE, which is that hand-over with nothing proposed.
     artifact: ArtifactSpec | None = None
 
     @model_validator(mode="after")
@@ -381,6 +393,15 @@ class Proposal(BaseModel):
         """
         if self.kind is ProposalKind.ABSTAIN and self.artifact is not None:
             raise ValueError("an abstaining proposal cannot carry an artifact")
+        return self
+
+    @model_validator(mode="after")
+    def _deliverable_carries_an_artifact(self) -> "Proposal":
+        """A deliverable with nothing delivered is an abstention wearing a
+        reviewable kind: it would reach the queue asking a person to accept
+        work that does not exist (ADR-107)."""
+        if self.kind is ProposalKind.DELIVERABLE and self.artifact is None:
+            raise ValueError('a deliverable proposal must carry an "artifact"')
         return self
 
     @model_validator(mode="after")
@@ -838,6 +859,10 @@ def _payload_rule() -> str:
         lines.append(f'  kind "{kind.value}"  ->  keep "{field}", drop the other two')
     other = ", ".join(f'"{k.value}"' for k in ProposalKind if k not in KIND_PAYLOADS)
     lines.append(f"  kind {other}  ->  drop all three")
+    lines.append(
+        f'  kind "{ProposalKind.DELIVERABLE.value}" hands over a deliverable and proposes '
+        'nothing else — it REQUIRES "artifact" (below)'
+    )
     lines.append("")
     lines.append("Two more keys exist and are NOT shown above, because most replies "
                  "leave them out. Add one only if it genuinely applies:")

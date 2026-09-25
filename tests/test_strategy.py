@@ -151,9 +151,14 @@ def test_a_strategy_has_no_consumer_and_the_kernel_says_so(conn):
     # ABSTAIN is a statement too but is never queued, so a rule about it would
     # govern a state that cannot occur.
     assert proposal_module.ProposalKind.ABSTAIN not in proposal_module.STATEMENT_KINDS
+    # DELIVERABLE is the second statement kind, argued in ADR-107: it hands over
+    # finished work and asks for nothing, so approving it is acceptance and its
+    # grant has no consumer — exactly this test's definition of a statement.
+    assert proposal_module.ProposalKind.DELIVERABLE in proposal_module.STATEMENT_KINDS
     for kind in proposal_module.ProposalKind:
         if kind in {
             proposal_module.ProposalKind.STRATEGY,
+            proposal_module.ProposalKind.DELIVERABLE,
             proposal_module.ProposalKind.ABSTAIN,
         }:
             continue

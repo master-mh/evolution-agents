@@ -181,6 +181,9 @@ def test_every_other_kind_still_requires_a_risk_tier(kind):
     }
     if kind in KIND_PAYLOADS:
         reply[KIND_PAYLOADS[kind]] = filled[KIND_PAYLOADS[kind]]
+    if kind is ProposalKind.DELIVERABLE:
+        # Its own requirement (ADR-107), met so the only missing field is the tier.
+        reply["artifact"] = {"kind": "report", "title": "t", "content": "c"}
 
     with pytest.raises(proposal.ProposalError, match="risk_tier is required"):
         proposal.parse(json.dumps(reply))
@@ -331,8 +334,14 @@ def test_kind_payloads_covers_exactly_the_kinds_the_parser_demands_one_for():
         try:
             proposal.parse(json.dumps({"kind": kind.value, **base}))
         except proposal.ProposalError as exc:
-            if "must carry" in str(exc):
+            # A deliverable's artifact is not one of the three payload keys —
+            # `artifact` pairs with no kind and rides alongside most of them
+            # (ADR-107) — so it is checked on its own below, not counted here.
+            if "must carry" in str(exc) and '"artifact"' not in str(exc):
                 demanded.add(kind)
+    with pytest.raises(proposal.ProposalError, match='must carry an "artifact"'):
+        proposal.parse(json.dumps({"kind": ProposalKind.DELIVERABLE.value, **base}))
+    assert 'REQUIRES "artifact"' in proposal.response_schema_hint()
     assert demanded == set(KIND_PAYLOADS), (
         f"the parser demands a payload for {sorted(k.value for k in demanded)} but "
         f"KIND_PAYLOADS lists {sorted(k.value for k in KIND_PAYLOADS)} — the prompt "

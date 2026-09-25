@@ -1356,7 +1356,21 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #             (c) `resource_usage.quantity`: the same deltas on the 12 matching
 #                 rows; `minor_units` unchanged.
 #             Nothing else moved: no balance, proposal, artifact or USD_REAL figure.
-EXPECTATION_VERSION = 45
+#
+#   45 -> 46 (the `deliverable` proposal kind; ADR-107, migration 0043). A live
+#             Cell asked to revise its product could only abstain — which may
+#             carry no artifact — and handed over nothing. The kind enum, the
+#             payload rule and one guidance clause now name `deliverable`.
+#             Field-by-field diff:
+#             (a) `model_calls`: all 12 calls, **+103 `input_tokens`** — the
+#                 schema hint's kind list, its new payload-rule line, and the
+#                 guidance clause, in every system prompt.
+#             (b) `resource_usage`: the 12 matching rows, `quantity` +103;
+#                 `minor_units` unchanged (the ceiling of 42 -> 43).
+#             No proposal changed kind: the scenario's replies are fixed and
+#             none is a deliverable, and migration 0043's rebuild copies every
+#             existing row. Nothing else moved.
+EXPECTATION_VERSION = 46
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

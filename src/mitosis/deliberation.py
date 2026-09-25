@@ -247,7 +247,8 @@ def _system_prompt(candidates: int = 1) -> str:
         # needed a capability that was off; writing the product never came up.
         "- Producing a deliverable (a guide, a draft, a prototype, a report) needs "
         "no tool, channel or approval: it is recorded as an artifact for the "
-        "operator to review, and only its external use is gated.\n"
+        "operator to review, and only its external use is gated. If handing one "
+        "over is all you have to propose, use kind \"deliverable\".\n"
         # The second fact the same Cell was missing (a clean fresh-Cell wake,
         # 2026-09-24): with every channel OFF it reasoned "I cannot reach
         # customers". In §28 Phases 8-9 the operator performs external action
