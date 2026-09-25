@@ -1341,6 +1341,10 @@
 - [x] **`risk_tier` optional for `deliverable` — ADR-109 (2026-09-25).** Every first-attempt deliverable from
   claude-haiku-4-5 omitted it (3 of 3) and two revisions were lost to it. Migration 0044, golden 46 → 47, 4
   guards CAUGHT. *Disproved by:* a `strategy` proposal row with a NULL `risk_tier`.
+  - **ADR-108 and ADR-109 confirmed live together (2026-09-25):** shown its rejected 8,278-byte v3 in full
+    (context 3,284 tokens at `--context-budget 6000`), the Cell returned a 10,865-byte v4 as a tierless
+    `deliverable` that kept v3's fixes and restored every section the brief named — an edit, not a rewrite.
+    One repair, for `estimated_cost_minor_units`, affordable this time.
 - [ ] **A long deliverable can be lost to a trivially missing field.** Parse repair re-sends the whole reply,
   so its RESOURCE reservation scales with the artifact; a Cell funded for ordinary wakes cannot afford the
   repair exactly when the reply is most valuable. Either fund repair from a separate allowance or reserve
