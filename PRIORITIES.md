@@ -1332,6 +1332,23 @@
   `deliverable` requires an artifact, is a statement kind (approval = acceptance), and is queued so a
   rejection's reason can ask for another revision. Migration 0043, golden 45 → 46, 5 guards CAUGHT.
   *Disproved by:* a `deliverable` proposal row with no artifact on its deliberation.
+  - **Confirmed live (2026-09-25):** rejected with five corrections and no delivery instructions, the Cell
+    chose `deliverable` on its own and fixed all five — but omitted `risk_tier` and
+    `estimated_cost_minor_units`, and the repair could not run: an 18,521-char reply re-sent in the repair
+    turn needed 54,516 RESOURCE units and the Cell had 19,754. The work was lost to a missing integer.
+    Topped up and re-woken, it was recorded — as a revision **half the length** of the one before, the
+    fixes kept and two email templates, troubleshooting and scope-creep sections dropped.
+- [ ] **A long deliverable can be lost to a trivially missing field.** Parse repair re-sends the whole reply,
+  so its RESOURCE reservation scales with the artifact; a Cell funded for ordinary wakes cannot afford the
+  repair exactly when the reply is most valuable. Either fund repair from a separate allowance or reserve
+  for it with the first call. (The lost reply is still in `model_calls.response_text` — ADR-102 forbids
+  the kernel completing it on the Cell's behalf.) *Disproved by:* a repair that succeeds on a Cell holding
+  only its first call's reservation.
+- [ ] **Revisions regress: each rewrite loses what the brief did not mention.** v2 → v3 fixed every named
+  point and halved the document. The revision brief is the only memory a Cell has of its last draft (its
+  context shows proposals, not artifact bodies). Showing the Cell its own previous artifact when a
+  deliverable is sent back would let it edit instead of regenerate. *Disproved by:* a revision wake whose
+  context contains the rejected artifact's content.
 - **The reject reason is the operator's voice to a Cell, and it works (live, 2026-09-25).** A Cell asked to
   write the playbook in its wake reason proposed validation instead; rejected with "Listing on Gumroad
   costs nothing and a sale is the validation. Write the complete playbook now", the `human decision` wake
