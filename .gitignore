@@ -17,3 +17,8 @@ dist/
 # ANTHROPIC_API_KEY is a billable incident, not just an exposure.
 .env
 .env.*
+
+# SQLite write-ahead log and shared-memory files beside any colony database —
+# they carry recent writes, and the repo is public.
+*.db-wal
+*.db-shm
