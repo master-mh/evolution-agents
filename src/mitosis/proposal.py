@@ -149,6 +149,17 @@ STATEMENT_KINDS: frozenset["ProposalKind"] = frozenset(
     {ProposalKind.STRATEGY, ProposalKind.DELIVERABLE}
 )
 
+#: Kinds that propose no action, so §23.1 — which classifies *actions* — has
+#: nothing to put a tier on, and `risk_tier` may be omitted. ABSTAIN since
+#: ADR-068; DELIVERABLE since ADR-109, after every first-attempt deliverable
+#: from claude-haiku-4-5 omitted it (3 of 3) and a repair naming every required
+#: key still dropped it. STRATEGY is a statement too but stays tiered: it
+#: changes what a Cell is shown from then on (ADR-046), which is a consequence
+#: a reviewer weighs; a deliverable's approval changes nothing.
+TIERLESS_KINDS: frozenset["ProposalKind"] = frozenset(
+    {ProposalKind.ABSTAIN, ProposalKind.DELIVERABLE}
+)
+
 #: The payload object each kind must carry, and which no other kind may.
 #:
 #: One source of truth for a pairing that is stated in two places and has to
@@ -406,18 +417,18 @@ class Proposal(BaseModel):
 
     @model_validator(mode="after")
     def _risk_tier_matches_kind(self) -> "Proposal":
-        """§23.1 classifies *actions*, LOW through CRITICAL. ABSTAIN proposes
-        none, so it is the one kind where omitting `risk_tier` (or sending it
-        as `null`) is a defensible answer rather than a dropped field —
-        ADR-068, after two models independently produced exactly this shape.
-        Every other kind still requires a stated tier.
+        """§23.1 classifies *actions*, LOW through CRITICAL. The kinds in
+        `TIERLESS_KINDS` propose none, so omitting `risk_tier` (or sending it
+        as `null`) is a defensible answer rather than a dropped field — ADR-068
+        for ABSTAIN, ADR-109 for DELIVERABLE, each after live models produced
+        exactly this shape. Every other kind still requires a stated tier.
         """
-        if self.kind is ProposalKind.ABSTAIN:
+        if self.kind in TIERLESS_KINDS:
             return self
         if self.risk_tier is None:
             raise ValueError(
                 f"risk_tier is required for kind {self.kind.value!r} "
-                "(only 'abstain' may omit it)"
+                f"(only {_tierless_names()} may omit it)"
             )
         return self
 
@@ -707,6 +718,11 @@ def _summarise_validation_error(exc: ValidationError) -> str:
     return "; ".join(parts)
 
 
+def _tierless_names(joiner: str = "and") -> str:
+    """`TIERLESS_KINDS` as the prompt and the error name them."""
+    return f" {joiner} ".join(f'"{k.value}"' for k in ProposalKind if k in TIERLESS_KINDS)
+
+
 def always_required_keys() -> tuple[str, ...]:
     """The keys every reply carries whatever its `kind`, in the order the
     prompt shows them.
@@ -719,8 +735,8 @@ def always_required_keys() -> tuple[str, ...]:
     that has just been told only what it got *wrong* (ADR-102).
 
     **Not the same claim as "always mandatory."** `risk_tier` is shown
-    unconditionally and may be omitted by exactly one kind, `abstain`
-    (ADR-068); a caller naming these keys must carry that exception itself.
+    unconditionally and may be omitted by `TIERLESS_KINDS` (ADR-068,
+    ADR-109); a caller naming these keys must carry that exception itself.
     """
     conditional = set(KIND_PAYLOADS.values())
     return tuple(key for key in _prompt_schema() if key not in conditional)
@@ -802,8 +818,8 @@ def _prompt_schema() -> dict[str, Any]:
         "rationale": f"REQUIRED string, 1-{MAX_RATIONALE_CHARS} chars",
         "risk_tier": (
             _one_of(RiskTier)
-            + ' — required for every kind except "abstain", which classifies no '
-            "action and may omit this key entirely"
+            + f" — required for every kind except {_tierless_names()}, which "
+            "propose no action and may omit this key entirely"
         ),
         "estimated_cost_minor_units": "REQUIRED integer >= 0 (use 0 if nothing would be spent)",
     }

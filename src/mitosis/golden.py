@@ -1370,7 +1370,23 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #             No proposal changed kind: the scenario's replies are fixed and
 #             none is a deliverable, and migration 0043's rebuild copies every
 #             existing row. Nothing else moved.
-EXPECTATION_VERSION = 46
+#
+#   46 -> 47 (`risk_tier` optional for `deliverable`; ADR-109, migration 0044).
+#             Every first-attempt deliverable from claude-haiku-4-5 omitted the
+#             tier, and two revised playbooks were lost to it; a deliverable,
+#             like an abstention, proposes no action for §23.1 to classify. The
+#             schema hint's risk_tier line now names both kinds: the system
+#             prompt is **+17 characters** (3849 -> 3866). Field-by-field diff:
+#             (a) `model_calls.input_tokens`: +9 on 10 calls, +8 on 2 — the mock
+#                 counts `len // 2` over the whole request, so +17 characters
+#                 floors to 8 or 9 by each request's length parity.
+#             (b) `resource_usage.quantity`: the same deltas on the 12 matching
+#                 rows; `minor_units` unchanged.
+#             The repair turn also grew (646 -> 658 characters) but the scenario
+#             never repairs. No proposal lacks a tier and no request's
+#             `claimed_tier` is NULL here, so the queue sections are unmoved;
+#             migration 0044's two rebuilds copy every existing row.
+EXPECTATION_VERSION = 47
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

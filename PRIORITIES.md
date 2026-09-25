@@ -1338,6 +1338,9 @@
     turn needed 54,516 RESOURCE units and the Cell had 19,754. The work was lost to a missing integer.
     Topped up and re-woken, it was recorded — as a revision **half the length** of the one before, the
     fixes kept and two email templates, troubleshooting and scope-creep sections dropped.
+- [x] **`risk_tier` optional for `deliverable` — ADR-109 (2026-09-25).** Every first-attempt deliverable from
+  claude-haiku-4-5 omitted it (3 of 3) and two revisions were lost to it. Migration 0044, golden 46 → 47, 4
+  guards CAUGHT. *Disproved by:* a `strategy` proposal row with a NULL `risk_tier`.
 - [ ] **A long deliverable can be lost to a trivially missing field.** Parse repair re-sends the whole reply,
   so its RESOURCE reservation scales with the artifact; a Cell funded for ordinary wakes cannot afford the
   repair exactly when the reply is most valuable. Either fund repair from a separate allowance or reserve

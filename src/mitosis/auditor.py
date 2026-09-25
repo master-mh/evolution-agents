@@ -305,7 +305,7 @@ def _brief(
         f"the proposing Cell's own rationale: {detail.cell_explanation}",
         "",
         "# What the kernel says about it",
-        f"claimed risk tier: {request.claimed_tier.value}",
+        f"claimed risk tier: {request.claimed_tier_label}",
         f"assessed risk tier: {request.assessed_tier.value}  "
         "(the kernel's own, which the proposing Cell cannot set)",
         f"estimated cost: {detail.estimated_cost_minor_units} {detail.book.value}",

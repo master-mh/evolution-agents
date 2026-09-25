@@ -161,13 +161,21 @@ def test_an_abstain_reply_may_still_state_a_risk_tier():
 
 
 @pytest.mark.parametrize(
-    "kind", sorted(set(ProposalKind) - {ProposalKind.ABSTAIN}, key=lambda k: k.value)
+    "kind",
+    sorted(
+        # Spelled out, not read from `proposal.TIERLESS_KINDS`: a widening of
+        # that constant must fail here, not quietly shrink this parameter list.
+        set(ProposalKind) - {ProposalKind.ABSTAIN, ProposalKind.DELIVERABLE},
+        key=lambda k: k.value,
+    ),
 )
 def test_every_other_kind_still_requires_a_risk_tier(kind):
-    """The exception is exactly one kind wide. Widening it silently — a
+    """The exception is exactly two kinds wide. Widening it silently — a
     stronger model reaching the same objection on a *different* kind, say —
     must still fail loudly rather than being read as evidence to relax
-    further."""
+    further. ADR-109 widened it once, deliberately, for `deliverable`: not
+    because a model objected but because a deliverable, like an abstention,
+    proposes no action for §23.1 to classify."""
     reply = {
         "kind": kind.value,
         "summary": "a summary",
@@ -181,21 +189,19 @@ def test_every_other_kind_still_requires_a_risk_tier(kind):
     }
     if kind in KIND_PAYLOADS:
         reply[KIND_PAYLOADS[kind]] = filled[KIND_PAYLOADS[kind]]
-    if kind is ProposalKind.DELIVERABLE:
-        # Its own requirement (ADR-107), met so the only missing field is the tier.
-        reply["artifact"] = {"kind": "report", "title": "t", "content": "c"}
 
     with pytest.raises(proposal.ProposalError, match="risk_tier is required"):
         proposal.parse(json.dumps(reply))
 
 
-def test_the_prompt_names_the_one_exception():
+def test_the_prompt_names_the_exceptions():
     """The rendered hint must actually say which kind may omit the field, not
     just that the schema now permits it — a model reading the old wording
     ("required for every kind, abstain included") would still supply one it
     no longer needs to."""
     hint = _skeleton()["risk_tier"]
     assert "abstain" in hint
+    assert "deliverable" in hint
     assert "except" in hint
 
 

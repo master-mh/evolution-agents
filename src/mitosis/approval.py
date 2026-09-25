@@ -206,7 +206,9 @@ class ApprovalRequest:
     cell_id: str
     founder_cell_id: str
     aggregation_key: str
-    claimed_tier: RiskTier
+    #: `None` when the proposal claimed no tier — a `deliverable`, which
+    #: proposes no action for §23.1 to classify (ADR-109).
+    claimed_tier: RiskTier | None
     assessed_tier: RiskTier
     exposure_minor_units: int
     reversible: bool
@@ -221,6 +223,14 @@ class ApprovalRequest:
     batch_id: str | None
     regenerated_wake_key: str | None
     signals: tuple[Signal, ...] = ()
+
+    @property
+    def claimed_tier_label(self) -> str:
+        """The Cell's claim as every reader prints it — including "none" for a
+        tierless kind (ADR-109), which is a fact to show, not a gap to hide."""
+        if self.claimed_tier is None:
+            return "none (proposes no action)"
+        return self.claimed_tier.value
 
     def is_overdue(self, *, now: datetime | None = None) -> bool:
         """§23.3's "overdue items surface distinctly".
@@ -404,7 +414,9 @@ def _enqueue_locked(
         raise ApprovalError(f"proposal {proposal_id} names an unknown cell")
 
     kind = ProposalKind(row["kind"])
-    claimed = RiskTier(row["risk_tier"])
+    # No claim at all for a tierless kind (ADR-109): recorded as absent, never
+    # as LOW — a claim the Cell did not make is not one to store in its name.
+    claimed = RiskTier(row["risk_tier"]) if row["risk_tier"] is not None else None
     estimated = int(row["estimated_cost_minor_units"])
     now = now or _now()
 
@@ -465,7 +477,7 @@ def _enqueue_locked(
             cell.cell_id,
             aggregation_key,
             cell.founder_cell_id,
-            claimed.value,
+            claimed.value if claimed is not None else None,
             assessed.value,
             exposure,
             1 if reversible else 0,
@@ -492,7 +504,7 @@ def _enqueue_locked(
         metadata={
             "request_id": request_id,
             "proposal_id": proposal_id,
-            "claimed_tier": claimed.value,
+            "claimed_tier": claimed.value if claimed is not None else None,
             "assessed_tier": assessed.value,
             "exposure_minor_units": exposure,
             "reversible": reversible,
@@ -720,7 +732,7 @@ def _exposure_tier(*, exposure_minor_units: int, alarm_cents_per_epoch: int) -> 
 
 def _assessed_tier(
     *,
-    claimed: RiskTier,
+    claimed: RiskTier | None,
     kernel_tier: RiskTier,
     signals: tuple[Signal, ...],
     genome_claim: RiskTier | None = None,
@@ -739,7 +751,9 @@ def _assessed_tier(
     `max` rather than adding a second mechanism is the point; a genome may raise
     a Cell's review tier and can never lower it.
     """
-    tier = _max_tier(kernel_tier, claimed)
+    # An absent claim (ADR-109) leaves the kernel's assessment standing — the
+    # same result a LOW claim would give, without recording one.
+    tier = _max_tier(kernel_tier, claimed) if claimed is not None else kernel_tier
     if genome_claim is not None:
         tier = _max_tier(tier, genome_claim)
     if any(s.signal in _ESCALATING_SIGNALS for s in signals):
@@ -785,7 +799,7 @@ def _detect_signals(
     cell_id: str,
     founder_cell_id: str,
     aggregation_key: str,
-    claimed_tier: RiskTier,
+    claimed_tier: RiskTier | None,
     kernel_tier: RiskTier,
     kind: ProposalKind,
     estimated_cost_minor_units: int,
@@ -852,7 +866,8 @@ def _detect_signals(
 
     # 3. Understated risk (§23.4 "misleading summaries"). Two shapes: a tier
     #    below the kernel's, and a spend request that claims to cost nothing.
-    if _TIER_ORDER[claimed_tier] < _TIER_ORDER[kernel_tier]:
+    # A Cell that claimed no tier (ADR-109) cannot have understated one.
+    if claimed_tier is not None and _TIER_ORDER[claimed_tier] < _TIER_ORDER[kernel_tier]:
         signals.append(
             Signal(
                 SIGNAL_UNDERSTATED_RISK,
@@ -1473,7 +1488,7 @@ def get_request(conn: sqlite3.Connection, request_id: str) -> ApprovalRequest | 
         cell_id=row["cell_id"],
         founder_cell_id=row["founder_cell_id"],
         aggregation_key=row["aggregation_key"],
-        claimed_tier=RiskTier(row["claimed_tier"]),
+        claimed_tier=RiskTier(row["claimed_tier"]) if row["claimed_tier"] is not None else None,
         assessed_tier=RiskTier(row["assessed_tier"]),
         exposure_minor_units=int(row["exposure_minor_units"]),
         reversible=bool(row["reversible"]),

@@ -1665,3 +1665,57 @@ def test_a_draft_too_large_for_the_budget_is_named_not_silently_dropped(conn):
     assert context.REVISION_SECTION_NAME not in rendered
     assert "could not show it" in rendered
     assert "x" * 100 not in rendered
+
+
+# --- a deliverable claims no risk tier (ADR-109) ------------------------------------
+
+
+def _tierless_deliverable_reply() -> str:
+    reply = json.loads(_deliverable_reply())
+    del reply["risk_tier"]
+    return json.dumps(reply)
+
+
+def test_a_deliverable_without_a_risk_tier_is_recorded(conn):
+    """Live (2026-09-25): every first-attempt deliverable from claude-haiku-4-5
+    omitted `risk_tier`, and two revised playbooks were lost to it. A deliverable
+    proposes no action, so §23.1 has nothing to classify — ADR-068's argument
+    for `abstain`, applied to the second kind it fits."""
+    cell = _make_cell(conn)
+
+    result = _deliberate(conn, cell, reply=_tierless_deliverable_reply())
+
+    assert result.status == "proposed"
+    assert conn.execute("SELECT risk_tier FROM proposals").fetchone()[0] is None
+
+
+def test_a_tierless_deliverable_is_queued_with_no_claim_and_the_kernels_tier(conn):
+    """No claim is recorded as no claim — never as LOW in the Cell's name — and
+    the queue's own assessment stands, as a LOW claim would have left it."""
+    cell = _make_cell(conn)
+    _deliberate(conn, cell, reply=_tierless_deliverable_reply(), proposal_sink=approval.QueueSink())
+
+    request = approval.get_request(
+        conn, conn.execute("SELECT request_id FROM approval_requests").fetchone()[0]
+    )
+
+    assert request.claimed_tier is None
+    assert request.claimed_tier_label == "none (proposes no action)"
+    assert request.assessed_tier is not None
+    assert all(s.signal != approval.SIGNAL_UNDERSTATED_RISK for s in request.signals)
+
+
+def test_the_schema_still_requires_a_tier_for_every_action_kind(conn):
+    """Migration 0044 relaxes the CHECK for exactly the two kinds that propose no
+    action; a strategy or request with no tier stays unrepresentable."""
+    cell = _make_cell(conn)
+    _deliberate(conn, cell, reply=_tierless_deliverable_reply())
+    deliberation_id = conn.execute("SELECT deliberation_id FROM proposals").fetchone()[0]
+    for kind in ("strategy", "experiment", "spend_request"):
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO proposals (proposal_id, deliberation_id, cell_id, kind, summary, "
+                "rationale, risk_tier, estimated_cost_minor_units, payload_json, created_at_utc) "
+                "VALUES (?, ?, ?, ?, 's', 'r', NULL, 0, '{}', '')",
+                (f"p-{kind}", deliberation_id, cell.cell_id, kind),
+            )

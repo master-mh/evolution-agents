@@ -301,7 +301,7 @@ def _repair_instruction(error: str) -> str:
         "every key you already sent, with its value unchanged, and change only "
         "what the error above names. A key you got right is still right.\n\n"
         f"Whatever you change, the corrected object must still carry: {required} "
-        f'(risk_tier only if your kind is not "{proposal_module.ProposalKind.ABSTAIN.value}"), '
+        f"(risk_tier unless your kind is {proposal_module._tierless_names('or')}), "
         "plus the payload key your kind requires.\n\n"
         "Reply with ONE corrected JSON object and nothing else — no prose "
         "before or after. This is your only chance to fix it: if this reply "

@@ -6870,3 +6870,34 @@ FUTURE_BUILD_HOOKS and PRIORITIES rather than guessed at here.
   only defence. Live verification follows in the operator's colony.
 - **Consequences:** A revision wake needs a context budget big enough for its draft (`--context-budget`);
   at the 1,200 default the Cell is told the draft did not fit.
+
+## ADR-109: `risk_tier` is optional for `deliverable`, as it is for `abstain`
+
+- **Status:** Accepted
+- **Spec ref:** §23.1 (tiers classify *actions*), §23.4–§23.5 (the queue reads its own inputs; a claim may
+  only raise a tier); ADR-068 (the same call for `abstain`), ADR-107, ADR-108
+- **Context:** Live, 2026-09-25, in the operator's colony. Of four `deliverable` replies from
+  claude-haiku-4-5, **every first attempt omitted `risk_tier`** (calls 6, 7 and 9); the one recorded
+  revision got it only on repair, and on call 10 a repair turn naming every required key still dropped it.
+  Two revised playbooks — the second a faithful edit made possible by ADR-108 — were recorded as
+  unparseable over a field that has nothing to classify. Experiments carried a tier every time.
+- **Decision:** `proposal.TIERLESS_KINDS = {ABSTAIN, DELIVERABLE}`. The parser, the schema hint and the
+  repair turn all read it. Migration 0044 relaxes two CHECKs: `proposals` (a NULL tier for exactly those two
+  kinds) and `approval_requests.claimed_tier` (NULL allowed). A queued deliverable with no tier is stored
+  with **no claim**: `_assessed_tier` leaves the kernel's own assessment standing, and no understated-risk
+  signal can fire, because a Cell that claimed nothing understated nothing. `claimed_tier_label` prints
+  "none (proposes no action)" in the CLI and the Auditor's prompt.
+- **What it displaced, and why:**
+  - *Keeping the tier required and strengthening the prompt.* ADR-102's repair turn already names every
+    required key, and the model still dropped it: the model's reading — a hand-over has no risk — is the
+    spec's reading, and prompt pressure against a correct belief is the wrong fight.
+  - *Storing LOW for an absent claim.* The fold is `max`, so LOW has the same effect — but the column is
+    the Cell's claim, and a claim it did not make must not be stored in its name (§23.5's whole
+    distinction between claimed and assessed).
+  - *Making it optional for `strategy` too.* A strategy's approval changes what the Cell sees from then on
+    (ADR-046) — a consequence a reviewer weighs. ADR-068 warned that a model objecting is not evidence to
+    widen; this widening rests instead on the kind proposing no action, and the parametrised test spells
+    the two kinds out so any further widening fails there first.
+- **Verification:** 4 guards teeth-checked, 4 CAUGHT (the widening itself, a silent widening to
+  `strategy`, an absent claim stored as LOW, and the schema CHECK). Golden 46 → 47: the prompt is 17
+  characters longer, nothing else moved. Live verification follows in the operator's colony.

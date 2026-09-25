@@ -2325,7 +2325,7 @@ def cmd_approvals(args: argparse.Namespace) -> None:
             f" {_tier_marker(request)} {request.request_id}  {request.assessed_tier.value:<8}"
             f" exposure={request.exposure_minor_units}{suffix}"
         )
-        print(f"     cell {request.cell_id}  claimed {request.claimed_tier.value}")
+        print(f"     cell {request.cell_id}  claimed {request.claimed_tier_label}")
         if request.is_overdue():
             print(f"     OVERDUE since {request.sla_due_at_utc.isoformat()}")
         print(f"     expires {request.expires_at_utc.isoformat()}")
@@ -2367,7 +2367,7 @@ def cmd_approval_show(args: argparse.Namespace) -> None:
         )
     print()
     print("  Risk classification")
-    print(f"    cell claimed:    {request.claimed_tier.value}")
+    print(f"    cell claimed:    {request.claimed_tier_label}")
     print(f"    kernel assessed: {request.assessed_tier.value}")
     print(f"    reversible:      {'yes' if request.reversible else 'NO'}")
     print(f"    batchable:       {'yes' if request.batchable else 'no (individual review)'}")
