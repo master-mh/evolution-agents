@@ -1287,7 +1287,10 @@
   - Golden run unmoved: holds are USD_REAL only, and a replay never moves USD_REAL.
   *Disproved by:* `"liability_reserve"` in `accounts.SPEND_DESTINATIONS`, or a `liability_hold` row with a
   NULL `provisions_for_transaction_id` (migration 0042's CHECK refuses one).
-- [ ] **A real Cell does not know that producing a product needs no capability (live, 2026-09-24).** One
+- [ ] **Unprompted Cells do not produce — operator direction does (live, 2026-09-24/25).** Outcome recorded
+  below: four fresh wakes abstained with both prompt lines in place; a wake reason plus a rejection's reason
+  got a product. Still open as a research question (what makes a Cell *start* work), not a blocker.
+  Originally: **A real Cell does not know that producing a product needs no capability (live, 2026-09-24).** One
   paid `claude-haiku-4-5` wake (2 calls, 5,920 micro-USD, recorded 2¢) on a Cell whose genome names a
   market, a problem and "a digital playbook sold as a one-off download" **abstained**: every first move it
   could think of needed `http_get` or an outbound channel, both off. Writing the playbook itself never
@@ -1351,6 +1354,19 @@
   description stating AI drafting and human review. Colony spend to get here: 16 calls, 307,889 micro-USD.
   Not done: first sale (`record-revenue --artifact 08cb8ac0-e28b-4399-85a9-a867678cd18e`), the fee-vs-cap
   decision, and the human-minutes accounting for the review rounds (still unmetered).
+- [ ] **The Gumroad listing is not in the §21 external-action registry.** The product was published through
+  the operator's browser at their request, outside `claim-external-action`, so §21.2's duplicate/sibling
+  checks and the external history a Cell reads know nothing of it. Record it (or build the path a person
+  uses to record an action taken outside a grant). *Disproved by:* `mitosis external-actions` listing it.
+- [ ] **Changing a cap means re-running `init`.** It works (only the flags passed change, audited as
+  `real_spend_limit_raised`) but nothing says so; a `set-limits` verb would. *Disproved by:* `mitosis
+  set-limits --help`.
+- [ ] **Every Haiku deliverable wake bills a repair.** All six recorded deliverable wakes needed one, mostly
+  for `estimated_cost_minor_units`. Measure the per-kind repair rate before deciding whether this is ADR-109's
+  argument again or a prompt problem. *Disproved by:* a deliverable wake recorded on its first call.
+- [ ] **One refund window for every merchant.** If the operator's "try all merchants" is ever taken up (§28
+  Phase 9 says one), the reserve policy needs a channel key. *Disproved by:* a channel column on
+  `liability_reserve_policies`.
 - [ ] **A long deliverable can be lost to a trivially missing field.** Parse repair re-sends the whole reply,
   so its RESOURCE reservation scales with the artifact; a Cell funded for ordinary wakes cannot afford the
   repair exactly when the reply is most valuable. Either fund repair from a separate allowance or reserve
@@ -1369,6 +1385,8 @@
   produced the artifact (5,480 bytes, 1 call, 11,605 micro-USD). No new mechanism was needed: §23's
   decision note already carries the reason into context.
 - [ ] **Processor fees can lock a small-cap colony out of thinking (found 2026-09-24, step-5 dry run).**
+  *Update 2026-09-26:* the operator raised the monthly cap to $50; the hour ($1) and day ($5) caps are
+  unchanged and still bind — one $9 sale's ~$1.40 fee exceeds the hour cap by itself.
   ADR-098 counts every fee against the real-spend caps on purpose, so at the operator's $10/month cap the
   fees on roughly four $19 sales exhaust the month and every model call is refused; one $2.40 fee already
   fills the default $1 hour window. Needs an operator decision: raise the caps to cover expected fees, or

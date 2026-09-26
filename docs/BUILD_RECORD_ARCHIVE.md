@@ -6,6 +6,64 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-24 — A real sale is held against its refunds until the window closes (ADR-106)
+
+Asked to get the colony to real money as fast as possible. The kernel could already record, attribute and
+report a sale; what §28 Phase 9 still demanded before a live trial was **full liability reserves**, and
+nothing had ever posted to `liability_reserve`. The operator chose 100% held until the refund window closes.
+
+- **`liability.py` + migration 0042.** An operator policy (append-only; share in basis points, window in
+  days). With one in force, `record_revenue` holds a USD_REAL sale in the sale's own transaction;
+  `record_reversal` pays a refund or chargeback from the hold first; `release_due` returns what a closed
+  window leaves. Hold and release name their payment through `provisions_for_transaction_id`, hash-chained.
+- **Reading the spec first changed the accounting.** `accounts.py` had classified the reserve as *spend*.
+  §2.3 lists reserves beside cash, and §10.2 names unsettled liability exposure as its own dimension — so a
+  hold is restricted cash, and the account moved to `CAPITAL_ACCOUNTS` before its first posting. Counted as
+  spend, a full hold would have told the Cell (via `context`) it had consumed its own sale.
+- **The window is derived, never stored** — the sale's `created_at_utc` plus the window of the policy in
+  force at the hold. Transaction metadata is outside the hash preimage, so a stored date would have been
+  editable without trace.
+- **A replayed sale is never held retroactively**: `record_revenue` asks whether the payment already
+  existed before posting, because the ledger answers a replay with the original.
+- CLI: `set-reserve-policy`, `reserves`, `release-reserves`; `profit` prints what is still held and names
+  the abstention when no policy is declared.
+- **Hand-verification found the one bug no test had asked about:** §10.5's `budget_exhausted` read a Cell
+  at zero cash with its sale held as "no money, nothing in flight" — `reap` would have killed the first
+  successful seller (at −40 once a fee came out of cash while the gross was held). Held money now counts as
+  in flight, like `committed`.
+- 26 new tests; 14 guards teeth-checked, 14 CAUGHT. Golden run unmoved (USD_REAL only).
+
+**Still between the colony and its first real sale:** the operator's merchant account and trial identity
+(`set-trial-identity`), the reserve policy's window in days, and — for Phase 9 proper — the channel gate
+(PRIORITIES). Selling by hand, recording with `record-revenue`/`record-fee`, is already fully supported.
+
+### Same day — step 5 run end to end: a Cell writes a product, an operator clears it for sale
+
+Dry run on the mock provider (Ollama's Metal backend failing again): create a Cell → wake → proposal
+plus `fulfilment_artifact` → `export-artifact --commercial` refused while rights are `unknown` →
+`set-rights --colony` → export passes → trial identity + reserve policy → `record-revenue --artifact`
+→ `record-fee` → `profit`/`reserves`. Conservation green in all three books, hash chain valid. Three
+defects found, two fixed here:
+
+- **A new Cell was never told which artifact kinds exist.** The schema said "an artifact kind from your
+  context", and nothing in a new Cell's context names one — a real model had to guess. **And the guess
+  was stored**: the wake path records through `artifacts._create_locked`, which never ran `_validate`, so
+  `proposal.py`'s "validated at record time" was a stale claim. `ARTIFACT_KINDS` moved to `models`, the
+  hint lists all seven, and `ArtifactSpec` refuses any other at parse time — an ordinary invalid reply
+  that ADR-069's repair turn can correct. Golden 42 → 43 (+45 input tokens on each of 12 calls, nothing
+  else).
+- **`export-artifact` printed `commercial_use: unknown` on a commercial export that had just passed as
+  `permitted`** — the stored field, not the position in force (ADR-041). It now prints what the gate read,
+  and says how to get the content out (`artifact <id> --content`). The verb had no CLI test at all.
+- **Not fixed — the operator's call:** processor fees count against the real-spend caps (ADR-098, by
+  design), so at a $10/month cap the fees on ~4 sales of $19 would lock the colony out of model calls
+  for the month; and a Cell whose sale is fully held and whose fee took its cash negative cannot pay
+  for its own next wake until the hold releases. Both in PRIORITIES.
+- Review time was recorded as 0 minutes: Phase 9's "complete human-time accounting" is not met by the
+  manual path yet.
+
+3 more guards teeth-checked, 3 CAUGHT.
+
 ## 2026-09-22 — A read-only dashboard for watching the colony (ADR-105)
 
 Watching a colony meant five terminal verbs, each a snapshot. `mitosis dashboard` is one page that
