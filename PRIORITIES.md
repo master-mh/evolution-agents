@@ -1345,6 +1345,12 @@
     (context 3,284 tokens at `--context-budget 6000`), the Cell returned a 10,865-byte v4 as a tierless
     `deliverable` that kept v3's fixes and restored every section the brief named — an edit, not a rewrite.
     One repair, for `estimated_cost_minor_units`, affordable this time.
+- [x] **The colony's first product is on sale (2026-09-26).** Artifact `08cb8ac0…` (v6 of the Cell's playbook:
+  six wakes, four operator rejections, ADR-107/108/109 found and fixed along the way) exported commercially
+  and listed on Gumroad at $9 — `mojo3381.gumroad.com/l/uanydz`, PDF rendered verbatim from the artifact,
+  description stating AI drafting and human review. Colony spend to get here: 16 calls, 307,889 micro-USD.
+  Not done: first sale (`record-revenue --artifact 08cb8ac0-e28b-4399-85a9-a867678cd18e`), the fee-vs-cap
+  decision, and the human-minutes accounting for the review rounds (still unmetered).
 - [ ] **A long deliverable can be lost to a trivially missing field.** Parse repair re-sends the whole reply,
   so its RESOURCE reservation scales with the artifact; a Cell funded for ordinary wakes cannot afford the
   repair exactly when the reply is most valuable. Either fund repair from a separate allowance or reserve
