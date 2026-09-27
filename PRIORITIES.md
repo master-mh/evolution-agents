@@ -1354,7 +1354,9 @@
   description stating AI drafting and human review. Colony spend to get here: 16 calls, 307,889 micro-USD.
   Not done: first sale (`record-revenue --artifact 08cb8ac0-e28b-4399-85a9-a867678cd18e`), the fee-vs-cap
   decision, and the human-minutes accounting for the review rounds (still unmetered).
-- [ ] **The Gumroad listing is not in the §21 external-action registry.** The product was published through
+- [x] **The Gumroad listing is not in the §21 external-action registry — FIXED 2026-09-27 (ADR-111):**
+  `record-external-action` recorded it (with its $9 offer) as an `operator_record`; `mitosis external-actions`
+  lists it. Was: The product was published through
   the operator's browser at their request, outside `claim-external-action`, so §21.2's duplicate/sibling
   checks and the external history a Cell reads know nothing of it. Record it (or build the path a person
   uses to record an action taken outside a grant). *Disproved by:* `mitosis external-actions` listing it.
@@ -1384,7 +1386,9 @@
   costs nothing and a sale is the validation. Write the complete playbook now", the `human decision` wake
   produced the artifact (5,480 bytes, 1 call, 11,605 micro-USD). No new mechanism was needed: §23's
   decision note already carries the reason into context.
-- [ ] **Processor fees can lock a small-cap colony out of thinking (found 2026-09-24, step-5 dry run).**
+- [x] **Processor fees can lock a small-cap colony out of thinking — RESOLVED 2026-09-27 by operator decision:**
+  hour cap raised to $3 and day to $10 (`init --per-hour-cents 300 --per-day-cents 1000`), so one $9 sale's
+  ~$1.40 fee fits the hour; the day binds at ~7 sales. ADR-098 unchanged. Was: (found 2026-09-24, step-5 dry run).
   *Update 2026-09-26:* the operator raised the monthly cap to $50; the hour ($1) and day ($5) caps are
   unchanged and still bind — one $9 sale's ~$1.40 fee exceeds the hour cap by itself.
   ADR-098 counts every fee against the real-spend caps on purpose, so at the operator's $10/month cap the
@@ -1392,10 +1396,24 @@
   fills the default $1 hour window. Needs an operator decision: raise the caps to cover expected fees, or
   argue a separate fee allowance (a change to ADR-098). *Disproved by:* a wake succeeding after fees equal
   to the month cap have been recorded.
-- [ ] **A fully held seller cannot pay for its own next wake.** With a 100% hold the sale never reaches
+- [x] **A fully held seller cannot pay for its own next wake — FIXED 2026-09-27 (ADR-112):** a declared
+  advance policy (live: 25%, $5 cap per Cell) pays the seller from `seed_bank` in the sale's own
+  transaction; the release repays it first. Was: With a 100% hold the sale never reaches
   cash, and the fee (charged on the gross) takes cash below zero — correct accounting, since the refund
   liability is the gross, but the colony's first seller then sits idle for the whole window unless an
   operator `fund-cell`s it. *Disproved by:* a policy or funding path that lets a held seller wake.
+- [ ] **Community posts have no channel (found 2026-09-27).** The four outreach posts (artifact
+  `cc0a9788…`, approved and exported) go to Reddit, a Facebook group, a vendor forum and LinkedIn — none
+  of `email` / `marketplace_listing` / `web_publish` (a colony-domain page). So neither a claim nor
+  `record-external-action` can record them, and §21.2's "no duplicate or conflicting contact" cannot see
+  four public posts about one product. Needs a `community_post` channel keyed on the platform account.
+  *Disproved by:* `mitosis channels` listing one.
+- [ ] **The claim path records no offer (ADR-111).** Only `record-external-action` takes `--offer`; a
+  granted listing's `complete-external-action` cannot say what it charged, so the Cell would fall back to
+  its genome's price again. *Disproved by:* `complete-external-action --offer`.
+- [ ] **A Cell's record does not show what it owes in advances (ADR-112).** It sees cash only; a seller
+  whose cash is mostly an advance cannot tell. *Disproved by:* the record section naming
+  `advances.outstanding` beside the held figure.
 - [ ] **Human review time on the manual sale path is unmetered** (Phase 9: "complete human-time
   accounting"). `set-rights`, `export-artifact` and the listing itself record no minutes. *Disproved by:*
   `profit`'s human-minutes line moving after a manual export.

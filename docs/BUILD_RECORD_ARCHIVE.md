@@ -6,6 +6,38 @@ Entries through slice 9 (2026-07-25, golden-run replay), moved out of the top-le
 here; append new slices there, and move an entry here once a newer one supersedes it as "last
 landed."
 
+## 2026-09-24 → 26 — From a Cell that abstained to a product on sale (ADR-107, ADR-108, ADR-109)
+
+The operator asked to get the colony to real money as fast as possible. ADR-106's reserve closed the last
+Phase 9 bookkeeping gap on 09-24; the rest of the session was live `claude-haiku-4-5` wakes in the
+operator's own `colony.db`, **each failure exposing a kernel defect that the next wake confirmed fixed**.
+It ended with the colony's first product listed at $9 on Gumroad (`mojo3381.gumroad.com/l/uanydz`).
+
+- **Unprompted Cells never produce (4 of 4 fresh wakes abstained)** — with every channel OFF they saw no
+  path from a product to a buyer. Two factual prompt lines (production needs no capability; the operator is
+  the route to market) did not change that, and stay because both are true. The same wakes exposed that a
+  Cell read `100 minor units` as "$100"; the record now prints the dollar figure.
+- **The operator's steering works through two existing sockets:** a `--reason` on the wake, and a
+  rejection's reason, which reaches the Cell through §23's decision note and wakes it. Asked outright, the
+  Cell proposed validating first; rejected with "listing costs nothing and a sale is the validation", it
+  wrote the playbook.
+- **ADR-107 — `deliverable`.** A revision wake abstained ("the rewrite is in progress") because every
+  non-abstain kind names an action and abstain may carry no artifact. A queued statement kind requiring an
+  artifact; confirmed live when the next Cell chose it unprompted.
+- **ADR-108 — the rejected draft in context.** v2 → v3 fixed all five named corrections and halved the
+  document: the Cell saw an artifact *index*, never a body. Now shown in full (optional-first; a required
+  note if it cannot fit). v4 was an edit of v3; the v5 and v6 diffs touched only what the notes named.
+- **ADR-109 — `risk_tier` optional for `deliverable`.** Every first-attempt deliverable omitted it; two
+  good revisions were lost. Migration 0044 rebuilds `proposals` and `approval_requests`; an absent claim is
+  NULL, never LOW.
+- **Listing:** v6 approved, rights attested, exported commercially; a PDF rendered verbatim from the
+  artifact (Chrome headless, no new dependency); the listing text states AI drafting and human review. The
+  operator connected payouts; the publish click was confirmed first.
+- Colony spend: 16 calls, 307,889 micro-USD true (40¢ recorded). Monthly cap raised to $50 at the
+  operator's request (hour $1 / day $5 unchanged, and each binds on a single sale's fee).
+- 1669 tests; 17 guards teeth-checked across the three ADRs and the prompt fixes, all CAUGHT; golden 42 → 47,
+  every diff decomposed in its note.
+
 ## 2026-09-24 — A real sale is held against its refunds until the window closes (ADR-106)
 
 Asked to get the colony to real money as fast as possible. The kernel could already record, attribute and

@@ -49,37 +49,43 @@ charge nobody chose, and §1.1's profit report with the shadow rate a
 person declares, and the trial's legal identity, and a failed model
 call becoming its own deliberation outcome, and a repair turn that names
 every required key, and a self-critique loop on LangGraph with opt-in
-tracing, and a read-only colony dashboard, and full liability reserves with the step-5 dry run that found the artifact-kind and export-message bugs, 2026-07-21 through 2026-09-24):
+tracing, and a read-only colony dashboard, and full liability reserves with the step-5 dry run that found the artifact-kind and export-message bugs, and the live run from a Cell that abstained to a product on sale, 2026-07-21 through 2026-09-26):
 [docs/BUILD_RECORD_ARCHIVE.md](docs/BUILD_RECORD_ARCHIVE.md).
 
-## 2026-09-24 → 26 — From a Cell that abstained to a product on sale (ADR-107, ADR-108, ADR-109)
+## 2026-09-27 — Getting the first sale's path ready: posts that tell the truth, and a seller that can still wake (ADR-110, ADR-111, ADR-112)
 
-The operator asked to get the colony to real money as fast as possible. ADR-106's reserve closed the last
-Phase 9 bookkeeping gap on 09-24; the rest of the session was live `claude-haiku-4-5` wakes in the
-operator's own `colony.db`, **each failure exposing a kernel defect that the next wake confirmed fixed**.
-It ended with the colony's first product listed at $9 on Gumroad (`mojo3381.gumroad.com/l/uanydz`).
+The operator asked for "next steps to make money". The product had been on Gumroad a day with no sale and
+nobody aware of it, so the session did the sale-readiness work (option A of the prime). The work was
+live wakes in the operator's `colony.db`, and each one exposed a kernel gap that the next wake confirmed closed.
 
-- **Unprompted Cells never produce (4 of 4 fresh wakes abstained)** — with every channel OFF they saw no
-  path from a product to a buyer. Two factual prompt lines (production needs no capability; the operator is
-  the route to market) did not change that, and stay because both are true. The same wakes exposed that a
-  Cell read `100 minor units` as "$100"; the record now prints the dollar figure.
-- **The operator's steering works through two existing sockets:** a `--reason` on the wake, and a
-  rejection's reason, which reaches the Cell through §23's decision note and wakes it. Asked outright, the
-  Cell proposed validating first; rejected with "listing costs nothing and a sale is the validation", it
-  wrote the playbook.
-- **ADR-107 — `deliverable`.** A revision wake abstained ("the rewrite is in progress") because every
-  non-abstain kind names an action and abstain may carry no artifact. A queued statement kind requiring an
-  artifact; confirmed live when the next Cell chose it unprompted.
-- **ADR-108 — the rejected draft in context.** v2 → v3 fixed all five named corrections and halved the
-  document: the Cell saw an artifact *index*, never a body. Now shown in full (optional-first; a required
-  note if it cannot fit). v4 was an edit of v3; the v5 and v6 diffs touched only what the notes named.
-- **ADR-109 — `risk_tier` optional for `deliverable`.** Every first-attempt deliverable omitted it; two
-  good revisions were lost. Migration 0044 rebuilds `proposals` and `approval_requests`; an absent claim is
-  NULL, never LOW.
-- **Listing:** v6 approved, rights attested, exported commercially; a PDF rendered verbatim from the
-  artifact (Chrome headless, no new dependency); the listing text states AI drafting and human review. The
-  operator connected payouts; the publish click was confirmed first.
-- Colony spend: 16 calls, 307,889 micro-USD true (40¢ recorded). Monthly cap raised to $50 at the
-  operator's request (hour $1 / day $5 unchanged, and each binds on a single sale's fee).
-- 1669 tests; 17 guards teeth-checked across the three ADRs and the prompt fixes, all CAUGHT; golden 42 → 47,
-  every diff decomposed in its note.
+- **Caps (operator decision):** hour $1 → $3, day $5 → $10. One $9 sale's ~$1.40 fee had been larger than
+  the whole hour. The month stays at $50.
+- **ADR-110: a Cell is shown the product it is selling.** Asked for community posts, the Cell wrote from the
+  playbook's *title*. It invented a day schedule, a "90% of errors" figure and a "days to hours" claim, and
+  used first-person experience. The most recent commercial export now sits in context in full, after the
+  decision notes; when it doesn't fit, a note names it instead. 6/6 teeth-checked. The placement test first
+  MISSed twice: its budget was read off the very ordering it defends.
+- **ADR-111: an action taken outside a grant is recorded after the fact, with its offer.** The revised posts
+  said "$19". That was the price the Cell had planned; the $9 listing existed nowhere in the kernel. Migration
+  0045 rebuilds the registry so an `operator_record` row is completed, dated and grant-less, and 0021's
+  guarantee still holds for Cells. Collisions are reported, not refused. The Cell sees the offer, labelled
+  "what a buyer is charged" once it was clear its genome's `$19` outranked an unlabelled line. A reference is
+  shown only on channels that address nobody (§16.3). The Gumroad listing is back-filled. 12/12 CAUGHT.
+  Golden 47 → 48.
+- **ADR-112: a held seller is advanced working capital.** Under the 100% hold, a sale left the seller at
+  −80¢ for 120 days. A share of each hold is now advanced from `seed_bank` in the sale's own transaction,
+  capped per Cell, and repaid first on release. The hold is untouched, so a refund is still met in full.
+  Live policy: 25%, $5 cap. 8/8 CAUGHT after two mutations were corrected. `test_real_spend_registration`
+  caught both new types unclassified, as it is meant to.
+- **Outcome:** four community posts (artifact `cc0a9788…`) approved and exported. Every tip comes from the
+  playbook, the price is $9, and the disclosure is next to each link. The operator posts them by hand. There
+  is no channel to record them yet (PRIORITIES).
+- Live spend today: 7 calls across 4 wakes, 102,299 micro-USD true (14¢ recorded); one wake was lost to a
+  RESOURCE shortfall on its repair, and RESOURCE was topped up by 100,000 (shadow units, free).
+- Two full-suite runs stalled at 99% CPU (about 12% in) and were killed. Three later runs passed in about
+  190s and the stall never reproduced; logged, cause unknown.
+- 1705 tests; golden 48.
+
+**Next:** the operator posts the four drafts. On the first sale: `record-revenue` then `record-fee`, and
+the hold and advance post themselves. After that, a `community_post` channel so the posts are in §21's
+registry, or Phase 7 scouting (read-only `http_get`) for a second product in the same class.

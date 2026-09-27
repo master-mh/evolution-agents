@@ -2086,3 +2086,16 @@ chargebacks". The owed live check from ADR-097 is discharged. Three findings cam
   `rights_attestations`' subject — a migration, if multi-channel ever becomes the plan (§28 Phase 9 says one).
 - **The hold is on gross, before the fee.** A processor that pays out net leaves the Cell's cash short by
   the fee while the whole gross is held; correct in aggregate, and settled when the window closes.
+
+## 2026-09-27 — from the sale-readiness session (ADR-110–112)
+
+- **An intermittent full-suite stall.** Twice the full suite sat at 99% CPU about 12% in (around test 286, near
+  `test_dashboard.py`) for 20+ minutes and was killed. `faulthandler_timeout` never fired on a single test, and
+  three later full runs passed in ~190s. Cause unknown; if it recurs, run `-v` under a stall monitor to name the test.
+- **Show a Cell what it owes in advances** beside its held figure (ADR-112 consequence; also in PRIORITIES).
+- **A write-off entry for an advance that can never be repaid** (a refunded sale's seller that dies). Today it is
+  simply never repaid, with nothing in the ledger saying so.
+- **Withdrawing a listing.** `record-external-action` records a listing going up; nothing records it coming down.
+- **The genome's revenue model vs the live offer.** A Cell treats "immutable; this is who you are" as outranking a
+  recorded fact. ADR-111's label fixed the price case; a genome hypothesis contradicted by a recorded fact may
+  deserve a general rendering rule.
