@@ -2174,6 +2174,62 @@ def cmd_claim_external_action(args: argparse.Namespace) -> None:
     conn.close()
 
 
+def cmd_record_external_action(args: argparse.Namespace) -> None:
+    """Record an external action a person already took outside any grant (ADR-111).
+
+    Not a way round a claim: a Cell's actions still claim first. This is for the
+    action that happened without one, which the registry could not otherwise hold.
+    """
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    offer_book = Book(args.offer_book) if args.offer is not None else None
+    offer = (
+        money.parse_minor_units(args.offer, offer_book.value) if args.offer is not None else None
+    )
+    try:
+        performed_at = datetime.fromisoformat(args.performed_at)
+    except ValueError as exc:
+        raise CliError(f"--performed-at is not an ISO-8601 time: {exc}") from exc
+    if performed_at.tzinfo is None:
+        raise CliError("--performed-at needs a timezone, e.g. 2026-09-26T08:45:00+00:00")
+    try:
+        result = external_actions.record_performed(
+            conn,
+            artifact_id=args.artifact,
+            channel=args.channel,
+            intent=args.intent,
+            performed_at=performed_at,
+            recorded_by=args.by,
+            idempotency_key=args.key or f"{args.channel}:{args.artifact}:{args.performed_at}",
+            outcome=args.outcome,
+            reference=args.reference,
+            counterparty=args.counterparty,
+            domain=args.domain,
+            platform_account=args.account,
+            offer_minor_units=offer,
+            offer_book=offer_book,
+        )
+    except channel_registry.ChannelError as exc:
+        raise CliError(str(exc)) from exc
+
+    action = result.action
+    verb = "already recorded" if result.replayed else "RECORDED after the fact"
+    print(f"External action {action.action_id} {verb}")
+    print(f"  channel:   {action.channel}")
+    print(f"  intent:    {action.intent}")
+    print(f"  artifact:  {action.artifact_id}")
+    print(f"  cell:      {action.cell_id} (derived from the artifact)")
+    print(f"  performed: {action.claimed_at_utc.isoformat()}")
+    if action.offer_minor_units is not None:
+        print(f"  offer:     {money.format_minor_units(action.offer_minor_units, action.offer_book.value)}"
+              f" {action.offer_book.value}")
+    if result.would_have_refused:
+        print("  The claim path would have refused this:")
+        print(f"    {result.would_have_refused}")
+    print("  The Cell is not woken; its next wake sees this in its external history.")
+    conn.close()
+
+
 def cmd_complete_external_action(args: argparse.Namespace) -> None:
     _require_existing_db(args.db)
     conn = db.connect_and_migrate(args.db)
@@ -2235,7 +2291,8 @@ def cmd_external_actions(args: argparse.Namespace) -> None:
     rows = conn.execute(
         """
         SELECT action_id, cell_id, channel, intent, status, outcome, human_minutes,
-               claimed_at_utc, artifact_id
+               claimed_at_utc, artifact_id, origin, offer_minor_units, offer_book,
+               reference
           FROM external_action_registry ORDER BY claimed_at_utc DESC LIMIT ?
         """,
         (args.limit,),
@@ -2252,6 +2309,13 @@ def cmd_external_actions(args: argparse.Namespace) -> None:
             print(f"    outcome: {row['outcome']} · {row['human_minutes']} human minutes")
         if row["artifact_id"]:
             print(f"    delivered artifact {row['artifact_id']}")
+        if row["offer_minor_units"] is not None:
+            print(f"    offer: {money.format_minor_units(row['offer_minor_units'], row['offer_book'])}"
+                  f" {row['offer_book']}")
+        if row["reference"]:
+            print(f"    reference: {row['reference']}")
+        if row["origin"] == "operator_record":
+            print("    recorded after the fact — taken outside any grant (ADR-111)")
     blocks = conn.execute(
         "SELECT COUNT(*) AS n FROM counterparty_blocks"
     ).fetchone()["n"]
@@ -4270,6 +4334,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--reference", default=None, help="your own external reference (message id, URL)"
     )
     complete_parser.set_defaults(func=cmd_complete_external_action)
+
+    record_parser = subparsers.add_parser(
+        "record-external-action",
+        help="record an action a person already took outside any grant (ADR-111)",
+    )
+    record_parser.add_argument("--artifact", required=True,
+                               help="the exported artifact it delivered; the Cell is its maker")
+    record_parser.add_argument("--channel", required=True,
+                               choices=sorted(channel_registry.REGISTRY))
+    record_parser.add_argument("--intent", required=True, help="what the action was for")
+    record_parser.add_argument("--performed-at", required=True,
+                               help="when it happened, ISO-8601 with a timezone")
+    record_parser.add_argument("--by", required=True, help="who is recording it")
+    record_parser.add_argument(
+        "--outcome", default="delivered", choices=sorted(channel_registry.OUTCOMES),
+    )
+    record_parser.add_argument("--reference", default=None, help="listing URL, message id")
+    record_parser.add_argument("--counterparty", default=None,
+                               help="stored as a salted hash only (§16.3)")
+    record_parser.add_argument("--domain", default=None, help="§21.2 'domain used'")
+    record_parser.add_argument("--account", default=None, help="§21.2 'platform account'")
+    record_parser.add_argument("--offer", default=None,
+                               help="§21.2 'offer made': the price, e.g. 9.00")
+    record_parser.add_argument("--offer-book", default="USD_REAL",
+                               choices=["USD_REAL", "USD_SIM"])
+    record_parser.add_argument("--key", default=None, help="idempotency key (default derived)")
+    record_parser.set_defaults(func=cmd_record_external_action)
 
     abandon_parser = subparsers.add_parser(
         "abandon-external-action", help="release a claim without having acted on it"

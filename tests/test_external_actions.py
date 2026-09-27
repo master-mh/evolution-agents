@@ -1477,3 +1477,230 @@ def test_a_differently_cased_domain_is_the_same_domain(conn):
         external_actions.claim(
             conn, grant_id=second.grant_id, claimed_by="operator", domain="COLONY.TEST"
         )
+
+
+# --- an action a person took outside any grant (ADR-111) ---------------------------
+
+
+def _exported(conn, cell, *, content="the playbook", when=None):
+    artifact = artifacts.create(
+        conn, cell_id=cell.cell_id, kind="fulfilment_artifact", title="Playbook",
+        content=content,
+    )
+    return artifacts.export(
+        conn, artifact_id=artifact.artifact_id, exported_by="operator",
+        reason="list it", now=when,
+    )
+
+
+def _recorded(conn, artifact, *, key="listing", performed_at=None, **overrides):
+    kwargs = dict(
+        artifact_id=artifact.artifact_id,
+        channel="marketplace_listing",
+        intent="list the playbook",
+        performed_at=performed_at or datetime.now(timezone.utc),
+        recorded_by="operator",
+        idempotency_key=key,
+        platform_account="Gumroad: mojo",
+        reference="https://example.test/l/abc",
+        offer_minor_units=900,
+        offer_book=Book.USD_REAL,
+    )
+    kwargs.update(overrides)
+    return external_actions.record_performed(conn, **kwargs)
+
+
+def test_an_action_taken_outside_a_grant_can_be_recorded(conn):
+    """Found live (2026-09-26): the colony's first product was listed by the
+    operator's hand, and `grant_id NOT NULL` left the registry unable to say so —
+    §21.2's checks and the Cell's own history knew nothing of the one real
+    external action the colony had taken."""
+    cell = _make_cell(conn)
+    artifact = _exported(conn, cell)
+
+    result = _recorded(conn, artifact)
+
+    row = conn.execute("SELECT * FROM external_action_registry").fetchone()
+    assert row["origin"] == "operator_record"
+    assert row["grant_id"] is None and row["proposal_id"] is None
+    assert row["status"] == "completed"
+    assert row["cell_id"] == cell.cell_id
+    assert (row["offer_minor_units"], row["offer_book"]) == (900, "USD_REAL")
+    assert result.replayed is False
+
+
+def test_a_record_names_no_cell(conn):
+    """ADR-097's rule: the Cell is derived from what was delivered. A `cell_id`
+    parameter would let a record credit any Cell with any action."""
+    import inspect
+
+    assert not any("cell" in name for name in inspect.signature(
+        external_actions.record_performed).parameters)
+
+
+def test_the_schema_still_refuses_an_ungranted_row_that_does_not_say_so(conn):
+    """Migration 0021's guarantee — no column arrangement records an ungranted
+    *Cell* action — survives: a NULL grant is admissible only under the
+    `operator_record` origin, and only as a completed, timestamped fact."""
+    cell = _make_cell(conn)
+    artifact = _exported(conn, cell)
+    base = dict(
+        action_id="x", cell_id=cell.cell_id, founder_cell_id=cell.founder_cell_id,
+        channel="web_publish", intent="i", artifact_id=artifact.artifact_id,
+        idempotency_key="k", claimed_at_utc="2026-09-26T00:00:00+00:00", claimed_by="op",
+    )
+
+    def insert(**overrides):
+        row = {**base, **overrides}
+        conn.execute(
+            f"INSERT INTO external_action_registry ({', '.join(row)}) "
+            f"VALUES ({', '.join('?' for _ in row)})",
+            tuple(row.values()),
+        )
+
+    import sqlite3
+
+    with pytest.raises(sqlite3.IntegrityError):
+        insert(status="completed")  # origin defaults to 'grant', and there is none
+    with pytest.raises(sqlite3.IntegrityError):
+        insert(status="claimed", origin="operator_record",
+               recorded_at_utc="2026-09-27T00:00:00+00:00")  # a record is never a claim
+    with pytest.raises(sqlite3.IntegrityError):
+        insert(status="completed", origin="operator_record")  # nor undated
+
+
+def test_a_record_never_passes_for_a_claim_written_first(conn):
+    """The windows measure exposure in the world, so they read when it happened;
+    `recorded_at_utc` says when the colony learned of it."""
+    cell = _make_cell(conn)
+    artifact = _exported(conn, cell, when=datetime.now(timezone.utc) - timedelta(minutes=1))
+    performed = datetime.now(timezone.utc) - timedelta(seconds=5)
+
+    action = _recorded(conn, artifact, performed_at=performed).action
+
+    assert action.claimed_at_utc == performed
+    assert action.recorded_at_utc is not None and action.recorded_at_utc > performed
+
+
+def test_an_unexported_artifact_cannot_be_recorded_as_delivered(conn):
+    """§19.3: delivery is never a second way out of the colony — after the fact
+    any more than before it."""
+    cell = _make_cell(conn)
+    artifact = artifacts.create(
+        conn, cell_id=cell.cell_id, kind="fulfilment_artifact", title="t", content="c"
+    )
+
+    with pytest.raises(external_actions.ExternalActionError, match="not been exported"):
+        _recorded(conn, artifact)
+
+
+def test_nothing_is_recorded_as_delivered_before_it_was_exported(conn):
+    cell = _make_cell(conn)
+    artifact = _exported(conn, cell)
+
+    with pytest.raises(external_actions.ExternalActionError, match="before artifact"):
+        _recorded(conn, artifact,
+                  performed_at=artifact.exported_at_utc - timedelta(minutes=1))
+
+
+def test_a_collision_is_reported_not_refused(conn):
+    """The action already happened; refusing to record it would not undo it
+    (ADR-098's posture for a fee). What the claim path *would* have said is the
+    honest answer to whether it should have gone through one."""
+    cell = _make_cell(conn)
+    artifact = _exported(conn, cell)  # every autonomy flag is off
+
+    result = _recorded(conn, artifact)
+
+    assert "autonomy.real_commerce is disabled" in (result.would_have_refused or "")
+    assert conn.execute("SELECT COUNT(*) FROM external_action_registry").fetchone()[0] == 1
+
+
+def test_a_recorded_listing_holds_its_account_against_a_sibling(conn):
+    """The point of recording it: a second lineage listing on the same merchant
+    account is §21.3's bidding war, and a registry that never heard of the first
+    listing cannot see one."""
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    _recorded(conn, _exported(conn, cell))
+    sibling = _make_cell(conn, key="b")
+    grant = _publish_grant(conn, sibling, wake_key="s1", channel="marketplace_listing")
+
+    with pytest.raises(channel_registry.SiblingCollision):
+        external_actions.claim(
+            conn, grant_id=grant.grant_id, claimed_by="operator",
+            platform_account="gumroad: MOJO",
+        )
+
+
+def test_recording_is_idempotent(conn):
+    cell = _make_cell(conn)
+    artifact = _exported(conn, cell)
+    first = _recorded(conn, artifact)
+
+    again = _recorded(conn, artifact)
+
+    assert again.replayed is True
+    assert again.action.action_id == first.action.action_id
+    assert conn.execute("SELECT COUNT(*) FROM external_action_registry").fetchone()[0] == 1
+
+
+def test_the_cell_sees_the_price_it_is_actually_offered_at(conn):
+    """Found live (2026-09-27): revising posts for a $9 listing, a Cell wrote
+    "$19" — the price it had planned, the only one in its proposal log. §21.2
+    tracks the offer made; the Cell is shown it."""
+    cell = _make_cell(conn)
+    _recorded(conn, _exported(conn, cell))
+
+    rendered = context.assemble(
+        conn, cell=cell, canonical_genome=GENOME, wake_reason="human decision",
+        budget_tokens=4_000,
+    ).render()
+
+    assert "offered at 900 minor units (= $9.00)" in rendered
+    assert "reference: https://example.test/l/abc" in rendered
+    assert "on their own initiative" in rendered
+
+
+def test_recording_does_not_wake_the_cell(conn):
+    """A wake is a model call; recording a fact must not spend on one nobody
+    asked for. The Cell reads the row at its next wake."""
+    cell = _make_cell(conn)
+    _recorded(conn, _exported(conn, cell))
+
+    assert conn.execute(
+        "SELECT COUNT(*) FROM event_inbox WHERE event_type = 'cell_wake'"
+    ).fetchone()[0] == 0
+
+
+def test_a_recorded_complaint_still_freezes_the_channel(conn):
+    """§21.1's damage is the same fact however the action was taken."""
+    cell = _make_cell(conn)
+
+    _recorded(conn, _exported(conn, cell), outcome="complaint")
+
+    frozen, _ = channel_registry.channel_frozen(conn, "marketplace_listing")
+    assert frozen
+
+
+def test_an_emails_reference_never_reaches_the_cells_prompt(conn):
+    """§16.3 keeps counterparties out of every prompt. A reference is a person's
+    free text, and on an email it is the natural place to write who it went to —
+    so it is shown only where the channel addresses nobody (ADR-111)."""
+    _open_the_gates(conn)
+    cell = _make_cell(conn)
+    grant = _approved_grant(conn, cell)
+    action = external_actions.claim(
+        conn, grant_id=grant.grant_id, claimed_by="operator", counterparty=COUNTERPARTY
+    )
+    external_actions.complete(
+        conn, action_id=action.action_id, completed_by="operator", outcome="delivered",
+        human_minutes=3, reference="sent to alice@example.com",
+    )
+
+    rendered = context.assemble(
+        conn, cell=cell, canonical_genome=GENOME, wake_reason="w", budget_tokens=4_000,
+    ).render()
+
+    assert "[email]" in rendered
+    assert "alice@example.com" not in rendered

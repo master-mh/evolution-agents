@@ -1386,7 +1386,25 @@ EXPECTATIONS_FILENAME = "golden_expectations.json"
 #             never repairs. No proposal lacks a tier and no request's
 #             `claimed_tier` is NULL here, so the queue sections are unmoved;
 #             migration 0044's two rebuilds copy every existing row.
-EXPECTATION_VERSION = 47
+#
+#   47 -> 48 (an action a person took outside any grant, and the offer it made;
+#             ADR-111, migration 0045). The Cell's external history now shows the
+#             operator's reference on a channel that addresses nobody (never on an
+#             email, whose reference may name the recipient — §16.3), the offer
+#             when one was recorded, and whether a person acted on their own
+#             initiative. The scenario's `web_publish` completion carries
+#             `reference="golden-run page reference"`, so the three wakes after it
+#             gain one line. Field-by-field diff:
+#             (a) `deliberations.context_tokens`: +10 on wakes 9, 10 and 11 — the
+#                 40-character line at the context's 4 chars/token.
+#             (b) `model_calls.input_tokens`: +20 on calls 11, 12 and 13 — the
+#                 same line at the mock's 2 chars/token.
+#             (c) `resource_usage.quantity`: the same +20 on the 3 matching rows;
+#                 `minor_units` unchanged.
+#             The registry section is unmoved: no scenario row records an offer or
+#             an operator action, and migration 0045's rebuild copies every row
+#             with `origin = 'grant'`. Nothing else moved.
+EXPECTATION_VERSION = 48
 
 # Fixed instants. The scenario must never read the wall clock for anything
 # that reaches the snapshot, so these are constants rather than `now()`.

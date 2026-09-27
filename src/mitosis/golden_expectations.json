@@ -1,5 +1,5 @@
 {
-  "expectation_version": 47,
+  "expectation_version": 48,
   "invariants": {
     "active_cells": 3,
     "conservation_resource": true,
@@ -10,7 +10,7 @@
     "living_cells": 4,
     "resource_linkage_complete": true
   },
-  "semantic_hash": "d43c358d40c15f87083ff13cc732af2f1853b5e1cf005d05ddf23d61b0fe1bb9",
+  "semantic_hash": "1299b93348c8f1640726a837b8ed322ab3236e69028ef728e23c1991ca6e7d53",
   "snapshot": {
     "approval_grants": {
       "consumed": 6,
@@ -471,7 +471,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 1105,
+        "context_tokens": 1115,
         "failure_reason": null,
         "made_model_call": true,
         "made_repair_call": false,
@@ -481,7 +481,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 1105,
+        "context_tokens": 1115,
         "failure_reason": null,
         "made_model_call": true,
         "made_repair_call": false,
@@ -491,7 +491,7 @@
       {
         "cell": "cell#4",
         "context_dropped": [],
-        "context_tokens": 1041,
+        "context_tokens": 1051,
         "failure_reason": null,
         "made_model_call": true,
         "made_repair_call": false,
@@ -958,7 +958,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 4521,
+        "input_tokens": 4541,
         "mirror_minor_units": 0,
         "output_tokens": 224,
         "pricing_table_version": "2026-07-27",
@@ -974,7 +974,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 4521,
+        "input_tokens": 4541,
         "mirror_minor_units": 0,
         "output_tokens": 225,
         "pricing_table_version": "2026-07-27",
@@ -990,7 +990,7 @@
       {
         "cell": "cell#4",
         "cost_actual_micro_usd": 0,
-        "input_tokens": 4363,
+        "input_tokens": 4383,
         "mirror_minor_units": 0,
         "output_tokens": 236,
         "pricing_table_version": "2026-07-27",
@@ -1778,7 +1778,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 4521,
+        "quantity": 4541,
         "resource_type": "input_tokens"
       },
       {
@@ -1790,7 +1790,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 4521,
+        "quantity": 4541,
         "resource_type": "input_tokens"
       },
       {
@@ -1802,7 +1802,7 @@
       {
         "cell": "cell#4",
         "minor_units": 1,
-        "quantity": 4363,
+        "quantity": 4383,
         "resource_type": "input_tokens"
       },
       {

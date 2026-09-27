@@ -813,7 +813,8 @@ def history_for(
     rows = conn.execute(
         """
         SELECT action_id, channel, intent, status, outcome, human_minutes,
-               claimed_at_utc, completed_at_utc, artifact_id
+               claimed_at_utc, completed_at_utc, artifact_id, origin,
+               offer_minor_units, offer_book, reference
           FROM external_action_registry
          WHERE cell_id = ?
          ORDER BY claimed_at_utc DESC LIMIT ?

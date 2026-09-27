@@ -783,10 +783,27 @@ def _external_history_section(conn: sqlite3.Connection, cell: Cell) -> Section |
         outcome = item["outcome"] or "not yet done by anyone"
         minutes = item["human_minutes"]
         cost = f" · {minutes} human minutes" if minutes else ""
-        lines.append(
+        line = (
             f"- [{item['channel']}] {item['intent']}\n"
             f"    {item['status']} · outcome: {outcome}{cost}"
         )
+        # §21.2's "offer made" and the operator's reference (ADR-111): the price
+        # a buyer actually sees. Without it a Cell quotes the price it once
+        # planned, which is the only one in its proposal log.
+        if item["offer_minor_units"] is not None:
+            line += f"\n    offered at {_amount(item['offer_minor_units'], Book(item['offer_book']))}"
+        # Only where the channel addresses nobody: a listing's URL is public,
+        # while an email's reference is free text a person may have written the
+        # recipient into — and §16.3 keeps counterparties out of every prompt.
+        addresses_nobody = (
+            channel_registry.get_spec(item["channel"]).target_kind
+            is not channel_registry.TargetKind.COUNTERPARTY
+        )
+        if item["reference"] and addresses_nobody:
+            line += f"\n    reference: {item['reference']}"
+        if item["origin"] == "operator_record":
+            line += "\n    (a person did this on their own initiative, not at your request)"
+        lines.append(line)
     return Section(
         name="External actions taken on your behalf (by a person)",
         body="\n".join(lines),

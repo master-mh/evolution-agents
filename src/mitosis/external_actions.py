@@ -111,6 +111,7 @@ __all__ = [
     "claim",
     "complete",
     "get",
+    "record_performed",
 ]
 
 
@@ -121,8 +122,10 @@ class ExternalActionError(ChannelError):
 @dataclass(frozen=True)
 class ExternalAction:
     action_id: str
-    grant_id: str
-    proposal_id: str
+    #: `None` only for an `operator_record` (ADR-111), which migration 0045's
+    #: CHECK ties to exactly that origin.
+    grant_id: str | None
+    proposal_id: str | None
     cell_id: str
     founder_cell_id: str
     channel: str
@@ -138,6 +141,10 @@ class ExternalAction:
     reference: str | None
     human_minutes: int | None
     resource_reservation_id: str | None
+    origin: str = "grant"
+    recorded_at_utc: datetime | None = None
+    offer_minor_units: int | None = None
+    offer_book: Book | None = None
 
 
 def external_action_of(proposal_row: sqlite3.Row) -> dict:
@@ -666,6 +673,211 @@ def abandon(
 # --- reads --------------------------------------------------------------------
 
 
+# --- 3. an action a person took outside any grant (ADR-111) -------------------
+
+
+@dataclass(frozen=True)
+class RecordedAction:
+    action: ExternalAction
+    #: What the claim path would have refused, had the action gone through it —
+    #: reported, never enforced, because the action has already happened.
+    would_have_refused: str | None
+    #: True when the idempotency key had already been recorded.
+    replayed: bool
+
+
+def record_performed(
+    conn: sqlite3.Connection,
+    *,
+    artifact_id: str,
+    channel: str,
+    intent: str,
+    performed_at: datetime,
+    recorded_by: str,
+    idempotency_key: str,
+    outcome: str = "delivered",
+    reference: str | None = None,
+    counterparty: str | None = None,
+    domain: str | None = None,
+    platform_account: str | None = None,
+    offer_minor_units: int | None = None,
+    offer_book: Book | None = None,
+    now: datetime | None = None,
+) -> RecordedAction:
+    """Record an external action a person already took outside any grant.
+
+    Found live (2026-09-26): the colony's first product was listed on Gumroad
+    by the operator's hand, and the registry could not say so — so §21.2's
+    checks, and the history a Cell reads about its own work, knew nothing of
+    the one real external action the colony had taken.
+
+    **This is ADR-036's rejected shape, admitted for one case only.** Recording
+    after the fact makes every collision a post-mortem, which is why a Cell's
+    actions claim first and always will. A person acting outside the colony is
+    not a Cell's action, and refusing to record it would not undo it — the
+    posture ADR-098 took for a fee. So nothing here refuses on a collision:
+    the checks run as of `performed_at` and their verdict is *reported*, which
+    is also the honest answer to "should this have gone through a claim?".
+
+    **No parameter names a Cell** (ADR-097's rule). The Cell is the one that
+    made the delivered artifact, which is why an artifact is required, and the
+    artifact must already be exported — delivery is never a second way out of
+    the colony (§19.3), after the fact any more than before it.
+
+    **Human minutes are not metered here.** Metering needs a reservation and a
+    reservation is a Cell's choice to spend; this Cell chose nothing. The
+    column stays NULL — unrecorded, never zero — and PRIORITIES keeps the gap.
+
+    **The Cell is not woken.** Its next wake reads the row through
+    `history_for`; waking it here would spend on a model call nobody asked for.
+    """
+    now = now or datetime.now(timezone.utc)
+
+    if outcome not in OUTCOMES:
+        raise ExternalActionError(
+            f"unknown outcome {outcome!r}. One of: {', '.join(sorted(OUTCOMES))}"
+        )
+    if performed_at.tzinfo is None:
+        raise ExternalActionError("performed_at must be timezone-aware")
+    if performed_at > now:
+        raise ExternalActionError(
+            f"performed_at {performed_at.isoformat()} is in the future — this records "
+            "what a person already did; an action still to come is a claim"
+        )
+    if not (recorded_by or "").strip():
+        raise ExternalActionError("a record must say who is making it")
+    if not (intent or "").strip():
+        raise ExternalActionError("a record must say what the action was for")
+    if not (idempotency_key or "").strip():
+        raise ExternalActionError("a record needs an idempotency key")
+    if (offer_minor_units is None) != (offer_book is None):
+        raise ExternalActionError("an offer is an amount *and* a book — give both or neither")
+    if offer_minor_units is not None and offer_minor_units <= 0:
+        raise ExternalActionError("an offer is a positive price")
+    if offer_book is not None and offer_book not in (Book.USD_REAL, Book.USD_SIM):
+        raise ExternalActionError(f"an offer is priced in a USD book, not {offer_book.value}")
+
+    spec = get_spec(channel)
+    # Fails closed on a missing target, exactly as a claim does: a row with no
+    # target could never be compared with anything a sibling does next.
+    channel_registry.target_of(
+        spec, counterparty=counterparty, domain=domain, platform_account=platform_account
+    )
+    key = f"operator_record:{idempotency_key.strip()}"
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        existing = conn.execute(
+            "SELECT * FROM external_action_registry WHERE idempotency_key = ?", (key,)
+        ).fetchone()
+        if existing is not None:
+            if existing["artifact_id"] != artifact_id or existing["channel"] != channel:
+                raise ExternalActionError(
+                    f"idempotency key {idempotency_key!r} already recorded a different "
+                    f"action ({existing['action_id']})"
+                )
+            conn.execute("COMMIT")
+            return RecordedAction(_row_to_action(existing), None, replayed=True)
+
+        artifact = artifacts.get(conn, artifact_id)
+        if artifact is None:
+            raise ExternalActionError(f"no such artifact: {artifact_id}")
+        if not artifact.is_exported:
+            raise ExternalActionError(
+                f"artifact {artifact_id} has not been exported. §19.3's export gateway "
+                "decides whether anything may leave the colony, and a record after the "
+                "fact is not a way round it — export it first, stating why."
+            )
+        if performed_at < artifact.exported_at_utc:
+            raise ExternalActionError(
+                f"performed_at {performed_at.isoformat()} is before artifact "
+                f"{artifact_id} was exported ({artifact.exported_at_utc.isoformat()}) — "
+                "nothing is delivered before it leaves the colony"
+            )
+        cell = lifecycle.get_cell(conn, artifact.created_by_cell_id)
+
+        would_have_refused = None
+        try:
+            check_action(
+                conn,
+                channel=channel,
+                counterparty=counterparty,
+                domain=domain,
+                platform_account=platform_account,
+                artifact_id=artifact_id,
+                founder_cell_id=cell.founder_cell_id,
+                now=performed_at,
+            )
+        except ExternalActionRefused as exc:
+            would_have_refused = str(exc)
+
+        digest = (
+            channel_registry.counterparty_hash(conn, counterparty)
+            if counterparty is not None
+            else None
+        )
+        action_id = ids.new_id()
+        conn.execute(
+            """
+            INSERT INTO external_action_registry (
+                action_id, grant_id, proposal_id, cell_id, founder_cell_id, channel,
+                counterparty_hash, domain, platform_account, intent, artifact_id,
+                status, idempotency_key, claimed_at_utc, claimed_by,
+                completed_at_utc, completed_by, outcome, reference,
+                origin, recorded_at_utc, offer_minor_units, offer_book
+            ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?,
+                      ?, ?, 'operator_record', ?, ?, ?)
+            """,
+            (
+                action_id,
+                cell.cell_id,
+                cell.founder_cell_id,
+                channel,
+                digest,
+                channel_registry.normalise_target(domain),
+                channel_registry.normalise_target(platform_account),
+                intent.strip(),
+                artifact_id,
+                key,
+                performed_at.isoformat(),
+                recorded_by,
+                performed_at.isoformat(),
+                recorded_by,
+                outcome,
+                reference,
+                now.isoformat(),
+                offer_minor_units,
+                offer_book.value if offer_book is not None else None,
+            ),
+        )
+        row = _read_row(conn, action_id)
+
+        if outcome in DAMAGE_OUTCOMES:
+            _record_damage_locked(conn, row=row, outcome=outcome, now=now)
+
+        audit.record(
+            conn,
+            event_type="external_action_recorded",
+            cell_id=cell.cell_id,
+            description=f"{channel}: {intent.strip()} (recorded after the fact)",
+            metadata={
+                "action_id": action_id,
+                "channel": channel,
+                "recorded_by": recorded_by,
+                "performed_at_utc": performed_at.isoformat(),
+                "addressed": digest is not None,
+                "artifact_id": artifact_id,
+                "offer_minor_units": offer_minor_units,
+                "would_have_refused": would_have_refused,
+            },
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return RecordedAction(_row_to_action(row), would_have_refused, replayed=False)
+
+
 def get(conn: sqlite3.Connection, action_id: str) -> ExternalAction | None:
     row = conn.execute(
         "SELECT * FROM external_action_registry WHERE action_id = ?", (action_id,)
@@ -706,4 +918,10 @@ def _row_to_action(row: sqlite3.Row) -> ExternalAction:
         reference=row["reference"],
         human_minutes=row["human_minutes"],
         resource_reservation_id=row["resource_reservation_id"],
+        origin=row["origin"],
+        recorded_at_utc=(
+            datetime.fromisoformat(row["recorded_at_utc"]) if row["recorded_at_utc"] else None
+        ),
+        offer_minor_units=row["offer_minor_units"],
+        offer_book=Book(row["offer_book"]) if row["offer_book"] else None,
     )

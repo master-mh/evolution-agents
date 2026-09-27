@@ -6939,3 +6939,54 @@ FUTURE_BUILD_HOOKS and PRIORITIES rather than guessed at here.
   scenario Cell has a commercial export. 1674 tests pass.
 - **Consequences:** A selling Cell's wakes cost about 2,800 more input tokens (the live playbook) at a
   budget that fits it; pass `--context-budget` of 8,000 or more for market-facing wakes.
+
+## ADR-111: An action a person took outside any grant is recorded after the fact — with the offer it made
+
+- **Status:** Accepted
+- **Spec ref:** §21.2 (track … offer made, platform account, listing; prevent sibling bidding wars), §16.3,
+  §19.3, §28 Phase 9; ADR-036 decision 5 (claim before acting), ADR-097 (no parameter names a Cell), ADR-098
+  (an imposed fact is recorded, not refused), ADR-110
+- **Context:** Live. On 2026-09-26 the operator listed the colony's first product on Gumroad by hand, outside
+  `claim-external-action` — every autonomy flag was off, so the claim path would have refused it. Migration
+  0021 made the listing unrecordable: `grant_id` is NOT NULL so "there is no column arrangement that records
+  an ungranted action". So §21.2's sibling check could not hold the merchant account, and the Cell's own
+  history said nothing about it. On 2026-09-27 the gap cost something concrete: revising posts for the $9
+  listing, the Cell wrote "$19" — the price it had planned, the only price anywhere in its context.
+- **Decision:**
+  1. `external_actions.record_performed` (CLI `record-external-action`) writes a **completed** row with
+     `origin = 'operator_record'`, no grant, no proposal, and `recorded_at_utc` beside `claimed_at_utc`. The
+     latter holds when the action happened in the world, because the collision windows measure exposure in
+     the world; the former is why the row can never pass for a claim written first.
+  2. **Migration 0045's CHECK is what keeps 0021's guarantee.** A NULL grant is admissible only under that
+     origin, and only for a completed, dated row with an artifact and no reservation. An ungranted row with
+     `origin = 'grant'` is still unrepresentable.
+  3. **No parameter names a Cell.** The Cell is the one that made the delivered artifact, so an artifact is
+     required, and it must already be exported and not exported *after* the recorded time: delivery is never
+     a second way out of the colony (§19.3).
+  4. **Collisions are reported, not refused.** The checks run as of `performed_at`, and their verdict is
+     printed and audited as `would_have_refused`. A damage outcome still freezes the channel.
+  5. **§21.2's "offer made" is a column** (`offer_minor_units`, `offer_book`, both or neither), and the
+     Cell's external history shows it with the dollar figure, the reference, and that a person acted on
+     their own initiative.
+  6. **A reference is shown only where the channel addresses nobody.** It is free text; on an email it is
+     the natural place to write the recipient, and §16.3 keeps counterparties out of every prompt.
+  7. **No wake and no metering.** A wake is a paid call nobody asked for; metering needs a reservation, which
+     is a Cell's choice to spend. `human_minutes` stays NULL (unrecorded, never zero).
+- **What it displaced, and why:**
+  - *Relaxing `grant_id` to plain NULL.* Loses 0021's guarantee for Cells, which is the one that matters.
+  - *A separate `operator_actions` table.* Every collision check and every reader would need a second
+    source for "what did the colony do outside itself" — two answers to one question (§2.5).
+  - *A synthetic proposal and grant for the operator's action.* Fabricated history in the Cell's name.
+  - *Refusing a record the claim path would have refused.* It already happened; refusing misstates the
+    registry and undoes nothing (ADR-098).
+  - *Putting the price in every wake reason.* Worked once, by hand; the next wake — a rejection's — had none.
+  - *Metering the minutes as imposed RESOURCE spend.* Would charge a Cell for labour it did not choose;
+    left with the existing PRIORITIES item on unmetered manual-sale time.
+- **Verification:** 12 guards teeth-checked, 12 CAUGHT — both schema CHECK arms, a Cell parameter, an
+  unexported artifact, delivery before export, a collision refusing instead of reporting, an unnormalised
+  account escaping the sibling check, the replay check (also held by the key's UNIQUE constraint), the offer
+  missing from context, an email's reference reaching the prompt, an unwanted wake, and a recorded complaint
+  freezing nothing. Golden 47 → 48: three wakes after the scenario's `web_publish` completion show its
+  reference (+10 context tokens, +20 mock input tokens each); nothing else moved.
+- **Consequences:** The claim path records no offer yet — `complete` could take one. Operator-recorded
+  actions carry no human minutes. A listing that is later withdrawn has no verb.
