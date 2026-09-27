@@ -6901,3 +6901,41 @@ FUTURE_BUILD_HOOKS and PRIORITIES rather than guessed at here.
 - **Verification:** 4 guards teeth-checked, 4 CAUGHT (the widening itself, a silent widening to
   `strategy`, an absent claim stored as LOW, and the schema CHECK). Golden 46 → 47: the prompt is 17
   characters longer, nothing else moved. Live verification follows in the operator's colony.
+
+## ADR-110: A Cell with a product on sale is shown that product in full
+
+- **Status:** Accepted
+- **Spec ref:** §15.1 (select what is relevant; never the whole history), §15.2 (the artifact index), §18.1
+  (taint travels with content), §21.2 and Amendment A20 (a misrepresentation to any counterparty is a policy
+  violation); ADR-108
+- **Context:** Live, 2026-09-27, in the operator's colony. Asked for four community posts about its own $9
+  month-end close playbook, a Cell wrote them from a 1,236-token context that held the playbook's *title* and
+  nothing of its text. The posts invented a day-by-day schedule the playbook does not contain (and
+  contradicted each other on it), a "90% of errors" figure, and a "days to hours" claim. Posted, each would
+  have misrepresented the product to every buyer who read it. ADR-108 shows a *rejected draft*; a product
+  that was approved and put on sale reached a Cell's context by no path at all.
+- **Decision:** `context._product_sections` shows the Cell's most recent **commercially exported** artifact in
+  full — derived on every wake, stored nowhere, one artifact and not the catalogue. It sits after the
+  proposal log, which carries the operator's decision notes, so a large product can never crowd out a
+  revision request; and ahead of observations, which are untrusted. If it does not fit, a short note replaces
+  it saying a product of about N tokens exists and "do not describe what it contains" — ADR-108's posture,
+  never a silent drop. Taint carries. Not shown twice when it is itself the draft under revision.
+- **What it displaced, and why:**
+  - *An operator-named `--show-artifact` on `wake`.* Precise, but the rejection that asks for a revision
+    enqueues its own wake, so the flag would have to ride through `reject` and the event payload too — and an
+    operator who forgets it gets the invented copy again. The relevant artifact is derivable; deriving it
+    needs no memory from anyone.
+  - *Quoting the product in the wake reason.* Works once, by hand, and puts 11 KB into a field §17.2 treats
+    as a reason.
+  - *Showing every exported artifact.* §15.1's load-the-history failure, one sale at a time.
+  - *A required section.* An 11 KB product against the 1,200-token default would make every wake of a selling
+    Cell raise; the note is the bounded version.
+  - *Internal or non-commercial exports as well.* Neither is on sale, and the index already says they exist.
+- **Verification:** 6 guards teeth-checked, 6 CAUGHT (the section added at all, commercial-only, this Cell's
+  only, most recent only, the oversized note, and placement after the decision note). The placement test
+  **first reported MISS twice**, both for the reason CLAUDE.md warns about: its budget first omitted two
+  optional sections ahead of the product, so neither order could fit it; then it was read off the assembled
+  order, which moves with the mutation. It is now computed from section content. Golden run unmoved — no
+  scenario Cell has a commercial export. 1674 tests pass.
+- **Consequences:** A selling Cell's wakes cost about 2,800 more input tokens (the live playbook) at a
+  budget that fits it; pass `--context-budget` of 8,000 or more for market-facing wakes.

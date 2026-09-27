@@ -512,6 +512,76 @@ def _revision_unshown_section(draft_section: Section, budget_tokens: int) -> Sec
     )
 
 
+PRODUCT_SECTION_NAME = "What you are selling (yours, in full)"
+
+
+def _product_on_sale(conn: sqlite3.Connection, cell: Cell):
+    """This Cell's most recent commercially exported artifact, or `None`.
+
+    Derived, never stored (§2.5), exactly as ADR-108's draft is. One artifact,
+    not the Cell's catalogue: §15.1 selects what is relevant, and the product
+    most recently put on sale is the one anything market-facing is about.
+    """
+    row = conn.execute(
+        """
+        SELECT artifact_id FROM artifacts
+        WHERE created_by_cell_id = ? AND export_is_commercial = 1
+        ORDER BY exported_at_utc DESC, rowid DESC
+        LIMIT 1
+        """,
+        (cell.cell_id,),
+    ).fetchone()
+    return artifacts.get(conn, row["artifact_id"]) if row is not None else None
+
+
+def _product_sections(
+    conn: sqlite3.Connection, cell: Cell
+) -> tuple[Section, Section] | None:
+    """The product on sale in full, and the note that replaces it (ADR-110).
+
+    Found live (2026-09-27): asked to write community posts for its own $9
+    playbook, a Cell whose context held only the artifact *index* invented a
+    close schedule the playbook does not contain, a "90% of errors" figure and
+    a "days to hours" claim. It had never seen its product's text. Marketing
+    copy written from a title is a misrepresentation to every buyer who reads
+    it (§21.2, Amendment A20), so a Cell with something on sale is shown it.
+
+    The fallback is the ADR-108 posture: a product too large for this budget is
+    *named* rather than silently dropped, so the Cell can say it cannot see the
+    text instead of describing it from a title.
+    """
+    product = _product_on_sale(conn, cell)
+    if product is None:
+        return None
+    draft = _draft_under_revision(conn, cell)
+    if draft is not None and draft.artifact_id == product.artifact_id:
+        return None  # the revision section already shows it in full
+    shown = Section(
+        name=PRODUCT_SECTION_NAME,
+        body=(
+            f"Artifact {product.artifact_id} ({product.kind}): {product.title}\n"
+            "The operator exported this for commercial sale. It is shown in full "
+            "so anything you write about it can say only what it contains.\n\n"
+            f"{product.content}"
+        ),
+        taint_label=(
+            tool_registry.TAINT_UNTRUSTED_EXTERNAL
+            if tool_registry.TAINT_UNTRUSTED_EXTERNAL in product.taint_labels
+            else None
+        ),
+    )
+    unshown = Section(
+        name="What you are selling (not shown)",
+        body=(
+            f"You have a product on sale — artifact {product.artifact_id}: "
+            f"{product.title}, about {shown.tokens} tokens — and this wake's context "
+            "budget could not show it. You cannot see its text this wake, so do "
+            "not describe what it contains."
+        ),
+    )
+    return shown, unshown
+
+
 def _current_experiment_section(conn: sqlite3.Connection, cell: Cell) -> Section | None:
     """§15.1's "current experiment" — the second thing it names, after the
     genome, and singular (ADR-043).
@@ -818,6 +888,12 @@ def assemble(
     revision = _revision_section(conn, cell)
     if revision is not None:
         candidates.append(revision)
+    product = _product_sections(conn, cell)
+    # A section named here is swapped for its note when it does not fit, rather
+    # than dropped without a word (ADR-110).
+    fallbacks: dict[str, Section] = {}
+    if product is not None:
+        fallbacks[product[0].name] = product[1]
     for optional in (
         # First in the optional list because §15.1 names it second overall,
         # right after the genome — dropping happens from the back, so this is
@@ -830,6 +906,10 @@ def assemble(
         _standing_strategy_section(conn, cell),
         _lessons_section(conn, cell),
         _recent_proposals_section(conn, cell),
+        # After the proposal log, which carries the operator's decision notes: a
+        # product is large, and a revision request must not be the thing it
+        # crowds out. Ahead of observations, which are untrusted (ADR-110).
+        product[0] if product is not None else None,
         _observations_section(conn, cell),
         _artifact_index_section(conn, cell),
         _external_history_section(conn, cell),
@@ -871,6 +951,10 @@ def assemble(
             continue
         if optional_used + section.tokens > optional_budget:
             dropped.append(section.name)
+            note = fallbacks.get(section.name)
+            if note is not None and optional_used + note.tokens <= optional_budget:
+                kept.append(note)
+                optional_used += note.tokens
             continue
         kept.append(section)
         optional_used += section.tokens

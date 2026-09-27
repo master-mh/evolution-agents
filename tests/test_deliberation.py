@@ -15,6 +15,7 @@ import pytest
 
 from mitosis import (
     approval,
+    artifacts,
     context,
     db,
     death,
@@ -28,6 +29,7 @@ from mitosis import (
     proposal,
     providers,
     real_spend_breaker,
+    rights,
 )
 from mitosis.models import Book, CellStatus, CellType, EntrySpec, ModelCallStatus
 
@@ -1665,6 +1667,112 @@ def test_a_draft_too_large_for_the_budget_is_named_not_silently_dropped(conn):
     assert context.REVISION_SECTION_NAME not in rendered
     assert "could not show it" in rendered
     assert "x" * 100 not in rendered
+
+
+# --- the product on sale (ADR-110) ------------------------------------------------
+
+
+def _on_sale(conn, cell, *, content="Day 1: information gathering\nDay 2: bank reconciliation",
+             title="Month-End Close Playbook", commercial=True):
+    artifact = artifacts.create(
+        conn, cell_id=cell.cell_id, kind="fulfilment_artifact", title=title, content=content,
+    )
+    if rights.colony_attestation(conn) is None:
+        rights.attest(
+            conn, subject_kind=rights.SUBJECT_COLONY, subject=rights.SUBJECT_COLONY,
+            licence="colony-authored", permitted_uses="sale", commercial_use="permitted",
+            basis="the colony wrote it", attested_by="operator",
+        )
+    artifacts.export(
+        conn, artifact_id=artifact.artifact_id, exported_by="operator",
+        reason="list on a marketplace", commercial=commercial,
+    )
+    return artifact
+
+
+def test_a_cell_is_shown_the_product_it_is_selling_in_full(conn):
+    """Found live (2026-09-27): asked for posts about its own playbook, a Cell
+    that could see only the artifact index invented a schedule the playbook
+    does not contain and a "90% of errors" figure. Copy written from a title
+    misrepresents the product to every buyer who reads it (§21.2, A20)."""
+    cell = _make_cell(conn)
+    _on_sale(conn, cell)
+
+    rendered = _context(conn, cell, budget=4_000).render()
+
+    assert context.PRODUCT_SECTION_NAME in rendered
+    assert "Day 1: information gathering\nDay 2: bank reconciliation" in rendered
+
+
+def test_only_a_commercial_export_by_this_cell_is_shown_as_its_product(conn):
+    """An internal draft or a non-commercial export is not on sale, and another
+    Cell's product is not this Cell's to describe — §15.1 selects what is
+    relevant, and the index already says the rest exist."""
+    cell = _make_cell(conn)
+    other = _make_cell(conn, key="other")
+    artifacts.create(conn, cell_id=cell.cell_id, kind="report", title="notes", content="internal draft")
+    _on_sale(conn, cell, content="shared for review", title="review copy", commercial=False)
+    _on_sale(conn, other, content="the other cell's product")
+
+    rendered = _context(conn, cell, budget=4_000).render()
+
+    assert context.PRODUCT_SECTION_NAME not in rendered
+    assert "internal draft" not in rendered
+    assert "shared for review" not in rendered
+    assert "the other cell's product" not in rendered
+
+
+def test_only_the_most_recent_product_on_sale_is_shown(conn):
+    """One product, not the catalogue: showing every body is §15.1's
+    load-the-history failure, one sale at a time."""
+    cell = _make_cell(conn)
+    _on_sale(conn, cell, content="the first edition", title="v1")
+    _on_sale(conn, cell, content="the second edition", title="v2")
+
+    rendered = _context(conn, cell, budget=4_000).render()
+
+    assert "the second edition" in rendered
+    assert "the first edition" not in rendered
+
+
+def test_a_product_too_large_for_the_budget_is_named_not_silently_dropped(conn):
+    """Dropped silently, the Cell would describe its product from a title — the
+    defect this exists to fix. Told it exists and did not fit, it can say so."""
+    cell = _make_cell(conn)
+    _on_sale(conn, cell, content="x" * 12_000)
+
+    assembled = _context(conn, cell)  # the default budget cannot hold 3,000 tokens
+
+    rendered = assembled.render()
+    assert context.PRODUCT_SECTION_NAME not in rendered
+    assert context.PRODUCT_SECTION_NAME in assembled.dropped
+    assert "could not show it" in rendered
+    assert "do not describe what it contains" in rendered
+    assert "x" * 100 not in rendered
+
+
+def test_the_product_never_crowds_out_the_operators_decision_note(conn):
+    """The rejection note is how the operator asks for a revision; a large
+    product placed ahead of it would take the budget the request needed."""
+    cell = _make_cell(conn)
+    _on_sale(conn, cell, content="y" * 6_000)
+    _handed_over_and_rejected(conn, cell, content="the posts draft")
+    roomy = _context(conn, cell, budget=50_000).sections
+    product = next(s for s in roomy if s.name == context.PRODUCT_SECTION_NAME)
+    # Chosen by content, never by position — a budget read off the assembled
+    # order would move with the very ordering this test defends. Everything but
+    # the product and the small index/menu sections, plus the product less one
+    # token: whichever of the product and the note is placed first is the one
+    # that fits.
+    tail = ("What you have made", "Tools you may request", "Channels you may request")
+    budget = sum(
+        s.tokens for s in roomy if s is not product and not s.name.startswith(tail)
+    ) + product.tokens - 1
+
+    rendered = _context(conn, cell, budget=budget).render()
+
+    assert "fix the lock date" in rendered
+    assert "y" * 100 not in rendered
 
 
 # --- a deliverable claims no risk tier (ADR-109) ------------------------------------
