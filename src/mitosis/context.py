@@ -791,7 +791,13 @@ def _external_history_section(conn: sqlite3.Connection, cell: Cell) -> Section |
         # a buyer actually sees. Without it a Cell quotes the price it once
         # planned, which is the only one in its proposal log.
         if item["offer_minor_units"] is not None:
-            line += f"\n    offered at {_amount(item['offer_minor_units'], Book(item['offer_book']))}"
+            # "What a buyer is charged" because a genome's revenue model is the
+            # price the Cell was founded to test, and live (2026-09-27) a Cell
+            # quoted its genome's $19 over this line's $9.
+            line += (
+                f"\n    offered at {_amount(item['offer_minor_units'], Book(item['offer_book']))}"
+                " — what a buyer is charged"
+            )
         # Only where the channel addresses nobody: a listing's URL is public,
         # while an email's reference is free text a person may have written the
         # recipient into — and §16.3 keeps counterparties out of every prompt.

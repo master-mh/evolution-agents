@@ -1657,7 +1657,7 @@ def test_the_cell_sees_the_price_it_is_actually_offered_at(conn):
         budget_tokens=4_000,
     ).render()
 
-    assert "offered at 900 minor units (= $9.00)" in rendered
+    assert "offered at 900 minor units (= $9.00) — what a buyer is charged" in rendered
     assert "reference: https://example.test/l/abc" in rendered
     assert "on their own initiative" in rendered
 
