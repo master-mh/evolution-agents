@@ -86,6 +86,14 @@ _EXEMPT_TRANSACTION_TYPES = {
         "liability_reserve -> cell cash: a hold returned when its window closes or freed to "
         "meet a reversal (ADR-106) — money coming back, never spent"
     ),
+    "held_sale_advance": (
+        "seed_bank -> cell cash: the colony's working capital to a seller whose sale is "
+        "held (ADR-112). Capital movement inside the colony; never external_expense"
+    ),
+    "held_sale_advance_repayment": (
+        "cell cash -> seed_bank: an advance repaid from a released hold (ADR-112) — "
+        "capital returning inside the colony, never spent"
+    ),
     "cell_funding": "seed_bank -> cell cash: internal transfer",
     "cell_birth_funding": "funding account -> cell cash: internal transfer",
     "cell_reproduction_funding": "parent cash -> child cash: internal transfer (ADR-019)",

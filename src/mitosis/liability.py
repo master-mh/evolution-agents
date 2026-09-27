@@ -60,7 +60,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from . import audit, ids, ledger
+from . import advances, audit, ids, ledger
 from .accounts import cell_cash
 from .models import Book, Entry, EntrySpec, Transaction
 
@@ -375,6 +375,8 @@ def release_due(conn: sqlite3.Connection, *, now: datetime | None = None) -> lis
                 idempotency_key=f"{RELEASE_TRANSACTION_TYPE}:{payment.transaction_id}:window_closed",
                 reason=f"refund window closed {hold.held_until_utc.date().isoformat()}",
             )
+            # The colony is repaid first from the money it lent against (ADR-112).
+            advances._repay_locked(conn, release=transaction)
             audit.record(
                 conn,
                 event_type="liability_released",

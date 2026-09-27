@@ -71,11 +71,11 @@ import sqlite3
 from datetime import datetime, timezone
 from enum import Enum
 
-from . import audit, ledger, liability, lifecycle
+from . import advances, audit, ledger, liability, lifecycle
 from .accounts import cell_cash
 from .counterparty import CounterpartyError
 from .counterparty import hash_of as counterparty_digest
-from .models import Book, Entry, EntrySpec, Transaction
+from .models import Book, CellStatus, Entry, EntrySpec, Transaction
 
 REVENUE_ACCOUNT = "revenue"
 REVENUE_TRANSACTION_TYPE = "cell_revenue"
@@ -91,6 +91,10 @@ REVERSAL_TRANSACTION_TYPES = (REFUND_TRANSACTION_TYPE, CHARGEBACK_TRANSACTION_TY
 # RESOURCE budget be topped up by declaring revenue, which is not a thing that
 # can happen.
 _REVENUE_BOOKS = frozenset({Book.USD_REAL, Book.USD_SIM})
+
+#: Who a held sale's advance may go to (ADR-112). A Cell that cannot wake cannot
+#: use working capital; the hold still releases to it, as revenue always has.
+_CAN_BE_ADVANCED = frozenset({CellStatus.ALIVE, CellStatus.DORMANT})
 
 
 class RevenueError(Exception):
@@ -268,6 +272,15 @@ def record_revenue(
             if replayed
             else liability._hold_locked(conn, payment=transaction, cash_leg=cell_leg(transaction))
         )
+        # The colony's advance against that hold, in the same transaction — so
+        # the seller of a fully held sale can still pay for its next wake
+        # (ADR-112). Only to a Cell that can still act on it: advancing capital
+        # to a dead Cell funds nothing.
+        advance = (
+            advances._advance_locked(conn, payment=transaction, hold=hold)
+            if hold is not None and cell.status in _CAN_BE_ADVANCED
+            else None
+        )
         audit.record(
             conn,
             event_type="cell_revenue_recorded",
@@ -285,6 +298,7 @@ def record_revenue(
                 "cell_status": cell.status.value,
                 "transaction_id": transaction.transaction_id,
                 "liability_hold_transaction_id": hold.transaction_id if hold else None,
+                "advance_transaction_id": advance.transaction_id if advance else None,
             },
         )
     except Exception:

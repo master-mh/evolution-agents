@@ -6990,3 +6990,53 @@ FUTURE_BUILD_HOOKS and PRIORITIES rather than guessed at here.
   reference (+10 context tokens, +20 mock input tokens each); nothing else moved.
 - **Consequences:** The claim path records no offer yet — `complete` could take one. Operator-recorded
   actions carry no human minutes. A listing that is later withdrawn has no verb.
+
+## ADR-112: A fully held seller is advanced working capital by the colony — never from the buyer's hold
+
+- **Status:** Accepted
+- **Spec ref:** §2.3 (reserves beside cash), §2.5 (balances are derived), §10.5, §28 Phase 9; ADR-106 decision
+  6 (the fee comes out of cash while the gross is held), ADR-098
+- **Context:** Under the operator's 100% / 120-day reserve (ADR-106), the colony's first $9 sale would leave its
+  seller — 60 cents of cash — at **−80 cents**: the gross held, the $1.40 fee taken from cash. Charter C4 then
+  refuses every wake for four months, so the one Cell that had shown its product sells would be the one unable
+  to work. PRIORITIES logged it ("A fully held seller cannot pay for its own next wake"); the operator chose an
+  automatic path over topping the Cell up by hand after each sale.
+- **Decision:**
+  1. **An operator policy, append-only, latest wins** (`advances.declare_policy`, `mitosis set-advance-policy`):
+     a share of each hold in basis points and the most one Cell may owe. 0 basis points withdraws advances —
+     unlike a reserve, an advance is optional (migration 0046).
+  2. **Posted in the sale's own transaction**, right after the hold, only for a sale posted now and only to an
+     alive or dormant Cell: `seed_bank` → the seller's cash, as `held_sale_advance`. Rounded **down** (the hold
+     rounds up): each rounds in the direction that protects someone else's money.
+  3. **Never from `liability_reserve`.** Every refund is still met in full from money set aside for it; the risk
+     moves from buyers, who never bore it, to the colony's capital. A refunded sale leaves its advance unrepaid —
+     exactly what a `fund-cell` of the same amount would have cost.
+  4. **Owed per Cell, derived** (§2.5): advances less repayments, from the ledger. The cap binds across every
+     held sale, and a later release repays an earlier refunded sale's advance.
+  5. **Repaid first when a hold's window closes** (`liability.release_due` → `held_sale_advance_repayment`), up to
+     what was released. A release to meet a refund repays nothing — that money goes to the buyer.
+  6. **Capital movement.** Both legs are accounts `accounts.py` already classifies, so revenue, spend and §10.5's
+     net contribution never see an advance, and nothing registers as real spend: nothing leaves the colony.
+- **What it displaced, and why:**
+  - *Taking the fee from the hold, or holding the net.* ADR-106 holds the gross because the refund liability is
+    the gross; shrinking the hold makes a refund fall on the Cell's other cash, which is the failure the reserve
+    exists to prevent.
+  - *Lowering the hold.* Trades buyer protection for liquidity — the operator's call, and not what they chose.
+  - *Topping the Cell up by hand.* Works, but it is a person remembering after every sale; the operator chose
+    the automatic path.
+  - *Advancing from the promotion pool.* That capital is §25's, allocated against approved grants; working
+    capital for a seller is `seed_bank`'s stated purpose ("capital staged for allocation to Cells").
+  - *A table of advances or an `outstanding` column.* A second answer beside the ledger.
+  - *A per-sale cap.* A Cell selling often could owe without bound.
+- **Verification:** 8 guards teeth-checked, 8 CAUGHT — the advance posted at all (the live −80 case), never
+  drawn from the hold, the per-Cell cap and its cross-sale reading, rounding down, no advance to a dead Cell,
+  repayment on release, and atomicity with the sale. Two first reported WRONG-FAILURE for the mutation's fault:
+  an `expect` naming a later assertion than the one the bug trips, and a commit-only atomicity mutation that
+  crashed on ROLLBACK instead of splitting the transaction. `test_real_spend_registration` caught both new types
+  unclassified on the first full run, as CLAUDE.md says it will; both are exempt as capital movement. A redundant guard — a 0% policy returns early, but a 0%
+  share floors to 0 anyway — was dropped from the batch rather than reported as a MISS that proves nothing. The
+  replay path is held twice (no hold is posted on a replay, and the advance's idempotency key). Golden unmoved: no
+  scenario declares an advance policy.
+- **Consequences:** The Cell's record shows its cash, not what it owes; a later slice could show the advance
+  beside `cell_held`. An advance to a Cell that then dies is written off by never being repaid, with no entry
+  saying so.

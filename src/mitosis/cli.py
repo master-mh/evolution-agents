@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (
+    advances,
     approval,
     artifacts as artifacts_module,
     auditor,
@@ -940,6 +941,45 @@ def cmd_reserves(args: argparse.Namespace) -> None:
         )
         print(f"  - payment {hold.payment_transaction_id}  cell {hold.cell_id}  "
               f"held {hold.held_minor_units}, remaining {hold.remaining_minor_units}  {state}")
+    advance_policy = advances.current_policy(conn)
+    if advance_policy is None or advance_policy.advance_basis_points == 0:
+        print("  advances: none — a fully held seller waits for its release "
+              "(`mitosis set-advance-policy`)")
+    else:
+        print(f"  advances: {advance_policy.advance_basis_points / 100:g}% of each hold, at most "
+              f"{advance_policy.max_outstanding_minor_units} minor units owed per Cell "
+              f"(declared by {advance_policy.declared_by})")
+    for cell_id in sorted({hold.cell_id for hold in rows}):
+        owed = advances.outstanding(conn, cell_id)
+        if owed:
+            print(f"  - cell {cell_id} owes {owed} minor units in advances")
+    conn.close()
+
+
+def cmd_set_advance_policy(args: argparse.Namespace) -> None:
+    """Declare the colony's working-capital advance to a held seller (ADR-112).
+    The buyer's hold is untouched; the advance is the colony's own capital."""
+    _require_existing_db(args.db)
+    conn = db.connect_and_migrate(args.db)
+    try:
+        policy = advances.declare_policy(
+            conn,
+            advance_basis_points=round(args.advance_percent * 100),
+            max_outstanding_minor_units=money.parse_minor_units(
+                args.max_outstanding, Book.USD_REAL.value
+            ),
+            declared_by=args.by,
+            note=args.note,
+        )
+    except advances.AdvanceError as exc:
+        raise CliError(str(exc)) from exc
+    print("Declared the held-seller advance policy (ADR-112)")
+    print(f"  advance:         {policy.advance_basis_points / 100:g}% of each held USD_REAL sale")
+    print(f"  most owed/Cell:  "
+          f"{money.format_minor_units(policy.max_outstanding_minor_units, 'USD_REAL')} USD_REAL")
+    print(f"  from:            {advances.FUNDING_ACCOUNT} (never from the buyer's hold)")
+    print(f"  declared by:     {policy.declared_by}")
+    print("  Repaid first when the hold releases; a refunded sale's advance stays unrepaid.")
     conn.close()
 
 
@@ -3702,6 +3742,23 @@ def build_parser() -> argparse.ArgumentParser:
     reserve_policy_parser.add_argument("--by", required=True, help="who is declaring it")
     reserve_policy_parser.add_argument("--note", default="")
     reserve_policy_parser.set_defaults(func=cmd_set_reserve_policy)
+
+    advance_policy_parser = subparsers.add_parser(
+        "set-advance-policy",
+        help="declare the colony's working-capital advance to a seller whose sale is "
+             "held (operator-only; ADR-112)",
+    )
+    advance_policy_parser.add_argument(
+        "--advance-percent", type=float, required=True, dest="advance_percent",
+        help="share of each held sale advanced from seed_bank, 0-100; 0 withdraws advances",
+    )
+    advance_policy_parser.add_argument(
+        "--max-outstanding", required=True, dest="max_outstanding",
+        help="the most one Cell may owe at once, in dollars, e.g. 5.00",
+    )
+    advance_policy_parser.add_argument("--by", required=True, help="who is declaring it")
+    advance_policy_parser.add_argument("--note", default="")
+    advance_policy_parser.set_defaults(func=cmd_set_advance_policy)
 
     reserves_parser = subparsers.add_parser(
         "reserves", help="what the colony holds against refunds, sale by sale (ADR-106)",
